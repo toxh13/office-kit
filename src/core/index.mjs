@@ -1,7 +1,8 @@
 // index.mjs — 형식과 설치된 프로그램을 보고 엔진을 골라 문서 작업을 한다.
 //   app  엔진: 설치된 한컴/Word/PowerPoint/Excel (원본 그대로, PDF 가능, 느림)
 //   file 엔진: rhwp·ZIP/XML·exceljs (프로그램 불필요, 빠름)
-import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { extname, basename, join, resolve } from 'node:path';
 import { Hwp } from './hwp.mjs';
 import { readDocx, readPptx, readXlsx, readCsv, replaceInFile, placeholders, setXlsxCells, PLACEHOLDER } from './officefile.mjs';
@@ -312,7 +313,16 @@ export async function renderPreview(path, outDir, { mode = 'auto', maxPages = 40
   if (appOk && (mode === 'exact' || !hwp)) {
     mkdirSync(outDir, { recursive: true });
     const file = join(outDir, `${basename(path)}.${Date.now()}.pdf`);
-    await convertDocument(path, file);
+    // 프로그램(COM)은 따로 떠서, MSIX 앱(스토어판 Claude Desktop 등) 안에서 실행될 때 가상화된
+    // %APPDATA% 폴더(outDir)를 보지 못한다 → 임시 폴더에 PDF를 받은 뒤 옮긴다
+    const work = mkdtempSync(join(tmpdir(), 'officekit-preview-'));
+    try {
+      const pdf = join(work, 'preview.pdf');
+      await convertDocument(path, pdf);
+      try { renameSync(pdf, file); } catch { copyFileSync(pdf, file); }
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
     return { kind: 'pdf', file, engine: comAppFor(ext) };
   }
   if (hwp) {

@@ -1,7 +1,7 @@
 // store.mjs — 앱 설정(JSON), 최근 파일, 원본 백업. Electron 없이도 동작하도록 폴더를 주입받는다.
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
@@ -164,6 +164,8 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
       const from = join(dir, e.file);
       if (!existsSync(from)) throw new Error('백업 파일을 찾을 수 없습니다');
       copyFileSync(from, source);
+      // 복사는 백업의 옛 수정 시각을 그대로 옮긴다 → 지금 바뀐 파일로 보이게 시각을 새로 찍는다 (동기화·백업 프로그램용)
+      try { const now = new Date(); utimesSync(source, now, now); } catch {}
       return { ...e, path: from };
     },
   };

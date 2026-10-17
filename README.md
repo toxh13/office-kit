@@ -36,6 +36,9 @@
 
 지우기: 설정 → 앱 → "Office Kit" 제거. 오른쪽 클릭 메뉴와 명령줄 파일도 함께 지워진다.
 
+- 남는 것: 설정·최근 파일·**문서 백업**(연 문서의 사본, 최근 50개) `%APPDATA%\office-kit`, AI 작업 폴더 `%LOCALAPPDATA%\office-kit`. 필요 없으면 직접 지운다.
+- Office Kit로 연 문서는 Windows "최근 항목"에 남고, 탐색기의 그 형식 "연결 프로그램" 목록에 Office Kit가 보일 수 있다 (기본 연결 프로그램은 그대로).
+
 ---
 
 ## 사용
@@ -121,6 +124,8 @@ office-kit setup codex --remove     # 연결 해제 (다른 대상도 같음)
 
 설정 → 외부 연결 → **명령줄** 을 켜면 (또는 `office-kit setup cli`) 어디서나 `office-kit` 을 쓸 수 있다.
 `%LOCALAPPDATA%\Microsoft\WindowsApps\office-kit.cmd` 가 생긴다 (이미 PATH에 있는 폴더). 새 터미널부터 적용.
+`office-kit setup cli` 는 **일반 터미널**에서 실행한다. 스토어판 Claude Desktop 같은 MSIX 앱 안의 터미널·에이전트에서 실행하면
+파일이 그 앱 전용 폴더에 저장돼 다른 터미널에서는 보이지 않는다 (이때는 안내가 뜬다).
 
 | 명령 | 하는 일 |
 |---|---|

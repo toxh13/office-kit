@@ -2,7 +2,7 @@
 // 실제 설정 파일·레지스트리·네트워크는 건드리지 않는다 (모두 임시 폴더와 가짜 실행기로).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -13,7 +13,7 @@ import {
   claudeDesktopConfigPath, connectClaudeDesktop, disconnectClaudeDesktop, claudeDesktopStatus,
   connectClaudeCode, disconnectClaudeCode, claudeCodeStatus, claudeScopeOf,
   codexConfigPath, editCodexToml, tomlString, connectCodex, disconnectCodex, codexStatus,
-  renderCliShim, installCliShim, uninstallCliShim, cliShimStatus, integrationStatus,
+  renderCliShim, installCliShim, uninstallCliShim, cliShimStatus, cliShimPath, packagedCopyOf, integrationStatus,
 } from '../src/setup/integrations.mjs';
 import {
   hancomSecurityStatus, setupHancomSecurity, removeHancomSecurity, downloadHancomSecurityModule,
@@ -165,6 +165,24 @@ describe('Claude Desktop 설정', () => {
     assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { mcpServers: { other: { command: 'x' } }, theme: 'dark' });
     assert.equal((await disconnectClaudeDesktop({ claudeDesktopConfig: p })).changed, false);
     assert.equal((await disconnectClaudeDesktop({ claudeDesktopConfig: join(dir(), 'none.json') })).changed, false);
+  });
+
+  test('mcpServers가 없던 설정은 연결 → 해제하면 원본과 바이트까지 같다 (빈 mcpServers를 남기지 않음)', async () => {
+    const p = join(dir(), 'c.json');
+    for (const original of [
+      '{\n  "coworkUserFilesPath": "C:\\\\Users\\\\홍 길동\\\\Documents",\n  "preferences": {\n    "menuBarEnabled": false\n  }\n}\n',
+      '{\r\n    "preferences": {\r\n        "a": [\r\n            1\r\n        ]\r\n    }\r\n}',
+    ]) {
+      writeFileSync(p, original);
+      await connectClaudeDesktop(spec(), { claudeDesktopConfig: p });
+      assert.ok(JSON.parse(readFileSync(p, 'utf8')).mcpServers[SERVER_NAME]);
+      assert.equal((await disconnectClaudeDesktop({ claudeDesktopConfig: p })).changed, true);
+      assert.equal(readFileSync(p, 'utf8'), original);
+    }
+    // 다른 서버가 있으면 mcpServers는 그대로 둔다
+    writeFileSync(p, JSON.stringify({ mcpServers: { [SERVER_NAME]: { command: 'x' }, other: { command: 'y' } } }));
+    await disconnectClaudeDesktop({ claudeDesktopConfig: p });
+    assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { mcpServers: { other: { command: 'y' } } });
   });
 
   test('설정 파일 위치: %APPDATA% → 스토어판 LocalCache → 기본값', () => {
@@ -563,9 +581,12 @@ describe('명령줄 office-kit.cmd', () => {
     assert.ok(chcp > 0);
     assert.ok(lines.slice(0, chcp).every((l) => /^[\x00-\x7f]*$/.test(l)), 'chcp 앞은 ASCII만');
     assert.ok(lines.includes('set "ELECTRON_RUN_AS_NODE=1"'));
-    assert.ok(lines.includes(`"${EXE}" "${join(APP, 'src', 'cli.mjs')}" %*`));
-    assert.ok(lines.indexOf(`"${EXE}" "${join(APP, 'src', 'cli.mjs')}" %*`) > chcp);
-    assert.equal(lines.at(-2), 'exit /b %OFFICEKIT_EXIT%');
+    // 실행 줄이 마지막 줄 (그 뒤로 cmd가 파일을 다시 읽지 않게, 뒷정리도 같은 줄에서)
+    assert.equal(lines.at(-1), '');
+    const run = lines.at(-2);
+    assert.ok(run.startsWith(`"${EXE}" "${join(APP, 'src', 'cli.mjs')}" %* && ((goto) 2>nul & chcp %OFFICEKIT_CP% >nul & cmd /d /c exit 0) || `), run);
+    assert.ok(run.endsWith('((goto) 2>nul & chcp %OFFICEKIT_CP% >nul & cmd /d /c exit 1)'), run);
+    assert.ok(lines.indexOf(run) > chcp);
     // % 는 %% 로
     assert.ok(renderCliShim(mcpLaunchSpec({ execPath: 'C:\\100%\\node.exe', appRoot: 'C:\\100%' })).includes('"C:\\100%%\\node.exe"'));
   });
@@ -603,7 +624,78 @@ describe('명령줄 office-kit.cmd', () => {
     assert.equal(ok.code, 0, ok.stderr);
     assert.deepEqual(JSON.parse(ok.stdout.trim().split(/\r?\n/).pop()), { args: ['read', 'C:\\문서 폴더\\보고서.hwp'], env: null, msg: '한글 출력' });
     const bad = await runCmd(opts.shimPath, ['fail']);
-    assert.equal(bad.code, 7);
+    assert.equal(bad.code, 1, '실패는 1로 (cli.mjs도 0/1만 돌려준다)');
+  });
+
+  // cmd는 실행 중인 배치 파일을 명령마다 다시 읽는다 → setup cli [--remove]가 자기 파일을 지우거나 바꿔도 깨지면 안 된다
+  test('실행 중에 자기 파일이 지워지거나 바뀌어도: 오류 없음, 종료 코드, 코드 페이지·환경 변수 원래대로', { skip: process.platform !== 'win32' }, async () => {
+    const app = join(dir('앱 폴더'), 'app');
+    mkdirSync(join(app, 'src'), { recursive: true });
+    const shim = join(dir('bin 폴더'), 'office-kit.cmd');
+    writeFileSync(join(app, 'src', 'cli.mjs'), [
+      "import { rmSync, writeFileSync } from 'node:fs';",
+      `const shim = ${JSON.stringify(shim)};`,
+      "const [op, code] = process.argv.slice(2);",
+      "if (op === 'remove') rmSync(shim);",
+      // 다른 위치·새 형식으로 다시 만든 경우처럼 길이가 다른 내용
+      "if (op === 'replace') writeFileSync(shim, '@echo off\\r\\nrem office-kit-shim (new)\\r\\nrem ' + 'x'.repeat(300) + '\\r\\necho REPLACED-RAN\\r\\n');",
+      "console.log(`ran ${op} env=${process.env.OFFICEKIT_SHIM_TEST}`);",
+      'process.exit(Number(code));',
+    ].join('\n'));
+    // env가 있는 실행 방법 (Electron의 ELECTRON_RUN_AS_NODE처럼): 부른 쪽으로 새지 않아야 한다
+    const s = { ...mcpLaunchSpec({ execPath: process.execPath, appRoot: app }), env: { OFFICEKIT_SHIM_TEST: '1' } };
+    const runLine = (line) => new Promise((done) => execFile(process.env.ComSpec ?? 'cmd.exe', ['/d', '/v:on', '/s', '/c', `"${line}"`],
+      { windowsVerbatimArguments: true, encoding: 'utf8', windowsHide: true }, (err, stdout, stderr) => done({ code: err?.code ?? 0, stdout, stderr })));
+    for (const [op, code, want] of [['remove', 0, 0], ['remove', 3, 1], ['replace', 0, 0], ['replace', 1, 1], ['none', 0, 0]]) {
+      await installCliShim(s, { shimPath: shim });
+      const r = await runLine(`chcp 437 >nul & chcp & call "${shim}" ${op} ${code} & echo rc=!errorlevel! & chcp`
+        + ' & (if defined OFFICEKIT_SHIM_TEST echo LEAK-ENV) & (if defined OFFICEKIT_CP echo LEAK-CP)');
+      const label = `${op} ${code}: ${r.stdout}${r.stderr}`;
+      assert.equal(r.stderr.trim(), '', label);
+      assert.match(r.stdout, new RegExp(`ran ${op} env=1`), label);
+      assert.match(r.stdout, new RegExp(`rc=${want}\\s`), label);
+      assert.doesNotMatch(r.stdout, /REPLACED-RAN|LEAK-/, label);
+      const pages = r.stdout.split(/\r?\n/).filter((l) => /:\s*\d+\s*$/.test(l)).map((l) => l.match(/(\d+)\s*$/)[1]);
+      assert.equal(pages.length, 2, label);
+      assert.equal(pages[1], pages[0], `코드 페이지를 되돌린다 — ${label}`);
+      assert.equal(existsSync(shim), op !== 'remove');
+    }
+  });
+
+  test('예전 형식(또는 다른 위치)의 명령줄 파일은 다시 연결 필요로 보이고, 다시 연결하면 바뀐다', async () => {
+    const d = dir('WindowsApps');
+    const opts = { shimPath: join(d, 'office-kit.cmd'), env: { PATH: d } };
+    const old = renderCliShim(spec()).replace(/ && \(\(goto\).*$/m, '\r\nset "OFFICEKIT_EXIT=%ERRORLEVEL%"\r\nexit /b %OFFICEKIT_EXIT%');
+    writeFileSync(opts.shimPath, old);
+    const st = cliShimStatus(spec(), opts);
+    assert.equal(st.connected, true);
+    assert.equal(st.matches, false);
+    assert.match(st.detail, /예전 판이거나 다른 위치/);
+    assert.equal((await installCliShim(spec(), opts)).changed, true);
+    assert.equal(cliShimStatus(spec(), opts).matches, true);
+  });
+
+  test('MSIX 앱 안에서 써서 그 앱 전용 폴더로 옮겨졌으면 알린다', async () => {
+    const local = dir('Local');
+    const shimPath = join(local, 'Microsoft', 'WindowsApps', 'office-kit.cmd');
+    const copy = join(local, 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Local', 'Microsoft', 'WindowsApps', 'office-kit.cmd');
+    const opts = { env: { LOCALAPPDATA: local, PATH: '' } };
+    assert.equal(cliShimPath(opts), shimPath);
+    // 다른 앱 폴더에 옛 사본만 있으면(오래전에 쓴 것) 알리지 않는다
+    mkdirSync(dirname(copy), { recursive: true });
+    writeFileSync(copy, 'old');
+    utimesSync(copy, new Date(2020, 0, 1), new Date(2020, 0, 1));
+    mkdirSync(join(local, 'Packages', 'Other.App_abc'), { recursive: true });
+    let r = await installCliShim(spec(), opts);
+    assert.equal(r.changed, true);
+    assert.equal(r.warning, undefined);
+    // 방금 쓴 파일이 앱 전용 폴더에 생겼다 (가상화된 쓰기를 흉내)
+    rmSync(shimPath);
+    writeFileSync(copy, renderCliShim(spec()));
+    r = await installCliShim(spec(), opts);
+    assert.equal(r.packaged, 'Claude');
+    assert.match(r.warning, /Claude 앱 안에서 실행돼 .*일반 터미널/);
+    assert.equal(packagedCopyOf(join(dir('elsewhere'), 'x.cmd'), 0, opts), null, 'LOCALAPPDATA 밖은 보지 않는다');
   });
 });
 

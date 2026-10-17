@@ -619,6 +619,11 @@
       const r = await call(K.doc.restore());
       if (r.doc) updateDoc(r.doc);
       toast(r.stoppedAi > 0 ? 'AI 작업을 멈추고 원래대로 되돌렸어요' : '원래대로 되돌렸어요', { type: 'success' });
+      // main이 이 문서의 AI 대화를 끝냈다 → 대화창에 알린다 (AI가 되돌리기 전 내용을 기억하지 않게)
+      if (r.newChat && chat.items.length) {
+        chat.items.push({ role: 'note', text: '문서를 원래대로 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
+        if (chatCurrent() === chat) renderChat();
+      }
       if (state.doc && pathKey(state.doc.path) === pathKey(d.path)) await refreshPreview({ reason: 'manual' });
     } catch (err) { showError(err); } finally {
       state.restoring = false;
@@ -773,6 +778,7 @@
     if (item.role === 'user') {
       return h('div', { class: 'msg user' }, h('div', { class: 'bubble', text: item.text }));
     }
+    if (item.role === 'note') return h('div', { class: 'chat-divider', role: 'note', text: item.text });
     const body = h('div', { class: 'msg-body' });
     fillAssistant(body, item);
     item.node = body;
@@ -1148,7 +1154,8 @@
       btn.replaceChildren(spinner(), on ? '연결 중' : '해제 중');
       try {
         const r = await call(K.integrations.set({ target: it.key, on }));
-        toast(on ? `${it.name}에 연결했어요.${it.key === 'cli' ? ' 새 터미널에서 office-kit 명령을 쓸 수 있어요.' : ` ${it.name}을(를) 다시 시작하면 적용돼요.`}` : `${it.name} 연결을 해제했어요.`, { type: 'success' });
+        if (r.result?.warning) toast(String(r.result.warning), { type: 'warn', timeout: 10000 });
+        else toast(on ? `${it.name}에 연결했어요.${it.key === 'cli' ? ' 새 터미널에서 office-kit 명령을 쓸 수 있어요.' : ` ${it.name}을(를) 다시 시작하면 적용돼요.`}` : `${it.name} 연결을 해제했어요.`, { type: 'success' });
         const list = $('#int-list');
         list.replaceChildren(...INTEGRATIONS.map((x) => integrationRow(x, r.status[x.key])));
       } catch (err) {
@@ -1478,7 +1485,11 @@
       else if (cmd === 'refresh') { if (state.doc) refreshPreview({ reason: 'manual' }); }
       else if (cmd === 'settings') openSettings('ai');
     });
-    K.on.toast((t) => toast(String(t?.message ?? ''), { type: t?.type ?? 'info' }));
+    K.on.toast((t) => {
+      toast(String(t?.message ?? ''), { type: t?.type ?? 'info' });
+      // 확인용 캡처: 인수로 받은 파일을 못 열었으면 알림이 뜬 화면을 찍고 실패로 끝낸다
+      if (state.smoke && t?.type === 'error' && !state.doc) smokeSignal({ ok: false, kind: 'open-error', error: String(t?.message ?? '') });
+    });
   }
 
   async function start() {

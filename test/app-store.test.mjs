@@ -1,7 +1,7 @@
 // store.mjs 단위 시험 (임시 폴더에서만)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSettings, createBackups, writeJsonAtomic, stamp, DEFAULT_SETTINGS, guessModelProvider } from '../src/app/store.mjs';
@@ -70,6 +70,22 @@ test('백업: 이름 형식, 같은 내용은 재사용, 50개 유지, 복원', 
   assert.equal(files.length, 3);
   assert.equal(b.list(doc).length, 3);
   assert.equal(existsSync(e1.path), false);
+});
+
+test('백업: 되돌린 파일은 지금 시각으로 바뀐 파일로 보인다 (백업의 옛 수정 시각을 옮기지 않음)', () => {
+  const dir = tmp();
+  const b = createBackups(join(dir, 'backups'));
+  const doc = join(dir, '보고서.docx');
+  writeFileSync(doc, 'v1');
+  const old = new Date(2020, 0, 1);
+  utimesSync(doc, old, old);
+  const e1 = b.backup(doc); // Windows 복사(CopyFileW)는 옛 수정 시각까지 옮긴다
+  writeFileSync(doc, 'v2');
+  const before = Date.now();
+  b.restore(doc, e1);
+  assert.equal(readFileSync(doc, 'utf8'), 'v1');
+  assert.ok(statSync(doc).mtimeMs >= before - 2000, `mtime=${new Date(statSync(doc).mtimeMs).toISOString()}`);
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test('백업: 없는 문서 복원은 한국어 오류', () => {

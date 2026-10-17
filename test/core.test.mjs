@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   createDocument, readDocument, documentInfo, listFields, fillFields, replaceText, setCells, convertDocument,
@@ -525,6 +525,17 @@ describe('프로그램 엔진 (Word/PowerPoint/Excel)', { skip: !COM_TESTS && 'O
       assert.match(img.engine, /\+pdf$/);
     });
   }
+
+  // 프로그램은 임시 폴더에 PDF를 쓰고 미리보기 폴더로 옮긴다 (MSIX 앱 안에서는 가상화된 %APPDATA%를 Word가 못 본다)
+  test('.docx 미리보기 PDF는 미리보기 폴더에 생긴다', { timeout: 180_000 }, async () => {
+    const src = tmp.path('com-preview.docx');
+    await createDocument(src, MANUSCRIPT);
+    const outDir = tmp.path('com-pv');
+    const p = await (await import('../src/core/index.mjs')).renderPreview(src, outDir);
+    assert.equal(p.kind, 'pdf');
+    assert.equal(dirname(p.file), outDir);
+    assert.equal(readFileSync(p.file).subarray(0, 4).toString(), '%PDF');
+  });
 
   test('.docx 칸 채우기 (Word)', { timeout: 120_000 }, async () => {
     const src = tmp.path('com-fill.docx');

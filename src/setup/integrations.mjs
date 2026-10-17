@@ -3,9 +3,9 @@
 // 모든 함수는 경로·실행기를 옵션으로 바꿀 수 있어서, 테스트는 실제 설정 파일을 건드리지 않는다.
 //   opts = { env, home, runner, claudeDesktopConfig, codexConfig, shimPath }
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, renameSync, copyFileSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, copyFileSync, mkdirSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve, delimiter, isAbsolute } from 'node:path';
+import { basename, dirname, join, resolve, relative, delimiter, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -166,6 +166,8 @@ export async function disconnectClaudeDesktop(opts = {}) {
   const { data, raw } = readJsonConfig(configPath, 'Claude Desktop');
   if (!data.mcpServers || !(SERVER_NAME in data.mcpServers)) return { changed: false, configPath };
   delete data.mcpServers[SERVER_NAME];
+  // 우리가 넣으면서 만든 빈 mcpServers는 함께 지워 원래 파일로 되돌린다
+  if (!Object.keys(data.mcpServers).length) delete data.mcpServers;
   const backup = backupFile(configPath);
   await atomicWrite(configPath, formatJsonLike(data, raw));
   return { changed: true, configPath, backup, restartNeeded: true };
@@ -688,10 +690,16 @@ const SHIM_MARK = 'rem office-kit-shim';
 // 배치 파일 안의 % 는 %% 로 (경로에 큰따옴표는 올 수 없다)
 const batchEsc = (s) => String(s).replace(/%/g, '%%');
 
+// 실행이 끝나면: 배치에서 빠져나와(setlocal도 끝남) 원래 코드 페이지로 되돌리고 종료 코드를 0/1로 남긴다
+const shimExit = (code) => `((goto) 2>nul & chcp %OFFICEKIT_CP% >nul & cmd /d /c exit ${code})`;
+
 /**
  * office-kit.cmd 내용.
  * cmd는 배치 파일을 한 줄씩 "현재 코드 페이지"로 읽으므로, chcp 65001 앞은 ASCII만 쓰고
- * 한글이 들어갈 수 있는 경로 줄은 그 뒤에 둔다. 끝나면 원래 코드 페이지로 되돌린다.
+ * 한글이 들어갈 수 있는 경로 줄은 그 뒤에 둔다.
+ * cmd는 명령이 끝날 때마다 배치 파일을 다시 읽는다 → `office-kit setup cli [--remove]`가 실행 중인 이 파일을
+ * 바꾸거나 지우면 다음 줄을 못 읽고 깨진다. 그래서 실행 줄을 마지막 줄로 두고, 뒷정리도 그 줄 안에서
+ * (goto)로 배치를 빠져나온 뒤 한다 (%OFFICEKIT_CP%는 줄을 읽을 때 풀린다). 종료 코드는 0/1 (cli.mjs도 0/1만 돌려준다).
  */
 export function renderCliShim(spec = mcpLaunchSpec()) {
   const cli = join(specRoot(spec), 'src', 'cli.mjs');
@@ -703,11 +711,28 @@ export function renderCliShim(spec = mcpLaunchSpec()) {
     'chcp 65001 >nul',
     'rem Office Kit 명령줄 — 앱 설정에서 다시 만들거나 지울 수 있습니다',
     ...Object.entries(spec.env ?? {}).map(([k, v]) => `set "${k}=${batchEsc(v)}"`),
-    `"${batchEsc(spec.command)}" "${batchEsc(cli)}" %*`,
-    'set "OFFICEKIT_EXIT=%ERRORLEVEL%"',
-    'if defined OFFICEKIT_CP chcp %OFFICEKIT_CP% >nul',
-    'exit /b %OFFICEKIT_EXIT%',
+    `"${batchEsc(spec.command)}" "${batchEsc(cli)}" %* && ${shimExit(0)} || ${shimExit(1)}`,
   ].join('\r\n') + '\r\n';
+}
+
+/**
+ * MSIX 앱(스토어판 Claude Desktop 등) 안에서 실행되면 %LOCALAPPDATA%에 쓴 파일이 그 앱 전용 폴더
+ * (%LOCALAPPDATA%\Packages\<앱>\LocalCache\Local\...)로 옮겨져 일반 터미널에서는 보이지 않는다.
+ * 방금(since 이후) 쓴 path가 그런 곳에 생겼으면 그 앱 이름(Claude 등)을 돌려준다.
+ */
+export function packagedCopyOf(path, since, opts = {}) {
+  const env = opts.env ?? process.env;
+  const local = getEnv(env, 'LOCALAPPDATA') ?? join(opts.home ?? homedir(), 'AppData', 'Local');
+  const rel = relative(local, path);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  let pkgs = [];
+  try { pkgs = readdirSync(join(local, 'Packages')); } catch { return null; }
+  for (const d of pkgs) {
+    try {
+      if (statSync(join(local, 'Packages', d, 'LocalCache', 'Local', rel)).mtimeMs >= since - 2000) return d.replace(/_[^_]+$/, '');
+    } catch {}
+  }
+  return null;
 }
 
 export async function installCliShim(spec = mcpLaunchSpec(), opts = {}) {
@@ -718,8 +743,12 @@ export async function installCliShim(spec = mcpLaunchSpec(), opts = {}) {
     if (old === content) return { changed: false, path };
     if (!old.includes(SHIM_MARK)) throw new Error(`같은 이름의 다른 파일이 이미 있어 덮어쓰지 않았습니다: ${path}`);
   }
+  const since = Date.now();
   await atomicWrite(path, content); // BOM 없이 UTF-8 (BOM이 있으면 첫 줄 @echo off가 깨진다)
-  return { changed: true, path };
+  const packaged = packagedCopyOf(path, since, opts);
+  return packaged
+    ? { changed: true, path, packaged, warning: `${packaged} 앱 안에서 실행돼 명령줄 파일이 그 앱 전용 폴더에 저장됐습니다. 다른 터미널에서는 office-kit 명령이 보이지 않을 수 있으니, 일반 터미널(또는 시작 메뉴로 연 Office Kit의 설정 → 외부 연결)에서 다시 연결하세요.` }
+    : { changed: true, path };
 }
 
 export async function uninstallCliShim(opts = {}) {
@@ -741,7 +770,7 @@ export function cliShimStatus(spec = mcpLaunchSpec(), opts = {}) {
   const ours = text.includes(SHIM_MARK);
   const matches = text === renderCliShim(spec);
   const detail = !ours ? `같은 이름의 다른 파일이 있습니다: ${path}`
-    : !matches ? '다른 위치의 Office Kit를 가리킵니다. 다시 설치하세요.'
+    : !matches ? '예전 판이거나 다른 위치의 Office Kit를 가리킵니다. 다시 연결하세요.'
     : onPath ? path : `${path} (이 폴더가 PATH에 없어 전체 경로로 실행해야 합니다)`;
   return { ...out, exists: true, ours, matches, connected: ours, detail };
 }

@@ -49,6 +49,7 @@ build/         아이콘, NSIS 추가 설정
 `createDocument(output, markdown)`, `probe()`, `Hwp`, `OPENABLE_EXTS`, `extOf`, `kindOf`.
 - `output` 생략 = 원본 덮어쓰기. engine: `'auto' | 'app' | 'file'`.
 - `renderPreview` → `{kind:'pdf', file}` | `{kind:'svg', pages}` | `{kind:'text', docKind, ...readDocument}`.
+  프로그램 PDF는 임시 폴더에 받은 뒤 `outDir`로 옮긴다 (MSIX 앱 안에서 실행되면 가상화된 `%APPDATA%`를 Office가 못 본다).
 - `replaceText` 결과에 쌍마다의 개수 `counts`가 있다. csv는 파일 엔진으로도 읽는다. `.hwt`(한글 서식) 지원.
 - 모든 오류 메시지는 한국어.
 
@@ -93,6 +94,8 @@ installCliShim(spec) / uninstallCliShim()     // %LOCALAPPDATA%\Microsoft\Window
 ```
 - 상태 객체: `{ connected, matches, available, error, detail }` (항목마다 조금씩 다름).
 - 설정 파일을 고치기 전에 시간 붙은 백업을 만들고, 원자적으로 쓴다. 다른 항목은 그대로 둔다.
+- `office-kit.cmd`는 실행 줄이 마지막 줄이고 그 줄 안에서 뒷정리한다 (`setup cli [--remove]`가 실행 중인 자기 파일을
+  바꾸거나 지워도 깨지지 않게). 종료 코드는 0/1. MSIX 앱 안에서 쓰면 결과에 `warning`이 붙는다.
 - 모든 함수가 경로·실행기를 바꿔 끼울 수 있어 시험은 실제 설정을 건드리지 않는다.
 
 ### src/setup/hancom.mjs
@@ -112,9 +115,9 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
 - `renderer/`: 왼쪽 문서 미리보기 + 오른쪽 AI 대화창. 바닐라 JS, 번들러 없음.
 - `store.mjs`: 설정(JSON, 원자적 쓰기, AI마다 모델 따로 `models: {claude, codex}`), 최근 파일, 백업
   (`userData/backups`, 최근 50개).
-- '원래대로'는 그 문서의 AI 대화를 멈춘 뒤 마지막 백업으로 되돌린다.
+- '원래대로'는 그 문서의 AI 대화를 멈춘 뒤 마지막 백업으로 되돌리고, 다음 메시지부터 새 대화로 시작한다.
 - AI 대화 세션은 문서마다 메모리에만 둔다 (앱을 다시 켜면 새 대화).
-- 확인용: `OFFICEKIT_SMOKE=<png경로>` 환경 변수로 실행하면 인수로 받은 파일을 열고 화면을 캡처한 뒤 종료.
+- 확인용: `OFFICEKIT_SMOKE=<png경로>` 환경 변수로 실행하면 인수로 받은 파일을 열고 화면을 캡처한 뒤 종료 (못 열면 알림을 찍고 실패로 끝남). 최근 파일 목록·Windows 최근 항목은 건드리지 않는다.
 - ESM 진입 파일에서 `await app.whenReady()`를 최상위에서 기다리면 멈춘다 → `start()`를 기다리지 않고 부른다.
 
 ## 배포

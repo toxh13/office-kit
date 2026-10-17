@@ -100,15 +100,19 @@ async function start() {
     return current;
   }
 
-  /** 명령줄 인수에서 열 파일 찾기 (뒤에서부터, 스위치·앱 경로 제외) */
+  /**
+   * 명령줄 인수에서 열 파일 찾기 (뒤에서부터, 스위치·앱 경로 제외).
+   * 열 수 있는 파일이 없으면 마지막 인수를 돌려준다 → 열 때 '파일을 찾을 수 없습니다' 등을 알린다 (조용히 무시하지 않게)
+   */
   function fileFromArgv(argv, cwd = process.cwd()) {
-    for (const a of [...argv.slice(1)].reverse()) {
-      if (!a || a.startsWith('-')) continue;
-      const p = resolve(cwd, a);
+    const args = argv.slice(1).filter((a) => a && !a.startsWith('-'));
+    if (process.defaultApp) args.shift(); // 개발 실행(electron .)의 앱 경로
+    const paths = args.map((a) => resolve(cwd, a));
+    for (const p of [...paths].reverse()) {
       if (!OPENABLE_EXTS.includes(extOf(p))) continue;
       try { if (statSync(p).isFile()) return p; } catch {}
     }
-    return null;
+    return paths.at(-1) ?? null;
   }
 
   function send(channel, data) {
@@ -149,7 +153,7 @@ async function start() {
     // 이미 열린 문서를 다시 열면(탐색기 더블클릭·끌어놓기·최근 목록) 백업 기준과 감시는 그대로 두고 앞으로 가져오기만 한다
     if (current && samePath(current.path, p)) {
       if (!watcher) startWatch(current.path);
-      settings.addRecent(current.path);
+      if (!SMOKE) settings.addRecent(current.path);
       const doc = docInfo();
       send('doc:opened', doc);
       focusWindow();
@@ -169,8 +173,12 @@ async function start() {
     }
     if (backup) restorePoints.set(k, backup);
     current = { path: p, backup, backupError, stat: statOf(p), missing: false, renderedStat: null, quietUntil: 0 };
-    settings.addRecent(p);
-    try { app.addRecentDocument(p); } catch {}
+    // 확인용 캡처(SMOKE)는 최근 파일 목록과 Windows 최근 항목을 건드리지 않는다
+    // (Windows 최근 항목에 넣으면 탐색기가 그 형식의 '연결 프로그램' 목록에도 Office Kit를 적어 둔다)
+    if (!SMOKE) {
+      settings.addRecent(p);
+      try { app.addRecentDocument(p); } catch {}
+    }
     startWatch(p);
     const doc = docInfo();
     send('doc:opened', doc);
@@ -330,7 +338,9 @@ async function start() {
       }
       doc.stat = statOf(doc.path);
       doc.missing = false;
-      return { time: entry.time, stoppedAi, doc: current === doc ? docInfo() : null };
+      // AI가 기억하는 문서 내용은 이제 틀리므로 다음 메시지부터 새 대화로 시작한다
+      const newChat = sessions.delete(k);
+      return { time: entry.time, stoppedAi, newChat, doc: current === doc ? docInfo() : null };
     } finally {
       restoring.delete(k);
     }
@@ -804,6 +814,8 @@ async function start() {
     stopWatch();
     for (const c of chats.values()) { try { c.handle.cancel(); } catch {} }
   });
+  // 창이 다 닫힌 뒤 미리보기 PDF(문서 사본)를 지운다. 못 지운 것은 다음 시작 때 지운다
+  app.on('will-quit', () => cleanPreviews(null));
 
   await app.whenReady();
   nativeTheme.themeSource = ['light', 'dark'].includes(settings.get('theme')) ? settings.get('theme') : 'system';

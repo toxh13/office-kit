@@ -148,6 +148,7 @@ async function setup(target, opt) {
   const info = where(r);
   print(`${t.name}: ${msg}${info ? ` (${info})` : ''}`);
   if (r?.backup) print(`원래 설정 백업: ${r.backup}`);
+  if (r?.warning) print(`주의: ${r.warning}`);
   if (changed && target !== 'cli') print('적용하려면 해당 프로그램을 다시 시작하세요.');
   if (changed && target === 'cli' && !opt.remove && typeof m.cliShimStatus === 'function' && !m.cliShimStatus(spec).onPath) {
     print('주의: 이 폴더가 PATH에 없어 새 창에서 office-kit 명령이 바로 잡히지 않을 수 있습니다.');
