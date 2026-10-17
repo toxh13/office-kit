@@ -4,6 +4,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { delimiter, dirname, extname, join, resolve } from 'node:path';
 
@@ -639,6 +640,11 @@ export function startChat({ provider, prompt, sessionId, cwd, filePath, mcp, mod
     makeParser: provider === 'claude' ? createClaudeParser : createCodexParser,
     onEvent,
     onRaw,
-    cleanup: () => { if (tmp) rmSync(tmp, { recursive: true, force: true }); },
+    // 바로 지우되, 강제 종료한 CLI가 폴더를 잠깐 잡고 있으면 앱을 멈추지 않고 뒤에서 다시 시도한다
+    cleanup: () => {
+      if (!tmp) return;
+      try { rmSync(tmp, { recursive: true, force: true }); }
+      catch { rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => {}); }
+    },
   });
 }

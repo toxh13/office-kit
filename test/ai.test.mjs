@@ -417,7 +417,7 @@ test('실행 파일 찾기: npm .cmd 껍데기, codex 네이티브 exe 우선, �
     mkdirSync(join(home, '.local', 'bin'), { recursive: true });
     writeFileSync(join(home, '.local', 'bin', 'claude.exe'), '');
     assert.deepEqual(resolveClaude(env), { command: join(home, '.local', 'bin', 'claude.exe'), args: [], env: {} });
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('codex 찾기: PATH 의 독립 설치본이 %APPDATA%\\npm 에 남은 옛 설치본보다 먼저', { skip: process.platform !== 'win32' }, () => {
@@ -464,7 +464,7 @@ test('codex 찾기: PATH 의 독립 설치본이 %APPDATA%\\npm 에 남은 옛 �
     mkdirSync(broken);
     writeFileSync(join(broken, 'codex.cmd'), '@ECHO off\r\nREM 알 수 없는 꼴\r\n');
     assert.equal(resolveCodex({ ...base, PATH: broken }).command, staleExe);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('설치 안 됨: 두 AI 모두 available=false + 설치 안내', async () => {
@@ -477,7 +477,7 @@ test('설치 안 됨: 두 AI 모두 available=false + 설치 안내', async () =
     assert.match(list[0].name, /내 Claude Code 로그인 사용/);
     assert.match(list[1].name, /내 ChatGPT 로그인 사용/);
     for (const p of list) assert.match(p.hint, /설치 방법/);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 // ── 끝까지 실행 (가짜 CLI) ───────────────────────────────
@@ -516,7 +516,7 @@ test('startChat(claude, 가짜 CLI): 할 말은 stdin 으로, MCP 설정 임시 
     assert.equal(events.at(-1).text, res.text);
     assert.equal(textOf(events), res.text);
     assert.equal(events.filter((e) => e.type === 'done' || e.type === 'error').length, 1);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('startChat(claude, 가짜 CLI): 스트림이 끊겼다 다시 받은 기록 → done.text 는 CLI 답과 같다', async () => {
@@ -529,7 +529,7 @@ test('startChat(claude, 가짜 CLI): 스트림이 끊겼다 다시 받은 기록
     assert.equal(events.at(-1).text, res.text);
     assert.equal(textOf(events), res.text);
     assert.equal(events.filter((e) => e.type === 'text_reset').length, 1);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('startChat(codex, 가짜 CLI): 지침이 맨 위, 이어 하기는 exec resume', async () => {
@@ -542,7 +542,7 @@ test('startChat(codex, 가짜 CLI): 지침이 맨 위, 이어 하기는 exec res
     assert.match(rec.stdin, /---\n\n첫 줄을 "그대로" 알려 줘/);
     assert.equal(rec.argv.at(-1), '-');
     assert.deepEqual(a.events.filter((e) => e.type === 'tool_result').map((e) => e.ok), [true, false]);
-  } finally { rmSync(a.dir, { recursive: true, force: true }); }
+  } finally { rmSync(a.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 
   const b = fakeChat('codex', 'codex-tool.synthetic.jsonl', { opts: { sessionId: 'thread-9' } });
   try {
@@ -551,7 +551,7 @@ test('startChat(codex, 가짜 CLI): 지침이 맨 위, 이어 하기는 exec res
     assert.deepEqual(rec.argv.slice(0, 2), ['exec', 'resume']);
     assert.deepEqual(rec.argv.slice(-2), ['thread-9', '-']);
     assert.equal(rec.stdin, '(현재 열린 문서: C:\\문서\\보고서 s.hwpx)\n\n첫 줄을 "그대로" 알려 줘 — 한글 확인');
-  } finally { rmSync(b.dir, { recursive: true, force: true }); }
+  } finally { rmSync(b.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('startChat: 실제 한도 초과 기록 + 종료 코드 1 → error 이벤트 하나, done 은 거부되지 않음', async () => {
@@ -564,7 +564,7 @@ test('startChat: 실제 한도 초과 기록 + 종료 코드 1 → error 이벤�
     assert.equal(last.type, 'error');
     assert.match(last.detail, /usage limit/);
     assert.equal(events.filter((e) => e.type === 'done').length, 0);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('startChat: 결과 없이 끝나면 stderr 로 안내', async () => {
@@ -573,7 +573,7 @@ test('startChat: 결과 없이 끝나면 stderr 로 안내', async () => {
     const res = await chat.done;
     assert.equal(res.status, 'error');
     assert.match(res.error, /로그인이 필요합니다/);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('startChat: 실행 파일이 없으면 한국어 오류, 잘못된 입력도 거부 없이 끝남', async () => {
@@ -620,7 +620,7 @@ test('cancel(): 프로세스 트리(손자까지) 종료, done 은 cancelled 로
     assert.equal(alive, false, '손자 프로세스가 남아 있음');
     // 두 번 불러도 괜찮다
     assert.equal(await chat.cancel(), res);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('runCli: onEvent 가 예외를 던져도 대화는 끝까지 간다', async () => {
@@ -634,7 +634,7 @@ test('runCli: onEvent 가 예외를 던져도 대화는 끝까지 간다', async
     }).done;
     assert.equal(res.status, 'ok');
     assert.equal(res.text, 'OK');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('처리되지 않은 거부(unhandled rejection) 없음', async () => {
