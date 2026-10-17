@@ -229,7 +229,9 @@ git push origin main v0.1.0
 
 ## 다음 할 일
 
-- [ ] 첫 배포: `v0.1.0` 태그 push, Release에 설치 파일 올라오는지 확인
+- [x] 첫 배포: `v0.1.0` 태그 push, Release에 설치 파일 올라오는지 확인
+- [x] 실제 PC에서 설치·제거, 화면 조작, Claude Desktop·Claude Code·Codex·명령줄 연결 확인 (v0.1.1에 반영)
+- [ ] Codex로 앱 안 AI 대화 끝까지 확인 (계정 사용 한도가 풀린 뒤)
 - [ ] 코드 서명 인증서 적용 (SmartScreen 경고 없애기)
 - [ ] 자동 업데이트 (electron-updater + GitHub Release)
 - [ ] 한컴 보안 모듈 받기를 실제 한컴오피스 2022/2024에서 끝까지 확인
