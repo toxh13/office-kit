@@ -65,9 +65,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft && 'true' || 'false' }}
 
+      # 태그 빌드는 Release에 이미 올라가므로 수동(초안) 빌드만 보관한다.
+      # 계정의 아티팩트 저장 한도가 차면 실패하므로 빌드 결과를 막지 않게 한다.
       - name: 설치 파일 보관 (Actions 아티팩트)
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 7
           name: OfficeKit-Setup
           path: |
             dist/OfficeKit-Setup-*.exe
