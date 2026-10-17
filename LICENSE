@@ -1,0 +1,74 @@
+MIT License
+
+Copyright (c) 2026 toxh13
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+================================================================================
+THIRD-PARTY SOFTWARE
+================================================================================
+
+Office Kit bundles the following open-source components. Each is distributed
+under its own license; the full license texts are included in the respective
+package folders under resources/app/node_modules/ in the installed app (and in
+node_modules/ of this repository after `npm install`).
+
+- rhwp (@rhwp/core) — HWP/HWPX engine (Rust/WebAssembly)
+  Copyright (c) 2025-2026 Edward Kim — MIT License
+  https://github.com/edwardkim/rhwp
+
+- Electron — MIT License, Copyright (c) Electron contributors / GitHub Inc.
+  https://github.com/electron/electron
+  (Electron bundles Chromium and Node.js; their licenses are shipped with the
+  app as LICENSE.electron.txt and LICENSES.chromium.html.)
+
+- @modelcontextprotocol/sdk — MIT License, Anthropic, PBC
+  https://github.com/modelcontextprotocol/typescript-sdk
+
+- @resvg/resvg-js — Mozilla Public License 2.0 (used unmodified)
+  https://github.com/yisibl/resvg-js
+
+- docx — MIT License, Dolan Miu
+  https://github.com/dolanmiu/docx
+
+- exceljs — MIT License, Guyon Roche
+  https://github.com/exceljs/exceljs
+
+- JSZip — MIT License (dual-licensed MIT or GPL-3.0-or-later; used under MIT),
+  Stuart Knightley
+  https://github.com/Stuk/jszip
+
+- PptxGenJS — MIT License, Brent Ely
+  https://github.com/gitbrent/PptxGenJS
+
+- Zod — MIT License, Colin McDonnell
+  https://github.com/colinhacks/zod
+
+Their transitive dependencies are listed in package-lock.json and carry their
+own licenses inside node_modules.
+
+The Hancom automation security module (FilePathCheckerModuleExample.dll) is NOT
+bundled. If the user asks for it, Office Kit downloads it from Hancom's official
+distribution (https://developer.hancom.com/hwpautomation) and it remains subject
+to Hancom's terms.
+
+Hancom, Hangul (한글), HWP, Microsoft Word, PowerPoint, Excel, Claude and Codex
+are trademarks of their respective owners. Office Kit is not affiliated with or
+endorsed by them.

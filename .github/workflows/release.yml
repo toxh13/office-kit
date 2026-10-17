@@ -1,0 +1,75 @@
+# CI · 배포
+#  - main push / PR: npm test
+#  - v* 태그 push: 시험 → NSIS 설치 파일을 만들어 GitHub Release에 올림
+#  - 수동 실행(workflow_dispatch): 같은 빌드를 초안(draft) Release로 올림
+name: CI · Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Release를 초안(draft)으로 올리기'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: 시험 (npm test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  release:
+    name: 설치 파일 만들기 · Release 업로드
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: 태그와 package.json 버전 확인
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::태그($GITHUB_REF_NAME)와 package.json 버전(v$version)이 다릅니다. package.json의 version을 먼저 올리세요."
+            exit 1
+          fi
+
+      - name: 빌드 · 업로드 (electron-builder)
+        run: npx electron-builder --win nsis --x64 --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EP_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft && 'true' || 'false' }}
+
+      - name: 설치 파일 보관 (Actions 아티팩트)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OfficeKit-Setup
+          path: |
+            dist/OfficeKit-Setup-*.exe
+            dist/latest.yml
+          if-no-files-found: error

@@ -1,0 +1,26 @@
+# 의존성·빌드 결과
+node_modules/
+dist/
+out/
+
+# 작업용 임시 파일
+tmp/
+*.log
+npm-debug.log*
+
+# 미리보기·변환 캐시
+.preview/
+preview-cache/
+*.preview.pdf
+*.pdf.tmp
+
+# 한글 보안 모듈 등 내려받은 파일
+*.dll
+
+# 편집기·OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*

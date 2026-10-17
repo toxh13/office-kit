@@ -1,0 +1,101 @@
+{
+  "name": "office-kit",
+  "version": "0.1.0",
+  "description": "한글(HWP/HWPX)·Word·PowerPoint·Excel 문서를 열고, 확인하고, AI 대화로 수정하는 데스크톱 도구",
+  "type": "module",
+  "main": "src/app/main.mjs",
+  "bin": {
+    "office-kit": "src/cli.mjs"
+  },
+  "scripts": {
+    "start": "electron .",
+    "cli": "node src/cli.mjs",
+    "mcp": "node src/mcp/server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "electron-builder --win dir --x64 --publish never",
+    "release": "electron-builder --win nsis --x64 --publish always",
+    "icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/make-icon.ps1"
+  },
+  "author": "toxh13",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "@rhwp/core": "^0.8.7",
+    "docx": "^9.12.0",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.2",
+    "pptxgenjs": "^4.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "homepage": "https://github.com/toxh13/office-kit",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toxh13/office-kit.git"
+  },
+  "build": {
+    "appId": "io.github.toxh13.officekit",
+    "productName": "Office Kit",
+    "copyright": "Copyright © 2026 toxh13",
+    "asar": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "package.json",
+      "src/**/*",
+      "scripts/com/**/*",
+      "docs/**/*",
+      "examples/**/*",
+      "build/icon.ico",
+      "build/icon.png",
+      "LICENSE",
+      "README.md"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "executableName": "Office Kit"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Office Kit",
+      "uninstallDisplayName": "Office Kit",
+      "include": "build/installer.nsh",
+      "artifactName": "OfficeKit-Setup-${version}.exe",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerLanguages": [
+        "ko_KR"
+      ],
+      "language": "1042",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "toxh13",
+        "repo": "office-kit",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; frame-src file:; connect-src 'none'; media-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <title>Office Kit</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="md.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- 아이콘 모음 -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-file-open" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11.5v6M9 14.5l3-3 3 3"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></symbol>
+    <symbol id="i-restore" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/></symbol>
+    <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M12 4v10.5"/><path d="m7.5 10 4.5 4.5 4.5-4.5"/><path d="M5 19.5h14"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4.2l2 2.2H19A1.5 1.5 0 0 1 20.5 9.2v8.3A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M10.3 3.6a1.7 1.7 0 0 1 3.4 0l.1.7a1.7 1.7 0 0 0 2.5 1l.6-.3a1.7 1.7 0 0 1 2.4 2.4l-.3.6a1.7 1.7 0 0 0 1 2.5l.7.1a1.7 1.7 0 0 1 0 3.4l-.7.1a1.7 1.7 0 0 0-1 2.5l.3.6a1.7 1.7 0 0 1-2.4 2.4l-.6-.3a1.7 1.7 0 0 0-2.5 1l-.1.7a1.7 1.7 0 0 1-3.4 0l-.1-.7a1.7 1.7 0 0 0-2.5-1l-.6.3a1.7 1.7 0 0 1-2.4-2.4l.3-.6a1.7 1.7 0 0 0-1-2.5l-.7-.1a1.7 1.7 0 0 1 0-3.4l.7-.1a1.7 1.7 0 0 0 1-2.5l-.3-.6a1.7 1.7 0 0 1 2.4-2.4l.6.3a1.7 1.7 0 0 0 2.5-1z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M14.5 4.5v15"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5.5"/><path d="M6 11.5l6-6 6 6"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.5 4 4L18.5 7.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5"/><path d="M12 16.3v.2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.7v.2"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1L5 10.5l5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+    <symbol id="i-new-chat" viewBox="0 0 24 24"><path d="M20 12.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.5"/><path d="M17.6 3.6a1.9 1.9 0 0 1 2.8 2.8L13 13.8l-3.6.8.8-3.6z"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5V4.5"/><path d="M7.5 9 12 4.5 16.5 9"/><path d="M4.5 14.5v3.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5.5 12h13"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></symbol>
+    <symbol id="i-engine" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9.5 3v3M14.5 3v3M9.5 18v3M14.5 18v3M3 9.5h3M3 14.5h3M18 9.5h3M18 14.5h3"/></symbol>
+    <symbol id="i-pages" viewBox="0 0 24 24"><rect x="7" y="3.5" width="12" height="15" rx="1.5"/><path d="M5 7v12a1.5 1.5 0 0 0 1.5 1.5H15"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3.5v4.5M15 3.5v4.5"/><path d="M6.5 8h11v3a5.5 5.5 0 0 1-11 0z"/><path d="M12 16.5v4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 5 6.2v5.3c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9V6.2z"/><path d="m9 12 2.2 2.2L15.5 10"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 9.5 3 2.5-3 2.5M12.5 15h4"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M10.5 10h.01M14 10h.01M17.5 10h.01M8 14h8"/></symbol>
+  </svg>
+
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand" aria-label="Office Kit">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4.5h6.5L18 9v9.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M13 4.5V9h5"/><path d="M9.5 13.5h5M9.5 16.5h3"/></svg></span>
+        <span class="brand-name">Office Kit</span>
+      </div>
+      <button class="btn primary" id="btn-open" title="파일 열기 (Ctrl+O)"><svg class="i"><use href="#i-file-open"/></svg><span class="lbl">파일 열기</span></button>
+
+      <div class="docinfo" id="docinfo" hidden>
+        <span class="kind-badge" id="doc-kind"></span>
+        <span class="doc-name" id="doc-name"></span>
+        <span class="engine-badge" id="doc-engine" hidden></span>
+        <button class="icon-btn sm" id="btn-close-doc" title="문서 닫기" aria-label="문서 닫기"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+
+      <div class="spacer"></div>
+
+      <div class="actions" id="doc-actions">
+        <button class="btn ghost" id="btn-refresh" title="미리보기 새로고침 (F5)" disabled><svg class="i"><use href="#i-refresh"/></svg><span class="lbl">새로고침</span></button>
+        <button class="btn ghost" id="btn-restore" title="문서를 열 때 만든 백업으로 되돌리기" disabled><svg class="i"><use href="#i-restore"/></svg><span class="lbl">원래대로</span></button>
+        <button class="btn ghost" id="btn-openapp" title="설치된 프로그램에서 열기" disabled><svg class="i"><use href="#i-external"/></svg><span class="lbl">프로그램에서 열기</span></button>
+        <button class="btn ghost" id="btn-pdf" title="PDF로 저장" disabled><svg class="i"><use href="#i-pdf"/></svg><span class="lbl">PDF로 저장</span></button>
+        <button class="btn ghost" id="btn-folder" title="문서가 있는 폴더 열기" disabled><svg class="i"><use href="#i-folder"/></svg><span class="lbl">폴더 열기</span></button>
+      </div>
+      <span class="vsep" aria-hidden="true"></span>
+      <button class="icon-btn" id="btn-toggle-chat" title="AI 대화창" aria-label="AI 대화창 열기/닫기" aria-pressed="true"><svg class="i"><use href="#i-panel"/></svg></button>
+      <button class="icon-btn" id="btn-settings" title="설정 (Ctrl+,)" aria-label="설정"><svg class="i"><use href="#i-gear"/></svg></button>
+    </header>
+
+    <main class="workspace" id="workspace">
+      <section class="viewer" id="viewer" aria-label="문서 미리보기">
+        <div class="empty" id="empty">
+          <div class="empty-inner">
+            <button class="dropzone" id="dropzone" type="button" aria-label="파일 열기">
+              <span class="dz-icon"><svg class="i"><use href="#i-upload"/></svg></span>
+              <span class="dz-title">문서를 여기로 끌어다 놓으세요</span>
+              <span class="dz-sub">한글(HWP·HWPX) · Word · PowerPoint · Excel 문서를 열 수 있어요</span>
+              <span class="btn primary lg dz-btn"><svg class="i"><use href="#i-file-open"/></svg>파일 열기</span>
+              <span class="dz-kbd"><kbd>Ctrl</kbd> + <kbd>O</kbd></span>
+            </button>
+            <section class="recent" id="recent" aria-labelledby="recent-title" hidden>
+              <div class="recent-head">
+                <h2 id="recent-title">최근 문서</h2>
+                <button class="link-btn" id="btn-recent-clear">목록 비우기</button>
+              </div>
+              <ul class="recent-list" id="recent-list"></ul>
+            </section>
+          </div>
+        </div>
+        <div class="preview" id="preview" hidden></div>
+        <div class="zoombar" id="zoombar" hidden>
+          <button class="icon-btn sm" id="zoom-out" title="축소 (Ctrl+-)" aria-label="축소"><svg class="i"><use href="#i-minus"/></svg></button>
+          <button class="zoom-val" id="zoom-val" title="100%로 보기">100%</button>
+          <button class="icon-btn sm" id="zoom-in" title="확대 (Ctrl+=)" aria-label="확대"><svg class="i"><use href="#i-plus"/></svg></button>
+          <span class="zsep"></span>
+          <button class="icon-btn sm" id="zoom-fit" title="너비에 맞추기" aria-label="너비에 맞추기"><svg class="i"><use href="#i-fit"/></svg></button>
+        </div>
+        <div class="refreshing" id="refreshing" hidden><span class="spinner"></span>새로 고치는 중</div>
+      </section>
+
+      <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="대화창 너비 조절" tabindex="0"></div>
+
+      <aside class="chat" id="chat" aria-label="AI 대화">
+        <div class="chat-head">
+          <div class="chat-title"><span class="ai-mark"><svg class="i"><use href="#i-sparkle"/></svg></span>AI 도우미</div>
+          <select class="select sm" id="provider" aria-label="AI 프로그램 선택"></select>
+          <button class="icon-btn sm" id="btn-new-chat" title="새 대화" aria-label="새 대화"><svg class="i"><use href="#i-new-chat"/></svg></button>
+          <button class="icon-btn sm" id="btn-collapse-chat" title="대화창 접기" aria-label="대화창 접기"><svg class="i"><use href="#i-chevron-right"/></svg></button>
+        </div>
+        <div class="chat-body" id="chat-body">
+          <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
+        </div>
+        <div class="composer" id="composer">
+          <div class="composer-box">
+            <textarea id="prompt" rows="1" placeholder="문서에 대해 물어보거나 고칠 내용을 적어 주세요" aria-label="AI에게 보낼 메시지"></textarea>
+            <button class="send-btn" id="btn-send" title="보내기 (Enter)" aria-label="보내기"><svg class="i"><use href="#i-send"/></svg></button>
+          </div>
+          <div class="composer-hint"><span id="composer-hint">Enter 보내기 · Shift+Enter 줄바꿈</span></div>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar" id="statusbar">
+      <span class="st" id="st-engine" hidden><svg class="i"><use href="#i-engine"/></svg><span></span></span>
+      <span class="st" id="st-pages" hidden><svg class="i"><use href="#i-pages"/></svg><span></span></span>
+      <span class="st" id="st-saved" hidden><svg class="i"><use href="#i-clock"/></svg><span></span></span>
+      <span class="spacer"></span>
+      <span class="st busy" id="st-busy" hidden><span class="spinner"></span><span id="st-busy-text"></span></span>
+      <span class="st ready" id="st-ready"><span class="dot"></span>준비됨</span>
+    </footer>
+  </div>
+
+  <div class="drop-overlay" id="drop-overlay" hidden>
+    <div class="drop-card">
+      <span class="dz-icon"><svg class="i"><use href="#i-upload"/></svg></span>
+      <div class="drop-title">놓으면 바로 열어요</div>
+      <div class="drop-sub">한글 · Word · PowerPoint · Excel</div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- 확인 창 -->
+  <dialog class="dialog confirm" id="dlg-confirm" aria-labelledby="confirm-title">
+    <div class="confirm-wrap">
+      <span class="confirm-icon" id="confirm-icon"><svg class="i"><use href="#i-info"/></svg></span>
+      <div class="confirm-main">
+        <h2 id="confirm-title"></h2>
+        <div class="confirm-body" id="confirm-body"></div>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn" id="confirm-cancel">취소</button>
+      <button class="btn primary" id="confirm-ok">확인</button>
+    </div>
+  </dialog>
+
+  <!-- 설정 -->
+  <dialog class="dialog settings" id="dlg-settings" aria-labelledby="settings-title">
+    <div class="settings-shell">
+      <nav class="settings-nav" aria-label="설정 항목">
+        <h2 id="settings-title">설정</h2>
+        <button class="nav-item active" data-tab="ai"><svg class="i"><use href="#i-sparkle"/></svg>AI</button>
+        <button class="nav-item" data-tab="view"><svg class="i"><use href="#i-eye"/></svg>미리보기 · 화면</button>
+        <button class="nav-item" data-tab="connect"><svg class="i"><use href="#i-plug"/></svg>외부 연결</button>
+        <button class="nav-item" data-tab="hancom"><svg class="i"><use href="#i-shield"/></svg>한글 자동화</button>
+        <div class="nav-foot" id="app-version"></div>
+      </nav>
+      <div class="settings-main">
+        <button class="icon-btn close-x" id="settings-close" title="닫기 (Esc)" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg></button>
+
+        <section class="settings-page" data-page="ai">
+          <h3>AI 프로그램</h3>
+          <p class="help">Office Kit는 로그인 정보를 다루지 않아요. 이 컴퓨터에 설치하고 로그인한 Claude Code 또는 Codex를 그대로 실행합니다.</p>
+          <div class="choice-list" id="provider-choices"></div>
+          <div class="row-end"><button class="btn sm" id="btn-provider-recheck"><svg class="i"><use href="#i-refresh"/></svg>다시 확인</button></div>
+          <h3>모델 <span class="opt">선택</span></h3>
+          <p class="help">AI 프로그램마다 따로 정합니다. 비워 두면 그 프로그램의 기본 모델을 씁니다.</p>
+          <div class="model-list" id="model-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="view" hidden>
+          <h3>미리보기</h3>
+          <div class="choice-list" id="mode-choices">
+            <label class="choice"><input type="radio" name="previewMode" value="auto"><span class="choice-body"><span class="choice-title">빠르게</span><span class="choice-desc">한글 문서는 내장 엔진으로 바로 그리고, 나머지는 설치된 프로그램을 씁니다.</span></span></label>
+            <label class="choice"><input type="radio" name="previewMode" value="exact"><span class="choice-body"><span class="choice-title">정확하게 <span class="opt">설치된 프로그램</span></span><span class="choice-desc">한컴오피스·Word·PowerPoint·Excel로 PDF를 만들어 원본과 똑같이 보여 줍니다. 조금 느려요.</span></span></label>
+            <label class="choice"><input type="radio" name="previewMode" value="text"><span class="choice-body"><span class="choice-title">글자만</span><span class="choice-desc">프로그램을 띄우지 않고 글자와 표만 바로 보여 줍니다. Word·PowerPoint·Excel 문서가 많을 때 편해요.</span></span></label>
+          </div>
+          <h3>화면 테마</h3>
+          <div class="segmented" id="theme-seg" role="radiogroup" aria-label="화면 테마">
+            <button role="radio" data-theme="system">시스템 설정</button>
+            <button role="radio" data-theme="light">밝게</button>
+            <button role="radio" data-theme="dark">어둡게</button>
+          </div>
+          <h3>원본 백업</h3>
+          <p class="help">문서를 열 때마다 원본을 자동으로 복사해 둡니다 (최근 50개). 상단의 <b>원래대로</b>로 되돌릴 수 있어요.</p>
+          <button class="btn sm" id="btn-open-backups"><svg class="i"><use href="#i-folder"/></svg>백업 폴더 열기</button>
+        </section>
+
+        <section class="settings-page" data-page="connect" hidden>
+          <h3>다른 프로그램에서 Office Kit 쓰기</h3>
+          <p class="help">연결하면 각 프로그램의 설정에 Office Kit 문서 도구(MCP 서버)를 추가합니다. 연결한 프로그램은 다시 시작해야 적용돼요.</p>
+          <div class="int-list" id="int-list"></div>
+        </section>
+
+        <section class="settings-page" data-page="hancom" hidden>
+          <h3>한글 자동화</h3>
+          <p class="help">한컴오피스는 <b>자동화 보안 모듈</b>이 없으면 파일마다 “접근 허용” 창을 띄워 자동 작업이 멈춥니다. 그래서 지금은 내장 엔진으로 한글 문서를 다뤄요. 연결하면 한글 프로그램으로 PDF 저장과 정확한 미리보기를 할 수 있습니다.</p>
+          <div class="status-grid" id="hancom-status"></div>
+          <div class="btn-row">
+            <button class="btn primary" id="btn-hancom-setup"><svg class="i"><use href="#i-shield"/></svg>한글 자동화 연결</button>
+            <button class="btn" id="btn-hancom-dll">직접 DLL 선택…</button>
+            <button class="btn ghost" id="btn-hancom-remove" hidden>연결 해제</button>
+          </div>
+          <p class="help small" id="hancom-note"></p>
+        </section>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>
