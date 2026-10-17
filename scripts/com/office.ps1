@@ -1,6 +1,7 @@
 # office.ps1 - drives installed Hancom/Word/PowerPoint/Excel through COM.
 # Usage: powershell -File office.ps1 <request.json> <response.json>
-# Request:  { "app": "hwp|word|ppt|excel|pdf|probe", "op": "...", "path": "...", "pidFile": "...", ... }
+# Request:  { "app": "hwp|word|ppt|excel|pdf|probe", "op": "...", "path": "...", "pidFile": "...", "startedFile": "...", ... }
+#           startedFile: written once the shared Office lock is held (Node starts the per-request timeout then)
 #           pdf: { "app": "pdf", "op": "pageImage", "path": "a.pdf", "page": 1, "dpi": 110, "output": "a.png" }
 # Response: { "ok": true, ... } or { "ok": false, "error": "..." }
 # Errors are short English codes ("open failed: ...", "unsupported format: ...") that com.mjs turns into Korean.
@@ -29,6 +30,8 @@ $script:lock = $null
 function Enter-OfficeLock {
   $script:lock = New-Object System.Threading.Mutex($false, 'Local\OfficeKitCom')
   try { [void]$script:lock.WaitOne() } catch [System.Threading.AbandonedMutexException] { }
+  # time spent waiting above must not count against the request's timeout: tell Node the work starts now
+  if ($req.startedFile) { try { [System.IO.File]::WriteAllText([string]$req.startedFile, [string]$PID) } catch {} }
 }
 function Exit-OfficeLock {
   if ($script:lock) { try { $script:lock.ReleaseMutex() } catch {}; $script:lock.Dispose(); $script:lock = $null }
@@ -79,9 +82,109 @@ function Get-SaveFormat([string]$app) {
 $NoPassword = 'officekit-no-password'
 $Missing = [Type]::Missing
 
+# Only an in-place save opens a document read-write (a copy, convert or PDF export opens it read-only).
+function Test-SamePath([string]$a, [string]$b) {
+  if (-not $a -or -not $b) { return $false }
+  try { $a = [System.IO.Path]::GetFullPath($a); $b = [System.IO.Path]::GetFullPath($b) } catch {}
+  return [string]::Equals($a, $b, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+# ---------------------------------------------------------------- modify (write) passwords
+# Opening a file that has a modify password read-write makes Office wait on a hidden password prompt
+# (DisplayAlerts does not stop it). Only OOXML packages are checked here; binary and ODF files are not.
+$WriteGuards = @{
+  word  = @{ main = 'word/document.xml'; settings = $true
+             pattern = '<(?:\w+:)?writeProtection\b[^>]*?\s(?:\w+:)?(?:hash|hashValue|cryptProviderType)=' }
+  excel = @{ main = 'xl/workbook.xml'; pattern = '<(?:\w+:)?fileSharing\b[^>]*?\s(?:reservationPassword|hashValue)=' }
+  ppt   = @{ main = 'ppt/presentation.xml'; pattern = '<(\w+:|)modifyVerifier\b[^>]*?(?:/>|>[\s\S]*?</\1modifyVerifier>)' }
+}
+
+function Read-ZipText($zip, [string]$name) {
+  $entry = $zip.GetEntry($name)
+  if (-not $entry) { return $null }
+  $reader = New-Object System.IO.StreamReader($entry.Open(), [System.Text.Encoding]::UTF8)
+  try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+}
+
+# the part that holds the password setting -> @{ part; xml }, or $null (not a package, unreadable). Never throws.
+function Read-GuardPart([string]$path, [string]$app) {
+  $g = $WriteGuards[$app]
+  if (-not $g -or -not $path) { return $null }
+  $fs = $null; $zip = $null
+  try {
+    $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]'ReadWrite, Delete')
+    if ($fs.ReadByte() -ne 0x50 -or $fs.ReadByte() -ne 0x4B) { return $null }
+    $fs.Position = 0
+    Add-Type -AssemblyName System.IO.Compression
+    $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Read, $true)
+    $main = $g.main
+    $rels = Read-ZipText $zip '_rels/.rels'
+    if ($rels -and $rels -match '<Relationship\b[^>]*Type="[^"]*/officeDocument"[^>]*>' -and $Matches[0] -match 'Target="([^"]+)"') {
+      $main = $Matches[1].TrimStart('/')
+    }
+    $part = $main
+    if ($g.settings) { $part = $main.Substring(0, $main.LastIndexOf('/') + 1) + 'settings.xml' }
+    $xml = Read-ZipText $zip $part
+    if (-not $xml) { return $null }
+    return @{ part = $part; xml = $xml }
+  } catch { return $null } finally { if ($zip) { $zip.Dispose() }; if ($fs) { $fs.Dispose() } }
+}
+
+# -> @{ part; xml; element } when the file has a modify password, else $null
+function Get-WriteGuard([string]$path, [string]$app) {
+  $p = Read-GuardPart $path $app
+  if (-not $p) { return $null }
+  $m = [regex]::Match($p.xml, $WriteGuards[$app].pattern)
+  if (-not $m.Success) { return $null }
+  $p.element = $m.Value
+  return $p
+}
+
+function Set-ZipText([string]$path, [string]$name, [string]$text) {
+  Add-Type -AssemblyName System.IO.Compression
+  $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+  $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Update, $false)
+  try {
+    $old = $zip.GetEntry($name)
+    if ($old) { $old.Delete() }
+    $writer = New-Object System.IO.StreamWriter($zip.CreateEntry($name).Open(), (New-Object System.Text.UTF8Encoding($false)))
+    try { $writer.Write($text) } finally { $writer.Dispose() }
+  } finally { $zip.Dispose() }
+}
+
+# PowerPoint opens a deck that has a modify password read-only and then refuses to change it or export PDF/XPS
+# ("Presentation cannot be modified"). Work on a copy without the password, next to the request file
+# (Node deletes that folder). The source file is never changed.
+function New-PptUnlockedCopy([string]$path, $guard) {
+  $dir = Join-Path (Split-Path -Parent $RequestPath) 'ppt-src'
+  [void][System.IO.Directory]::CreateDirectory($dir)
+  [string]$copy = [System.IO.Path]::Combine($dir, [System.IO.Path]::GetFileName($path))
+  [System.IO.File]::Copy($path, $copy, $true)
+  Set-ZipText $copy $guard.part $guard.xml.Replace($guard.element, '')
+  return $copy
+}
+
+# a .pptx result keeps the source's modify password, as PowerPoint itself does on a read-only open + SaveAs
+function Add-PptVerifier([string]$path, [string]$element) {
+  $p = Read-GuardPart $path 'ppt'
+  if (-not $p -or [regex]::IsMatch($p.xml, $WriteGuards.ppt.pattern)) { return }
+  # schema order: ... modifyVerifier, extLst (last)
+  $ext = [regex]::Match($p.xml, '<p:extLst>(?:(?!<p:extLst>)[\s\S])*</p:extLst>\s*</p:presentation>\s*$')
+  $at = $(if ($ext.Success) { $ext.Index } else { $p.xml.LastIndexOf('</p:presentation>') })
+  if ($at -lt 0) { return }
+  Set-ZipText $path $p.part ($p.xml.Substring(0, $at) + $element + $p.xml.Substring($at))
+}
+
 $req = [System.IO.File]::ReadAllText($RequestPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
 
 # ---------------------------------------------------------------- Hancom
+# Per-app feature files define Invoke-<App>Inspect / Invoke-<App>Edit (see docs/FEATURES.md).
+# Edit runs every operation first and saves once at the end; any failure throws before saving.
+foreach ($opsFile in @('word-ops.ps1', 'ppt-ops.ps1', 'excel-ops.ps1')) {
+  $opsPath = Join-Path $PSScriptRoot $opsFile
+  if (Test-Path -LiteralPath $opsPath) { . $opsPath }
+}
+
 function Invoke-Hwp($req) {
   $fmt = Get-SaveFormat 'hwp'
   $hwp = New-OfficeApp 'HWPFrame.HwpObject' 'Hwp'
@@ -146,18 +249,33 @@ function Invoke-Hwp($req) {
 # ---------------------------------------------------------------- Word
 function Invoke-Word($req) {
   $fmt = Get-SaveFormat 'word'
+  $inPlace = Test-SamePath $req.save $req.path
+  if ($inPlace -and (Get-WriteGuard $req.path 'word')) { throw "write protected: $($req.path)" }
   $word = New-OfficeApp 'Word.Application' 'WINWORD'
   $doc = $null; $guard = $null
   try {
     $word.DisplayAlerts = 0
     $guard = Set-MacroGuard $word
     if ($req.visible) { $word.Visible = $true }
-    $readOnly = -not ($req.save -or $req.op -in @('replace', 'fill'))
-    # a dummy password makes a protected document fail at once instead of waiting on a hidden prompt
-    try { $doc = $word.Documents.Open($req.path, $false, $readOnly, $false, $NoPassword) }
-    catch { throw "open failed: $($req.path) ($($_.Exception.Message))" }
+    # dummy passwords make a protected document fail at once instead of waiting on a hidden prompt
+    # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate, Revert, WritePasswordDocument
+    try {
+      if ($inPlace) { $doc = $word.Documents.Open([string]$req.path, $false, $false, $false, $NoPassword, $Missing, $Missing, $NoPassword) }
+      else { $doc = $word.Documents.Open([string]$req.path, $false, $true, $false, $NoPassword) }
+    } catch {
+      $why = $_.Exception.Message
+      # a modify password (e.g. binary .doc, not seen by Get-WriteGuard) also fails here: if it opens read-only, say so
+      if ($inPlace -and $why -match 'password|command failed') {
+        $ro = $null
+        try { $ro = $word.Documents.Open([string]$req.path, $false, $true, $false, $NoPassword) } catch {}
+        if ($ro) { try { $ro.Close($false) } catch {}; Release $ro; throw "write protected: $($req.path)" }
+      }
+      throw "open failed: $($req.path) ($why)"
+    }
     $res = @{ ok = $true; engine = 'word' }
     switch ($req.op) {
+      'inspect' { $res.inspect = Invoke-WordInspect $doc $word $req }
+      'edit'    { $res.results = @(Invoke-WordEdit $doc $word $req) }
       'text'   { $res.text = $doc.Content.Text; $res.pages = $doc.ComputeStatistics(2) }
       'fields' {
         $res.fields = @()
@@ -205,9 +323,10 @@ function Invoke-Word($req) {
       }
     }
     if ($req.save) {
-      if ($req.save -eq $req.path) { $doc.Save() }
-      elseif ($fmt -eq 17) { $doc.ExportAsFixedFormat($req.save, 17) }
-      else { $doc.SaveAs2($req.save, $fmt) }
+      # [string]: a PSObject-wrapped path makes Word's SaveAs2 hang
+      if ($inPlace) { $doc.Save() }
+      elseif ($fmt -eq 17) { $doc.ExportAsFixedFormat([string]$req.save, 17) }
+      else { $doc.SaveAs2([string]$req.save, $fmt) }
       $res.saved = $req.save
     }
     if ($req.visible) { $res.leftOpen = $true; $doc = $null }
@@ -223,14 +342,23 @@ function Invoke-Word($req) {
 # ---------------------------------------------------------------- PowerPoint
 function Invoke-Ppt($req) {
   $fmt = Get-SaveFormat 'ppt'
+  $inPlace = Test-SamePath $req.save $req.path
+  [string]$openPath = $req.path
+  $lockInfo = $null; $unlocked = $false
+  if ($req.save) { $lockInfo = Get-WriteGuard $req.path 'ppt' }
+  if ($lockInfo -and $inPlace) { throw "write protected: $($req.path)" }
+  # a plain convert (pptx/ppt/odp) works on the read-only original and keeps its password like PowerPoint does;
+  # changes and PDF export need the unlocked copy
+  if ($lockInfo -and ($fmt -eq 32 -or $req.op -ne 'convert')) { $openPath = New-PptUnlockedCopy $req.path $lockInfo; $unlocked = $true }
   $app = New-OfficeApp 'PowerPoint.Application' 'POWERPNT'
   $pres = $null; $guard = $null
   try {
     $app.DisplayAlerts = 1  # ppAlertsNone
     $guard = Set-MacroGuard $app
-    $readOnly = $(if ($req.save -or $req.op -eq 'replace') { 0 } else { -1 })
+    # only an in-place save opens read-write: a deck with a modify password would wait on a hidden prompt
+    $readOnly = $(if ($inPlace) { 0 } else { -1 })
     $withWindow = $(if ($req.visible) { -1 } else { 0 })
-    try { $pres = $app.Presentations.Open($req.path, $readOnly, 0, $withWindow) }
+    try { $pres = $app.Presentations.Open($openPath, $readOnly, 0, $withWindow) }
     catch { throw "open failed: $($req.path) ($($_.Exception.Message))" }
     $res = @{ ok = $true; engine = 'powerpoint'; slides = $pres.Slides.Count }
     $frames = New-Object System.Collections.ArrayList
@@ -243,6 +371,8 @@ function Invoke-Ppt($req) {
       }
     }
     switch ($req.op) {
+      'inspect' { $res.inspect = Invoke-PptInspect $pres $app $req }
+      'edit'    { $res.results = @(Invoke-PptEdit $pres $app $req) }
       'text' {
         $bySlide = @{}
         foreach ($f in $frames) { $bySlide[$f.slide] += ($f.tr.Text -replace "`r", "`n") + "`n" }
@@ -271,10 +401,17 @@ function Invoke-Ppt($req) {
       }
     }
     if ($req.save) {
-      if ($req.save -eq $req.path) { $pres.Save() } else { $pres.SaveAs($req.save, $fmt) }
+      try { if ($inPlace) { $pres.Save() } else { $pres.SaveAs([string]$req.save, $fmt) } }
+      catch { throw "save failed: $($req.save) ($($_.Exception.Message))" }
       $res.saved = $req.save
     }
     if ($req.visible) { $res.leftOpen = $true; $pres = $null }
+    if ($unlocked -and $fmt -eq 24) {
+      # PowerPoint holds the file it saved: close first, then put the source's modify password back
+      try { $pres.Close() } catch {}
+      Release $pres; $pres = $null
+      try { Add-PptVerifier ([string]$req.save) $lockInfo.element; $res.writePassword = $true } catch { $res.writePassword = $false }
+    }
     return $res
   } finally {
     if ($pres) { try { $pres.Close() } catch {} }
@@ -303,18 +440,24 @@ function Escape-ExcelFind([string]$s) { return $s.Replace('~', '~~').Replace('*'
 
 function Invoke-Excel($req) {
   $fmt = Get-SaveFormat 'excel'
+  $inPlace = Test-SamePath $req.save $req.path
+  # Excel rejects a dummy WriteResPassword even on unprotected files, so check the package before opening
+  if ($inPlace -and (Get-WriteGuard $req.path 'excel')) { throw "write protected: $($req.path)" }
   $app = New-OfficeApp 'Excel.Application' 'EXCEL'
   $wb = $null; $guard = $null
   try {
     $app.DisplayAlerts = $false
     $guard = Set-MacroGuard $app
     if ($req.visible) { $app.Visible = $true } else { try { $app.EnableEvents = $false } catch {} }
-    $readOnly = -not ($req.save -or $req.op -in @('replace', 'setCells'))
+    # only an in-place save opens read-write: a workbook with a modify password would wait on a hidden prompt
+    $readOnly = -not $inPlace
     # Filename, UpdateLinks(never), ReadOnly, Format, Password(dummy), WriteResPassword, IgnoreReadOnlyRecommended
-    try { $wb = $app.Workbooks.Open($req.path, 0, $readOnly, $Missing, $NoPassword, $Missing, $true) }
+    try { $wb = $app.Workbooks.Open([string]$req.path, 0, $readOnly, $Missing, $NoPassword, $Missing, $true) }
     catch { throw "open failed: $($req.path) ($($_.Exception.Message))" }
     $res = @{ ok = $true; engine = 'excel' }
     switch ($req.op) {
+      'inspect' { $res.inspect = Invoke-ExcelInspect $wb $app $req }
+      'edit'    { $res.results = @(Invoke-ExcelEdit $wb $app $req) }
       'text' {
         # one read per sheet (cell-by-cell COM calls are far too slow); rows/columns from A1 like the file engine
         $maxRows = 10000; $maxCols = 200; $maxCells = 200000
@@ -376,9 +519,9 @@ function Invoke-Excel($req) {
       }
     }
     if ($req.save) {
-      if ($req.save -eq $req.path) { $wb.Save() }
-      elseif ($fmt -eq -1) { $wb.ExportAsFixedFormat(0, $req.save) }
-      else { $wb.SaveAs($req.save, $fmt) }
+      if ($inPlace) { $wb.Save() }
+      elseif ($fmt -eq -1) { $wb.ExportAsFixedFormat(0, [string]$req.save) }
+      else { $wb.SaveAs([string]$req.save, $fmt) }
       $res.saved = $req.save
     }
     if ($req.visible) { $res.leftOpen = $true; $wb = $null }

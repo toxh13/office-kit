@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { inflateSync } from 'node:zlib';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -156,7 +157,83 @@ describe('쪽 그림 pageImage', () => {
   test('없는 파일', async () => {
     await assert.rejects(pageImage(tmp.path('없음.hwp')), /파일이 없습니다/);
   });
+
+  // PowerPoint는 쪽 = 슬라이드 번호 (숨긴 슬라이드 포함). 범위·암호는 PowerPoint를 띄우기 전에 거른다
+  test('.pptx 범위·암호 확인 (PowerPoint 없이)', async () => {
+    const f = await slideDeck(tmp.path('range.pptx'));
+    await assert.rejects(pageImage(f, 4), /범위를 벗어났습니다: 4쪽 \(전체 3쪽/); // 숨긴 슬라이드 2도 센다
+    await assert.rejects(pageImage(f, 0), /범위를 벗어났습니다: 0쪽 \(전체 3쪽/);
+    const odp = tmp.path('range.odp');
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    zip.file('mimetype', 'application/vnd.oasis.opendocument.presentation');
+    zip.file('content.xml', '<office:document-content><office:body><office:presentation><draw:page draw:name="1"/><draw:page draw:name="2">'
+      + '<presentation:notes><draw:page-thumbnail/></presentation:notes></draw:page></office:presentation></office:body></office:document-content>');
+    writeFileSync(odp, await zip.generateAsync({ type: 'nodebuffer' }));
+    await assert.rejects(pageImage(odp, 3), /범위를 벗어났습니다: 3쪽 \(전체 2쪽/);
+    // 열기 암호(암호화된 꾸러미)는 보이지 않는 암호 창에서 멈추므로 바로 거절
+    const locked = tmp.path('locked.pptx');
+    writeFileSync(locked, Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(504),
+      Buffer.from('EncryptedPackage', 'utf16le'), Buffer.alloc(64)]));
+    await assert.rejects(pageImage(locked, 1), /암호가 걸린 문서는 열 수 없습니다/);
+  });
 });
+
+// 슬라이드 3장 (1 빨강, 2 초록·숨김, 3 파랑 배경). 숨긴 슬라이드는 PDF에서 빠지므로 쪽 그림 번호 확인용
+async function slideDeck(out) {
+  const { default: JSZip } = await import('jszip');
+  await createDocument(out, '# 하나\n# 둘 (숨김)\n# 셋');
+  const zip = await JSZip.loadAsync(readFileSync(out));
+  for (const [n, color] of [[1, 'FF0000'], [2, '00FF00'], [3, '0000FF']]) {
+    const name = `ppt/slides/slide${n}.xml`;
+    let xml = await zip.file(name).async('string');
+    xml = xml.replace(/<p:cSld\b[^>]*>/, (m) => `${m}<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>`);
+    if (n === 2) xml = xml.replace(/<p:sld\b/, '<p:sld show="0"');
+    zip.file(name, xml);
+  }
+  writeFileSync(out, await zip.generateAsync({ type: 'nodebuffer' }));
+  return out;
+}
+
+// PNG 한 점의 색 → 'rrggbb' (비월 주사 없는 PNG: 회색·RGB·팔레트(1~8비트)·RGBA, 필터 풀기).
+// PowerPoint가 내보낸 그림은 팔레트 PNG일 때가 많다
+function pixelAt(png, x, y) {
+  let pos = 8; const idat = []; let w; let depth; let ct; let plte;
+  while (pos < png.length) {
+    const len = png.readUInt32BE(pos); const type = png.toString('ascii', pos + 4, pos + 8);
+    const data = png.subarray(pos + 8, pos + 8 + len);
+    if (type === 'IHDR') { w = data.readUInt32BE(0); depth = data[8]; ct = data[9]; assert.equal(data[12], 0, '비월 주사 PNG는 못 읽음'); }
+    else if (type === 'PLTE') plte = data;
+    else if (type === 'IDAT') idat.push(data);
+    else if (type === 'IEND') break;
+    pos += 12 + len;
+  }
+  const bits = depth * { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[ct];
+  assert.ok(bits <= 32 && depth <= 8, `PNG 형식 ${ct}/${depth}비트`);
+  const bpp = Math.max(1, bits / 8);
+  const stride = Math.ceil((w * bits) / 8);
+  const raw = inflateSync(Buffer.concat(idat));
+  let prev = Buffer.alloc(stride); let row;
+  for (let r = 0; r <= y; r++) {
+    const f = raw[r * (stride + 1)]; row = Buffer.alloc(stride);
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? row[i - bpp] : 0; const b = prev[i]; const c = i >= bpp ? prev[i - bpp] : 0;
+      let v = raw[r * (stride + 1) + 1 + i];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const p = a + b - c; const pa = Math.abs(p - a); const pb = Math.abs(p - b); const pc = Math.abs(p - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      row[i] = v & 255;
+    }
+    prev = row;
+  }
+  const hex = (vals) => vals.map((v) => v.toString(16).padStart(2, '0')).join('');
+  if (depth < 8) { // 팔레트·회색: 한 바이트에 여러 점
+    const at = x * depth; const v = (row[at >> 3] >> (8 - depth - (at & 7))) & ((1 << depth) - 1);
+    return ct === 3 ? hex([...plte.subarray(v * 3, v * 3 + 3)]) : hex(Array(3).fill(Math.round((v * 255) / ((1 << depth) - 1))));
+  }
+  if (ct === 3) return hex([...plte.subarray(row[x] * 3, row[x] * 3 + 3)]);
+  if (ct === 0 || ct === 4) return hex(Array(3).fill(row[x * bpp]));
+  return hex([row[x * bpp], row[x * bpp + 1], row[x * bpp + 2]]);
+}
 
 // ── 바꾸기·채우기 세부 동작 (파일 엔진) ─────────────────────
 
@@ -522,9 +599,46 @@ describe('프로그램 엔진 (Word/PowerPoint/Excel)', { skip: !COM_TESTS && 'O
       assert.equal(readFileSync(pdf).subarray(0, 4).toString(), '%PDF');
       const img = await pageImage(src, 1);
       assert.ok(isPng(img.png));
-      assert.match(img.engine, /\+pdf$/);
+      // PowerPoint는 PDF를 거치지 않고 슬라이드를 바로 그린다 (숨긴 슬라이드 때문에)
+      assert.match(img.engine, ext === 'pptx' ? /^powerpoint$/ : /\+pdf$/);
     });
   }
+
+  test('.pptx 쪽 그림 = 슬라이드 번호 (숨긴 슬라이드 포함, PDF 안 거침)', { timeout: 300_000 }, async () => {
+    const running = () => new Promise((done) => execFile('tasklist', ['/FI', 'IMAGENAME eq POWERPNT.EXE', '/NH'], { encoding: 'utf8' },
+      (_e, out) => done(String(out).includes('POWERPNT.EXE'))));
+    const before = await running();
+    const src = await slideDeck(tmp.path('hidden.pptx'));
+    // 숨긴 슬라이드 2도 2쪽, 3쪽은 슬라이드 3 (PDF였다면 2쪽짜리라 슬라이드 3이 2쪽)
+    const p2 = await pageImage(src, 2, { dpi: 24 });
+    assert.equal(p2.engine, 'powerpoint');
+    assert.deepEqual([p2.page, p2.pages], [2, 3]);
+    assert.deepEqual(pngSize(p2.png), { width: 320, height: 180 }); // 960×540pt @24dpi (기본 크기에서 줄임)
+    assert.deepEqual([p2.width, p2.height], [320, 180]);
+    assert.equal(pixelAt(p2.png, 4, 4), '00ff00');
+    const p3 = await pageImage(src, 3, { dpi: 24 });
+    assert.equal(pixelAt(p3.png, 4, 4), '0000ff');
+    const p1 = await pageImage(src, 1, { dpi: 96 });
+    assert.deepEqual(pngSize(p1.png), { width: 1280, height: 720 });
+    assert.equal(pixelAt(p1.png, 4, 4), 'ff0000');
+    // dpi가 기본 크기보다 크면 늘리지 않는다 (같은 슬라이드는 다시 띄우지 않고 기억한 그림을 씀)
+    const t = Date.now();
+    const big = await pageImage(src, 1, { dpi: 200 });
+    assert.deepEqual(pngSize(big.png), { width: 1280, height: 720 });
+    assert.ok(Date.now() - t < 2000, `${Date.now() - t}ms`);
+    await assert.rejects(pageImage(src, 4), /범위를 벗어났습니다: 4쪽 \(전체 3쪽/);
+    // .ppt는 미리 셀 수 없어 PowerPoint가 알려 준 수로 같은 문구
+    const ppt = tmp.path('hidden.ppt');
+    await convertDocument(src, ppt);
+    const q2 = await pageImage(ppt, 2, { dpi: 24 });
+    assert.deepEqual([q2.page, q2.pages], [2, 3]);
+    assert.equal(pixelAt(q2.png, 4, 4), '00ff00');
+    await assert.rejects(pageImage(ppt, 5), /범위를 벗어났습니다: 5쪽 \(전체 3쪽/);
+    if (!before) {
+      await new Promise((r) => setTimeout(r, 1000));
+      assert.equal(await running(), false, '숨은 POWERPNT.EXE가 남음');
+    }
+  });
 
   // 프로그램은 임시 폴더에 PDF를 쓰고 미리보기 폴더로 옮긴다 (MSIX 앱 안에서는 가상화된 %APPDATA%를 Word가 못 본다)
   test('.docx 미리보기 PDF는 미리보기 폴더에 생긴다', { timeout: 180_000 }, async () => {

@@ -1,7 +1,7 @@
 // mcp.test.mjs — MCP 서버를 실제로 띄워(stdio) SDK 클라이언트로 도구를 호출한다.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -9,8 +9,13 @@ import { MANUSCRIPT, COM_TESTS, ROOT, tempDir, isPng, pngSize } from './helpers/
 
 const SERVER = join(ROOT, 'src', 'mcp', 'server.mjs');
 const CLI = join(ROOT, 'src', 'cli.mjs');
-const TOOLS = ['office_status', 'office_info', 'office_read', 'office_fields', 'office_fill', 'office_replace',
-  'office_set_cells', 'office_convert', 'office_create', 'office_page_image', 'hwp_edit'];
+// 서버가 등록하는 도구: 공통 office_* + 형식마다(src/mcp/tools/*.mjs) 살펴보기·편집 한 쌍.
+// 도구를 더하거나 빼면 여기도 고쳐야 한다 (빠지거나 늘어난 도구를 잡는다).
+const COMMON_TOOLS = ['office_status', 'office_info', 'office_read', 'office_fields', 'office_fill', 'office_replace',
+  'office_set_cells', 'office_convert', 'office_create', 'office_page_image'];
+const FORMATS = ['hwp', 'word', 'ppt', 'excel'];
+const TOOLS = [...COMMON_TOOLS, ...FORMATS.flatMap((f) => [`${f}_inspect`, `${f}_edit`])];
+const HANGUL = /[가-힣]/;
 
 const tmp = tempDir('officekit-mcp-');
 
@@ -43,12 +48,26 @@ async function fails(name, args, re) {
 }
 
 describe('도구 목록', () => {
-  test('11개 도구, 한국어 설명', async () => {
+  test(`${TOOLS.length}개 도구 (공통 ${COMMON_TOOLS.length} + 형식별 ${FORMATS.length * 2}), 한국어 설명`, async () => {
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), [...TOOLS].sort());
     for (const t of tools) {
-      assert.match(t.description, /[가-힣]/, t.name);
-      assert.equal(t.inputSchema.type, 'object');
+      assert.match(t.title ?? '', HANGUL, `${t.name} 제목`);
+      assert.match(t.description ?? '', HANGUL, `${t.name} 설명`);
+      assert.equal(t.inputSchema.type, 'object', t.name);
+      for (const [k, v] of Object.entries(t.inputSchema.properties ?? {})) assert.match(v.description ?? '', HANGUL, `${t.name}.${k} 설명`);
+    }
+    // 형식별 도구: 모듈(src/mcp/tools/*.mjs)마다 한 쌍. 살펴보기는 읽기 전용, 편집은 path + operations 필수
+    const modules = readdirSync(join(ROOT, 'src', 'mcp', 'tools')).filter((f) => f.endsWith('.mjs')).map((f) => f.slice(0, -4));
+    assert.deepEqual(modules.sort(), [...FORMATS].sort(), '도구 모듈과 FORMATS가 다름');
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    for (const f of FORMATS) {
+      const inspect = byName[`${f}_inspect`];
+      const edit = byName[`${f}_edit`];
+      assert.equal(inspect.annotations?.readOnlyHint, true, `${f}_inspect readOnlyHint`);
+      assert.ok(inspect.inputSchema.required?.includes('path'), `${f}_inspect path`);
+      assert.equal(edit.annotations?.destructiveHint, true, `${f}_edit destructiveHint`);
+      for (const k of ['path', 'operations']) assert.ok(edit.inputSchema.required?.includes(k), `${f}_edit ${k}`);
     }
     const create = tools.find((t) => t.name === 'office_create');
     assert.match(create.description, /---page---/);
@@ -286,6 +305,22 @@ describe('오류 처리', () => {
     assert.match(t, /'path' 값이 필요합니다/);
   });
 
+  test("검증 오류의 영어 경로 꼬리(' at 경로')는 '(위치: 경로)'로", async () => {
+    let t = await fails('hwp_edit', { path: 'report.hwp', operations: [{ op: 'explode' }] }, /알 수 없는 작업\(op\)/);
+    assert.match(t, /\(위치: operations\[0\]\.op\)$/);
+    assert.doesNotMatch(t, / at operations/);
+    t = await fails('office_page_image', { path: 'report.hwp', page: 0 }, /값이 너무 작습니다 \(1 이상\) \(위치: page\)$/);
+    assert.doesNotMatch(t, /Too small| at page/);
+    // 문제가 여럿이면 줄마다
+    const { koreanError } = await import('../src/mcp/server.mjs');
+    const msg = koreanError({ message: 'MCP error -32602: Input validation error: Invalid arguments for tool ppt_edit: '
+      + '잘못된 입력 at operations[0].slide\nInvalid option: expected one of "a"|"b" at operations[1].effect\n'
+      + 'Too small: expected string to have >=1 characters at values.칸 이름\nUnrecognized key: "extra" at operations[2]\n경로 없는 문제' });
+    assert.equal(msg, '입력값이 올바르지 않습니다 (ppt_edit): 잘못된 입력 (위치: operations[0].slide)\n'
+      + '다음 중 하나여야 합니다: "a", "b" (위치: operations[1].effect)\n너무 짧습니다 (1자 이상) (위치: values.칸 이름)\n'
+      + '알 수 없는 인수: "extra" (위치: operations[2])\n경로 없는 문제');
+  });
+
   test('stdout은 프로토콜 전용 (서버 로그는 stderr)', () => {
     assert.ok(serverLog.join('').includes('MCP 서버 시작'));
   });
@@ -296,7 +331,7 @@ describe('office-kit mcp (명령줄로 시작)', () => {
     const { client: c2 } = await connect([CLI, 'mcp']);
     try {
       const { tools } = await c2.listTools();
-      assert.equal(tools.length, TOOLS.length);
+      assert.deepEqual(tools.map((t) => t.name).sort(), [...TOOLS].sort());
       const r = await c2.callTool({ name: 'office_read', arguments: { path: 'report.hwp' } });
       assert.ok(!r.isError && textOf(r).includes('분기 보고'));
     } finally { await c2.close(); }

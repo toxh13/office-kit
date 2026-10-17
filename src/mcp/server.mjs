@@ -13,6 +13,12 @@ import {
 } from '../core/index.mjs';
 import { PLACEHOLDER } from '../core/officefile.mjs';
 import { pageImage } from '../core/render.mjs';
+import { register as registerHwp } from './tools/hwp.mjs';
+import { register as registerWord } from './tools/word.mjs';
+import { register as registerPpt } from './tools/ppt.mjs';
+import { register as registerExcel } from './tools/excel.mjs';
+
+const TOOL_MODULES = [registerHwp, registerWord, registerPpt, registerExcel];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VERSION = (() => {
@@ -83,10 +89,26 @@ export function koreanError(e) {
   if (code === 'EISDIR') return `파일이 아니라 폴더입니다: ${e.path ?? ''}`.trim();
   const v = msg.match(/Input validation error:\s*(?:Invalid arguments for tool (\S+):\s*)?([\s\S]*)$/i);
   if (v) {
-    // zod 영어 메시지 중 흔한 것만 우리말로
-    const detail = v[2]
-      .replace(/Invalid input: expected (\w+), received undefined(?: at (\S+))?/g, (_m, t, p) => `${p ? `'${p}' ` : ''}값이 필요합니다 (${t})`)
-      .replace(/Invalid input: expected (\w+), received (\w+)(?: at (\S+))?/g, (_m, t, r, p) => `${p ? `'${p}' ` : ''}값의 형식이 틀립니다 (${t} 필요, ${r} 받음)`);
+    // SDK는 문제마다 한 줄 '메시지 at 경로'(경로는 operations[0].op 꼴, 없으면 안 붙음)로 준다.
+    // 경로는 맨 끝 ' at ' 뒤 → '(위치: 경로)'. zod 영어 메시지 중 흔한 것은 우리말로
+    const count = (n, u) => (u === 'characters' ? `${n}자` : u === 'bytes' ? `${n}바이트` : `${n}개`);
+    const detail = v[2].split('\n').map((line) => {
+      const at = line.match(/^(.*) at (.+)$/);
+      const [text, p] = at ? [at[1], at[2]] : [line, null];
+      let m = text.match(/^Invalid input: expected (\w+), received undefined$/);
+      if (m) return `${p ? `'${p}' ` : ''}값이 필요합니다 (${m[1]})`;
+      m = text.match(/^Invalid input: expected (\w+), received (\w+)$/);
+      if (m) return `${p ? `'${p}' ` : ''}값의 형식이 틀립니다 (${m[1]} 필요, ${m[2]} 받음)`;
+      const ko = text
+        .replace(/^Too small: expected \w+ to have >=?(\S+) (\w+)$/, (_m, n, u) => `${u === 'characters' ? '너무 짧습니다' : '너무 적습니다'} (${count(n, u)} 이상)`)
+        .replace(/^Too big: expected \w+ to have <=?(\S+) (\w+)$/, (_m, n, u) => `${u === 'characters' ? '너무 깁니다' : '너무 많습니다'} (${count(n, u)} 이하)`)
+        .replace(/^Too small: expected \w+ to be (>=?)(\S+)$/, (_m, op, n) => `값이 너무 작습니다 (${n} ${op === '>' ? '초과' : '이상'})`)
+        .replace(/^Too big: expected \w+ to be (<=?)(\S+)$/, (_m, op, n) => `값이 너무 큽니다 (${n} ${op === '<' ? '미만' : '이하'})`)
+        .replace(/^Invalid option: expected one of (.+)$/, (_m, list) => `다음 중 하나여야 합니다: ${list.replace(/\|/g, ', ')}`)
+        .replace(/^Unrecognized keys?: (.+)$/, (_m, keys) => `알 수 없는 인수: ${keys}`)
+        .replace(/^Invalid input$/, '값이 올바르지 않습니다');
+      return p ? `${ko} (위치: ${p})` : ko;
+    }).join('\n');
     return `입력값이 올바르지 않습니다${v[1] ? ` (${v[1]})` : ''}: ${detail}`;
   }
   return msg.replace(/^MCP error -?\d+:\s*/, '');
@@ -155,58 +177,6 @@ function structureOf(doc, budget) {
     parts.push(...shown);
   }
   return parts.join('\n');
-}
-
-// ── hwp_edit 작업 ────────────────────────────────────────
-
-const styleSchema = z.object({
-  bold: z.boolean().optional(),
-  italic: z.boolean().optional(),
-  underline: z.boolean().optional(),
-  size: z.number().positive().optional().describe('글자 크기(pt)'),
-  color: z.string().optional().describe("글자색 '#rrggbb'"),
-  font: z.string().optional().describe('글꼴 이름'),
-  align: z.enum(['left', 'center', 'right', 'justify']).optional(),
-}).optional();
-
-const hwpOp = z.discriminatedUnion('op', [
-  z.object({ op: z.literal('add_paragraph'), text: z.string(), style: styleSchema }).describe('문서 끝에 문단 추가'),
-  z.object({ op: z.literal('add_heading'), text: z.string(), level: z.number().int().min(1).max(3).default(1) }).describe('문서 끝에 제목 추가 (1~3단계)'),
-  z.object({ op: z.literal('add_table'), rows: z.array(z.array(scalar).min(1)).min(1) }).describe('문서 끝에 표 추가. 첫 행은 굵게'),
-  z.object({ op: z.literal('add_page_break') }).describe('문서 끝에 쪽 나누기'),
-  z.object({ op: z.literal('add_field'), name: z.string().min(1), label: z.string().optional() }).describe('문서 끝에 누름틀 추가 ("라벨: [누름틀]")'),
-  z.object({ op: z.literal('replace'), find: z.string().min(1), replace: z.string() }).describe('문서 전체에서 찾아 바꾸기 (영문 대소문자 구분)'),
-  z.object({ op: z.literal('fill'), values: z.record(z.string(), scalar) }).describe('누름틀 채우기 (없는 이름은 {{이름}} 자리표시자를 바꿈)'),
-]);
-
-function applyHwpOp(h, op) {
-  switch (op.op) {
-    case 'add_paragraph': h.addParagraph(op.text, op.style ?? {}); return `문단 추가: ${op.text.slice(0, 40)}`;
-    case 'add_heading': h.addHeading(op.text, op.level ?? 1); return `제목${op.level ?? 1} 추가: ${op.text.slice(0, 40)}`;
-    case 'add_table': {
-      const rows = op.rows.map((r) => r.map((v) => String(v)));
-      h.addTable(rows);
-      return `표 추가: ${rows.length}행×${Math.max(...rows.map((r) => r.length))}열`;
-    }
-    case 'add_page_break': h.addPageBreak(); return '쪽 나누기';
-    case 'add_field': h.addField(op.name, { label: op.label }); return `누름틀 추가: ${op.name}`;
-    case 'replace': return `바꾸기 '${op.find}' → '${op.replace}': ${h.replace(op.find, op.replace, { caseSensitive: true })}곳`;
-    case 'fill': {
-      const own = new Set(h.fields().map((f) => f.name));
-      // {{ 이름 }}처럼 띄어 쓴 자리표시자도 문서에 쓰인 표기 그대로 바꾼다
-      const spell = new Map();
-      for (const m of h.text().matchAll(PLACEHOLDER)) { if (!spell.has(m[1])) spell.set(m[1], new Set()); spell.get(m[1]).add(m[0]); }
-      const filled = []; const missing = [];
-      for (const [name, value] of Object.entries(op.values)) {
-        if (own.has(name)) { h.fill({ [name]: String(value) }); filled.push(name); continue; }
-        let n = 0;
-        for (const raw of spell.get(name) ?? []) n += h.replace(raw, String(value), { caseSensitive: true });
-        (n > 0 ? filled : missing).push(name);
-      }
-      return `채우기: ${filled.join(', ') || '없음'}${missing.length ? ` / 못 찾음: ${missing.join(', ')}` : ''}`;
-    }
-    default: throw new Error(`알 수 없는 작업: ${op.op}`);
-  }
 }
 
 // ── 서버 ─────────────────────────────────────────────────
@@ -427,44 +397,12 @@ export function createServer() {
     };
   }));
 
-  server.registerTool('hwp_edit', {
-    title: '한글 문서 구조 편집',
-    description: '한글(hwp/hwpx) 문서를 프로그램 없이(rhwp) 편집한다. operations를 순서대로 적용하고 마지막에 한 번만 저장한다. '
-      + '추가 작업(add_*)은 모두 문서 끝에 붙는다. 하나라도 실패하면 아무것도 저장하지 않는다.\n'
-      + '작업 종류:\n'
-      + '  {op:"add_paragraph", text, style?:{bold, italic, underline, size(pt), color("#rrggbb"), font, align("left"|"center"|"right"|"justify")}}\n'
-      + '  {op:"add_heading", text, level(1~3)}\n'
-      + '  {op:"add_table", rows:[["머리1","머리2"],["값1","값2"]]}  (첫 행 굵게)\n'
-      + '  {op:"add_page_break"}\n'
-      + '  {op:"add_field", name, label?}  (누름틀, "label: [칸]")\n'
-      + '  {op:"replace", find, replace}  (영문 대소문자 구분)\n'
-      + '  {op:"fill", values:{이름: 값}}  (누름틀, 없으면 {{이름}} 자리표시자)\n'
-      + 'output을 생략하면 원본을 덮어쓴다(.hwp 또는 .hwpx로 저장).',
-    inputSchema: {
-      path: pathSchema('한글 문서 경로 (.hwp/.hwpx/.hwt)'),
-      operations: z.array(hwpOp).min(1).describe('순서대로 적용할 작업 목록'),
-      output: outputSchema,
-      overwrite: overwriteSchema,
-    },
-    annotations: { destructiveHint: true },
-  }, tool(async ({ path, operations, output, overwrite = false }) => {
-    const full = mustExist(path);
-    if (!isHwp(extOf(full))) throw new Error('hwp_edit는 한글 문서(.hwp/.hwpx/.hwt)만 다룹니다');
-    if (output && !HWP_EXTS.has(extOf(abs(output)))) throw new Error('저장 경로는 .hwp 또는 .hwpx 여야 합니다');
-    const out = outPath(output, { source: full, allow: HWP_EXTS, overwrite });
-    const h = Hwp.open(full);
-    const done = [];
-    try {
-      for (const [i, op] of operations.entries()) {
-        try { done.push(`${i + 1}. ${applyHwpOp(h, op)}`); } catch (e) {
-          throw new Error(`${i + 1}번째 작업(${op.op}) 실패: ${koreanError(e)} — 저장하지 않았습니다`);
-        }
-      }
-      h.save(out);
-      done.push(`저장: ${out} (${h.pageCount}쪽)`);
-    } finally { h.close(); }
-    return text(done.join('\n'));
-  }));
+  // 형식별 전용 도구 (src/mcp/tools/*.mjs)
+  const ctx = {
+    z, scalar, tool, text, json, log, abs, mustExist, outPath, koreanError,
+    pathSchema, outputSchema, overwriteSchema, engineSchema, EDIT_EXTS, CONVERT_EXTS, HWP_EXTS,
+  };
+  for (const register of TOOL_MODULES) register(server, ctx);
 
   return server;
 }

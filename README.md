@@ -52,6 +52,30 @@
 - 예: "표 2행 금액 합계 넣어줘", "{{담당자}}를 김선호로 채워줘", "이 문서 PDF로 저장해줘".
 - AI는 Office Kit 문서 도구만 쓴다. 고친 결과는 미리보기에 바로 반영된다.
 
+### 형식별 전용 기능
+찾아 바꾸기·칸 채우기 말고도 형식마다 고유한 기능을 AI와 명령줄에서 쓴다.
+AI는 먼저 구조를 살펴보고(`…_inspect`) 번호를 확인한 뒤 고치고(`…_edit`), 쪽 그림(`office_page_image`)으로 결과를 확인한다.
+
+| 형식 | 할 수 있는 것 | 필요한 것 |
+|---|---|---|
+| Word | 스타일·서식, 목록, 표·행, 그림·캡션, 머리말·꼬리말·쪽 번호, 쪽 설정, 메모, 변경 내용 추적, 목차, 각주, 링크 | 설치된 Word |
+| PowerPoint | 슬라이드 추가·삭제·복제·순서, 제목·본문, 발표자 노트, 글상자·그림·표·도형·차트, 배경, 화면 전환, 테마, 슬라이드 크기 | 설치된 PowerPoint |
+| Excel | 시트, 행·열, 서식·표시 형식, 너비·높이, 병합, 틀 고정, 정렬, 필터, 표, 차트, 조건부 서식, 입력 제한, 이름 정의 | Excel 우선. 없으면 내장 엔진(xlsx·csv, 정렬·차트·시트 복사·다시 계산 제외) |
+| 한글 | 원하는 자리에 문단 넣기·지우기, 글자·문단 서식, 스타일, 표 칸·행, 머리말·꼬리말, 각주, 그림, 쪽 설정 | 없음 — 내장 엔진(rhwp) |
+
+앱 AI 창에 이렇게 말해 보기:
+
+| 형식 | 예 |
+|---|---|
+| Word | "제목들을 제목 1 스타일로 정리하고 맨 앞에 목차 넣어줘" · "'중요'를 모두 빨간 굵은 글씨로" · "꼬리말에 쪽 번호 넣어줘" |
+| PowerPoint | "슬라이드마다 발표자 노트 달아줘" · "2번 슬라이드에 분기별 매출 막대 차트 넣어줘" · "모든 슬라이드에 페이드 전환 넣어줘" |
+| Excel | "1행 굵게 하고 틀 고정해줘" · "A1:C13으로 꺾은선 차트 만들어줘" · "C열에서 100 넘는 칸 빨간색으로 표시해줘" |
+| 한글 | "3번 문단 뒤에 '추진 일정' 문단 넣어줘" · "표 1 맨 아래에 합계 행 추가해줘" · "용지를 가로로 바꾸고 꼬리말에 쪽 번호 넣어줘" |
+
+- 작업 여러 개를 순서대로 적용하고 **한 번만 저장**한다. 하나라도 실패하면 아무것도 저장하지 않는다.
+- 앱의 첫 화면 추천 문장도 문서 종류에 맞춰 바뀐다.
+- 작업 목록·인수·출력 한도·알려진 한계: [`docs/FEATURES.md`](docs/FEATURES.md).
+
 ### 미리보기
 | 방식 | 한글 | Word·PowerPoint·Excel |
 |---|---|---|
@@ -114,7 +138,8 @@ office-kit setup codex --remove     # 연결 해제 (다른 대상도 같음)
 }
 ```
 
-도구 목록: `office_status` `office_info` `office_read` `office_fields` `office_fill` `office_replace` `office_set_cells` `office_convert` `office_create` `office_page_image` `hwp_edit`
+도구 목록: `office_status` `office_info` `office_read` `office_fields` `office_fill` `office_replace` `office_set_cells` `office_convert` `office_create` `office_page_image`
+· 형식별: `hwp_inspect` `hwp_edit` `word_inspect` `word_edit` `ppt_inspect` `ppt_edit` `excel_inspect` `excel_edit`
 
 > PC에 Node.js가 없어도 된다. 설치된 `Office Kit.exe` 가 `ELECTRON_RUN_AS_NODE=1` 로 Node처럼 서버를 실행한다.
 
@@ -138,9 +163,22 @@ office-kit setup codex --remove     # 연결 해제 (다른 대상도 같음)
 | `office-kit convert 보고서.hwp 보고서.pdf` | 형식 변환 |
 | `office-kit new 원고.md 새문서.hwpx` | 마크다운 원고로 새 문서 |
 | `office-kit image 보고서.hwp 2 -o 2쪽.png` | 한 쪽을 그림으로 |
+| `office-kit inspect 발표.pptx --slide 2` | 형식별 구조 보기 (문단·표·슬라이드·도형·시트 번호) |
+| `office-kit edit 보고서.docx 작업.json -o 수정.docx` | 형식별 편집 (작업 목록을 한 번에 적용) |
+| `office-kit help edit` | 형식별 편집 작업 목록 |
 | `office-kit help` | 전체 도움말 |
 
-공통: `-o` 출력 경로(생략하면 원본 덮어씀), `--engine auto|app|file`.
+공통: `-o` 출력 경로(생략하면 원본 덮어씀), `--engine auto|app|file`. `edit`는 `-o`에 다른 파일이 있으면 `--overwrite`가 있어야 덮어쓴다.
+
+`작업.json` 예 (Word):
+
+```json
+[
+  { "op": "insert_toc", "at": "start", "title": "목차" },
+  { "op": "format_text", "find": "중요", "all": true, "bold": true, "color": "#c00000" },
+  { "op": "set_footer", "text": "- {page} / {pages} -", "align": "center" }
+]
+```
 예제 파일: [`examples/`](examples/) (신청서.hwp/hwpx, 값.json, 신청서.md).
 
 ---
@@ -188,7 +226,8 @@ npm run icon       # build/icon.ico · icon.png 다시 그리기
 | `src/cli.mjs` | 명령줄 도구 |
 | `src/setup/` | 외부 연결 · 명령줄 등록 · 한글 보안 모듈 |
 | `src/app/` | Electron 앱 (main, preload, renderer, AI 중계) |
-| `scripts/com/` | 설치된 프로그램을 COM으로 조작 (`office.ps1`) |
+| `src/mcp/tools/` | 형식별 MCP 도구 (`hwp`·`word`·`ppt`·`excel`) |
+| `scripts/com/` | 설치된 프로그램을 COM으로 조작 (`office.ps1` + 형식별 `word-ops.ps1`·`ppt-ops.ps1`·`excel-ops.ps1`) |
 | `build/` | 아이콘, NSIS 추가 설정(`installer.nsh`) |
 
 구조와 모듈 약속: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
@@ -220,7 +259,9 @@ git push origin main v0.1.0
 - **코드 서명 없음.** 처음 실행할 때 SmartScreen 경고가 뜬다.
 - **한컴 보안 모듈이 없으면** 한글 문서의 PDF 변환·정확한 미리보기가 안 된다 (읽기·쓰기는 내장 엔진으로 됨).
 - 내장 엔진(rhwp) 미리보기는 한컴오피스와 글꼴·줄바꿈이 조금 다를 수 있다.
-- doc · ppt · xls · rtf · odt · odp · ods · csv 는 해당 프로그램이 있어야 열고 고칠 수 있다.
+- doc · ppt · xls · rtf · odt · odp · ods 는 해당 프로그램이 있어야 열고 고칠 수 있다 (csv는 읽기와 `excel_edit`의 값 작업을 내장 엔진으로도 한다).
+- Word·PowerPoint 전용 기능(`word_*`·`ppt_*`)은 해당 프로그램이 있어야 한다. PowerPoint 차트 넣기는 작업 동안 최소화된 PowerPoint 창이 잠깐 열린다.
+- 형식별 기능의 작업마다 한계는 [`docs/FEATURES.md`](docs/FEATURES.md) 각 절 끝에 적었다.
 - AI 대화는 Claude Code 또는 Codex CLI가 설치·로그인돼 있어야 한다.
 - 자동 업데이트는 아직 없다. 새 버전은 Releases에서 받아 덮어 설치한다.
 - Office Kit를 지워도 Claude Desktop·Codex 설정의 `office-kit` 항목은 남는다 → 지우기 전에 설정 → 외부 연결에서 끄기.

@@ -187,14 +187,30 @@ export async function detectProviders({ env = process.env } = {}) {
 const KIND = { hwp: '한글', hwpx: '한글', hwt: '한글', docx: 'Word', doc: 'Word', rtf: 'Word', odt: 'Word',
   pptx: 'PowerPoint', ppt: 'PowerPoint', odp: 'PowerPoint', xlsx: 'Excel', xls: 'Excel', xlsm: 'Excel', csv: 'Excel', ods: 'Excel', pdf: 'PDF' };
 
+// 형식별 전용 도구 (docs/FEATURES.md): <접두>_inspect → <접두>_edit
+const FORMAT_TOOLS = {
+  한글: ['hwp', '문단 넣기·지우기, 글자·문단 서식, 스타일, 표 칸·행, 머리말·꼬리말, 각주, 그림, 쪽 설정'],
+  Word: ['word', '제목·스타일, 글자·문단 서식, 목록, 표, 그림, 머리말·꼬리말·쪽 번호, 쪽 설정, 메모, 변경 내용 추적, 목차, 각주, 링크'],
+  PowerPoint: ['ppt', '슬라이드 추가·삭제·복제·순서, 제목·본문, 발표자 노트, 글상자·그림·표·도형·차트, 글자 서식, 배경, 화면 전환, 테마',
+    'office_page_image 쪽 번호 = 슬라이드 번호 (숨긴 슬라이드 포함)'],
+  Excel: ['excel', '시트 관리, 행·열, 서식·표시 형식, 너비·높이, 병합, 틀 고정, 정렬, 필터, 표, 차트, 조건부 서식, 입력 제한, 이름 정의'],
+};
+
 /** AI에게 줄 한국어 지침 */
 export function systemPrompt({ filePath } = {}) {
   const ext = filePath ? extname(filePath).slice(1).toLowerCase() : '';
   const doc = filePath ? `${filePath} (${KIND[ext] ?? '알 수 없는 형식'} 문서, .${ext})` : '없음 (사용자가 경로를 알려 주면 그 문서를 다룬다)';
+  const own = FORMAT_TOOLS[KIND[ext]];
   return [
     '너는 Office Kit 앱 안에서 사용자의 문서를 읽고 고치는 도우미다.',
     `현재 열린 문서: ${doc}`,
-    '- 문서는 office-kit 도구(office_read, office_info, office_fields, office_fill, office_replace, office_set_cells, hwp_edit 등)로만 읽고 고친다. 명령 실행이나 파일 직접 쓰기 같은 다른 방법은 쓰지 않는다.',
+    '- 문서는 office-kit 도구로만 읽고 고친다. 명령 실행이나 파일 직접 쓰기 같은 다른 방법은 쓰지 않는다.',
+    '- 내용은 office_read로 읽는다. 자리를 정해 고치거나 구조를 바꿀 때는 먼저 형식별 살펴보기(…_inspect)로 문단·표·슬라이드·도형·시트 번호와 이름을 확인한다.',
+    '- 글자만 바꾸거나 칸을 채울 때는 office_replace / office_fill (엑셀 셀 값은 office_set_cells)을 쓴다.',
+    '- 그 밖의 변경(스타일·서식, 문단·표·그림 넣기, 슬라이드·노트·차트, 시트 등)은 형식별 편집(…_edit)에 작업을 순서대로 모아 한 번에 보낸다. '
+      + '하나라도 실패하면 아무것도 저장되지 않으니, 오류를 읽고 작업을 고쳐 다시 보낸다.',
+    own ? `- 이 문서의 형식별 도구: ${own[0]}_inspect → ${own[0]}_edit (${own[1]})${own[2] ? `. ${own[2]}` : ''}`
+      : '- 형식별 도구: 한글 hwp_inspect·hwp_edit, Word word_inspect·word_edit, PowerPoint ppt_inspect·ppt_edit, Excel excel_inspect·excel_edit',
     '- 고친 내용은 같은 파일에 저장한다(output 생략). 앱이 원본을 백업해 두고 미리보기를 새로 고친다.',
     '- 문서를 고친 뒤에는 office_page_image 로 바뀐 쪽을 이미지로 보고 결과를 확인한다.',
     '- 사용자가 요청하지 않은 내용은 바꾸지 않는다. 무엇을 바꿀지 애매하면 먼저 묻는다.',
@@ -274,6 +290,8 @@ const TOOL_LABEL = {
   office_status: '상태 확인', office_info: '문서 정보 보기', office_read: '문서 읽기', office_fields: '채울 칸 찾기',
   office_fill: '칸 채우기', office_replace: '찾아 바꾸기', office_set_cells: '셀 쓰기', office_convert: '형식 바꾸기',
   office_create: '새 문서 만들기', office_page_image: '쪽 이미지로 확인', hwp_edit: '한글 문서 편집',
+  hwp_inspect: '문서 구조 살펴보기', word_inspect: '문서 구조 살펴보기', ppt_inspect: '문서 구조 살펴보기', excel_inspect: '문서 구조 살펴보기',
+  word_edit: 'Word 편집', ppt_edit: '슬라이드 편집', excel_edit: '시트 편집',
 };
 
 /** mcp__office-kit__office_read → office_read */

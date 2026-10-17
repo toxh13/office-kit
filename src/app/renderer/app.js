@@ -84,8 +84,16 @@
     office_create: ['새 문서 만드는 중', '새 문서 만들기'],
     office_page_image: ['결과 확인 중', '결과 확인'],
     hwp_edit: ['한글 편집 중', '한글 편집'],
+    word_edit: ['Word 편집 중', 'Word 편집'],
+    ppt_edit: ['슬라이드 편집 중', '슬라이드 편집'],
+    excel_edit: ['시트 편집 중', '시트 편집'],
+    hwp_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
+    word_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
+    ppt_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
+    excel_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
   };
-  const EDIT_TOOLS = new Set(['office_fill', 'office_replace', 'office_set_cells', 'hwp_edit', 'office_create', 'office_convert']);
+  const EDIT_TOOLS = new Set(['office_fill', 'office_replace', 'office_set_cells', 'hwp_edit', 'office_create', 'office_convert',
+    'word_edit', 'ppt_edit', 'excel_edit']);
   // mcp__office-kit__office_read, office-kit.office_read 같은 이름도 받아 준다
   const toolBase = (name) => String(name ?? '').split(/__|[./:]/).filter(Boolean).pop() ?? '';
   /** part = { tool, name } (tool: office_read 같은 원래 이름, name: ai.mjs가 붙인 표시 이름) */
@@ -728,7 +736,15 @@
     return null;
   }
 
-  const SUGGESTS = ['이 문서 요약해줘', '맞춤법 고쳐줘', '표 내용 정리해줘', 'PDF로 저장해줘'];
+  // 첫 화면 추천 문장: 열린 문서 종류에 맞춰 (형식별 전용 기능)
+  const SUGGESTS = {
+    한글: ['이 문서 요약해줘', '표 내용 정리해줘', '머리말 넣어줘', '맞춤법 고쳐줘'],
+    Word: ['이 문서 요약해줘', '제목 스타일 정리해줘', '목차 넣어줘', '맞춤법 고쳐줘'],
+    PowerPoint: ['발표자 노트 달아줘', '슬라이드 하나 추가해줘', '이 발표 요약해줘', 'PDF로 저장해줘'],
+    Excel: ['차트 만들어줘', '머리글 굵게 하고 틀 고정해줘', '이 표 요약해줘', 'PDF로 저장해줘'],
+  };
+  const SUGGESTS_DEFAULT = ['이 문서 요약해줘', '맞춤법 고쳐줘', '표 내용 정리해줘', 'PDF로 저장해줘'];
+  const suggestsFor = (doc) => SUGGESTS[doc?.kind] ?? SUGGESTS_DEFAULT;
 
   /** 고른 AI가 로그인되지 않은 것 같으면 안내 (막지는 않음) */
   function loginWarning() {
@@ -749,7 +765,7 @@
         h('h3', { text: '무엇을 도와드릴까요?' }),
         h('p', { text: `「${state.doc.name}」 문서를 읽고 고쳐 드려요. 바꾼 내용은 왼쪽 미리보기에 바로 반영되고, 언제든 원래대로 되돌릴 수 있어요.` }),
         loginWarning(),
-        h('div', { class: 'suggests' }, ...SUGGESTS.map((s) => h('button', { class: 'suggest', onclick: () => sendPrompt(s) }, icon('sparkle'), s)))));
+        h('div', { class: 'suggests' }, ...suggestsFor(state.doc).map((s) => h('button', { class: 'suggest', onclick: () => sendPrompt(s) }, icon('sparkle'), s)))));
     } else {
       log.replaceChildren(...chat.items.map(messageNode));
     }
