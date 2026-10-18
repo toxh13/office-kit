@@ -12,6 +12,7 @@
 | 새 문서 | `새 문서` (Ctrl+N) → 한글·Word·PowerPoint·Excel 빈 문서, 또는 AI에게 내용 부탁 |
 | 문서 고치기 | 오른쪽 AI 창에 "담당자 칸에 홍길동 넣어줘"처럼 말하기 |
 | 한글 직접 편집 | `직접 편집` (Ctrl+E) → 앱 안 한글 편집 창 (인터넷 없이, 한컴오피스 없이) |
+| 문서·표·슬라이드 직접 편집 | Word·Excel·PowerPoint 형식(docx·xlsx·pptx)도 `직접 편집` (Ctrl+E) → 앱 안 편집 창 (인터넷 없이, MS Office 없이) |
 | AI | 내 PC에 로그인해 둔 **Claude Code** 또는 **Codex**를 그대로 씀 (앱은 로그인 정보를 안 만짐) |
 | 다른 AI 앱에서 | Claude Desktop·Claude Code·Codex에 문서 도구(MCP) 연결 |
 | 명령줄 | `office-kit text 보고서.hwp` |
@@ -53,7 +54,7 @@
 - 상단 **새 문서** (Ctrl+N) → 형식(한글 .hwpx · 한글 호환 .hwp · Word · PowerPoint · Excel), 파일 이름, 저장 위치를 고른다.
   저장 위치 기본값은 열린 문서의 폴더(없으면 문서 폴더). 같은 이름이 있으면 바꿀 이름을 알려 준다.
 - 시작 방법: **빈 문서** 또는 **AI에게 내용 부탁하기** ("주간 회의록 양식 만들어줘"). 만든 문서는 바로 열리고 원본 백업도 만든다.
-- 한글 형식은 **만든 뒤 바로 편집 창 열기**를 고를 수 있다 (기본 켜짐).
+- **만든 뒤 바로 편집 창 열기**를 고를 수 있다 (기본 켜짐). 한글은 한글 편집 창, Word·Excel·PowerPoint 형식은 문서·표·슬라이드 편집 창으로 열린다.
 
 ### 직접 편집 (한글)
 - 한글 문서(hwp·hwpx·hwt)를 연 뒤 상단 **직접 편집** (Ctrl+E) → 문서마다 편집 창이 하나 열린다 (다시 누르면 그 창으로).
@@ -67,7 +68,20 @@
   **원래대로**도 열려 있는 편집 창에 똑같이 알린다 (편집 창에 저장 안 한 내용이 있으면 파일이 이미 원본과 같아도 묻는다).
 - 편집 창이 열려 있으면 상태 막대에 **편집 창 열림** (저장 안 한 내용이 있으면 **· 저장 안 됨**)이 보이고, 누르면 그 창으로 간다.
 - 메인 창을 닫으면 편집 창도 닫는다 (저장 안 한 창은 먼저 묻고, 취소하면 둘 다 그대로).
-- Word·PowerPoint·Excel 문서는 앱 안에서 직접 편집하지 않는다 → **프로그램에서 열기**로 고친다 (저장하면 미리보기가 따라 바뀐다).
+- Word·Excel·PowerPoint 형식은 아래 **직접 편집 (Word·Excel·PowerPoint 형식)**.
+
+### 직접 편집 (Word·Excel·PowerPoint 형식)
+- docx·xlsx·pptx 문서를 연 뒤 상단 **직접 편집** (Ctrl+E) → 형식에 따라 **문서 편집 · 표 편집 · 슬라이드 편집** 창이 열린다 (문서마다 하나).
+- 편집기는 앱에 들어 있다 (ONLYOFFICE Docs 기반, 아래 '라이선스'). **인터넷 없이**, Microsoft Office 없이 동작하고, 한글 편집 창처럼 앱 밖으로 나가는 요청을 모두 막는다.
+- 글꼴은 이 PC에 설치된 것을 쓴다. 문서의 '맑은 고딕'·'바탕' 같은 한국어 이름도 찾는다. 첫 편집 창을 열 때 글꼴 목록을 만든다 (글꼴 미리보기 그림은 앱이 한가할 때 뒤에서).
+- 저장 `Ctrl+S`: 원래 형식 그대로 (docx → docx). 덮어쓰기 전 내용은 백업 폴더에 남고, 왼쪽 미리보기도 바로 바뀐다.
+  Word·Excel·PowerPoint가 경고 없이 열도록 저장할 때 몇 가지를 고친다 (pptx 노트 테마, 표에 더한 행의 세로 병합 표시 등).
+  다른 형식(PDF 등)으로 내려받기는 저장 대화상자로, 인쇄는 PDF로 만들어 기본 PDF 앱으로 연다.
+- 자동 저장: 편집기가 스스로 저장하려 해도 **원본 파일은 덮어쓰지 않고** 복구용 사본만 만든다.
+  다음에 같은 파일을 열 때 사본이 더 새로우면 **자동 저장된 편집 내용이 있습니다 — 복구 / 버리기**를 묻는다.
+- 바깥 변경(AI·다른 프로그램)·원래대로·닫기·AI 보내기 전 확인은 한글 편집 창과 같다.
+- 위 막대: 파일 이름, 저장 상태, **저장**, **정보 · 라이선스** (편집기의 원 개발사, 라이선스, 이 판의 소스 주소).
+- 직접 편집하지 않는 것: 암호 걸린 문서, 매크로 문서(docm·xlsm·pptm), 옛 형식(doc·xls·ppt·odt·ods·odp) → **프로그램에서 열기**.
 
 ### AI 대화
 - 오른쪽 **AI 도우미** 창에 할 일을 쓴다. `Enter` 보내기, `Shift+Enter` 줄바꿈.
@@ -237,6 +251,7 @@ git clone https://github.com/toxh13/office-kit.git
 cd office-kit
 npm install
 npm run editor:build   # 앱 안 한글 편집기 묶음 만들기 (처음 한 번, 아래 참고)
+npm run office-editor:build   # 앱 안 문서·표·슬라이드 편집기 묶음 만들기 (처음 한 번, 약 100MB 받음)
 npm start          # 앱 실행 (Electron)
 npm test           # 시험 (node --test)
 npm run dist       # 설치 파일 → dist/OfficeKit-Setup-<버전>.exe (편집기 묶음도 먼저 만든다. 묶음 없이 electron-builder를 바로 돌리면 멈춘다)
@@ -251,13 +266,22 @@ npm run icon       # build/icon.ico · icon.png 다시 그리기
 - 묶음 없이 `npm start`하면 앱은 그대로 쓰고, **직접 편집**만 "한글 편집기를 열 수 없어요" 안내를 띄운다.
 - rhwp 버전은 함께 올린다: `package.json`의 `@rhwp/core`(정확한 버전)·`@rhwp/editor`, `scripts/build-editor.mjs`의 `TAG`·`COMMIT`·`CORE_VERSION`·`EDITOR_VERSION`.
 
+**오프라인 문서·표·슬라이드 편집기 묶음** (`npm run office-editor:build` = `node scripts/build-office-editor.mjs`)
+- filex-office-editor v0.3.1 릴리스의 `ui.zip`(ONLYOFFICE Docs CE 9.4.0.129 편집기 + x2t 변환기)을 받아 크기·SHA-256과 파일마다의 SHA-256을 확인한다.
+  `patches/office-editor/filex/`에 패치가 있으면 filex 소스(고정 커밋)에 얹어 앱 페이지만 다시 빌드한다 (Docker 필요 없음).
+- 쓰지 않는 파일(다른 나라 말, 휴대폰용 화면, 묶음 글꼴)을 **통째로만** 빼고 `vendor/office-editor/`에 쓴다 (약 213MB, 파일 약 1,480개). 남은 파일은 고치지 않는다.
+- 고정 값: `scripts/office-editor/pins.mjs`. 받은 파일 캐시: `tmp/office-editor-build` (`OFFICEKIT_OFFICE_EDITOR_CACHE`로 바꿈).
+- 묶음 없이 `npm start`하면 앱은 그대로 쓰고, Word·Excel·PowerPoint 형식의 **직접 편집**만 이유를 알린다.
+- 소스 꾸러미(AGPL): `node scripts/make-office-source.mjs` → `dist/office-editor-source-<버전>.zip` ([`docs/LICENSES-OFFICE-EDITOR.md`](docs/LICENSES-OFFICE-EDITOR.md)).
+
 | 폴더 | 내용 |
 |---|---|
 | `src/core/` | 문서 엔진 (UI 없음) |
 | `src/mcp/` | MCP 서버 (stdio) |
 | `src/cli.mjs` | 명령줄 도구 |
 | `src/setup/` | 외부 연결 · 명령줄 등록 · 한글 보안 모듈 |
-| `src/app/` | Electron 앱 (main, preload, renderer, AI 중계) |
+| `src/app/` | Electron 앱 (main, preload, renderer, AI 중계, 한글·Office 편집 창) |
+| `scripts/office-editor/`, `patches/office-editor/` | Office 편집기 묶음의 고정 값·덜어 내기 규칙, filex 패치 (AGPL) |
 | `src/mcp/tools/` | 형식별 MCP 도구 (`hwp`·`word`·`ppt`·`excel`) |
 | `scripts/com/` | 설치된 프로그램을 COM으로 조작 (`office.ps1` + 형식별 `word-ops.ps1`·`ppt-ops.ps1`·`excel-ops.ps1`) |
 | `build/` | 아이콘, NSIS 추가 설정(`installer.nsh`) |
@@ -279,8 +303,11 @@ git tag v0.1.0
 git push origin main v0.1.0
 ```
 
-- 워크플로: [`.github/workflows/release.yml`](.github/workflows/release.yml) — 시험 → `npm run editor:build` → `electron-builder --publish always` (`GH_TOKEN` = 기본 `GITHUB_TOKEN`).
-  설치 파일에는 `vendor/rhwp-studio`·`vendor/rhwp-editor-sdk`가 들어간다 (설치 파일은 약 7MB, 설치된 폴더는 약 23MB 늘어남).
+- 워크플로: [`.github/workflows/release.yml`](.github/workflows/release.yml) — 시험 → `npm run editor:build` → `npm run office-editor:build` → `electron-builder --publish always` (`GH_TOKEN` = 기본 `GITHUB_TOKEN`)
+  → Office 편집기 소스 꾸러미 `office-editor-source-<버전>.zip`을 같은 Release에 붙인다.
+  설치 파일에는 `vendor/rhwp-studio`·`vendor/rhwp-editor-sdk`(설치 파일 약 7MB, 설치 폴더 약 23MB 늘어남)와
+  `vendor/office-editor`(설치 파일 약 50~65MB, 설치 폴더 약 213MB 늘어남)가 들어간다.
+- **남에게 배포하기 전에** [`docs/LICENSES-OFFICE-EDITOR.md`](docs/LICENSES-OFFICE-EDITOR.md)의 체크리스트 (법률 검토, 거울 저장소, 소스 꾸러미 확인).
 - 수동 실행(Actions → CI · Release → Run workflow)은 초안(draft) Release로 올린다.
 - main push / PR 마다 `npm test` 와 편집기 빌드 스크립트 확인이 돌고, main push에서는 편집기 묶음도 실제로 빌드해 본다 (태그 전에 깨진 것을 알게).
 
@@ -296,7 +323,11 @@ git push origin main v0.1.0
   중요한 문서는 저장한 뒤 미리보기(또는 한컴오피스)로 확인한다. `.hwt`(서식 파일)는 저장할 때 HWP 내용으로 쓴다.
   병합된 칸이 많은 표에 줄·칸을 넣으면 표 모양이 흐트러질 수 있어요 (Ctrl+Z로 되돌리기). 복잡한 서식 문서는 **프로그램에서 열기**로 고치세요.
   일부 문서는 편집 창에서 표 바로 다음 문단이 표 마지막 줄에 겹쳐 보인다 (rhwp-studio 0.8.7 화면 그리기 문제 — 저장한 파일과 미리보기는 그대로).
-- Word·PowerPoint·Excel은 앱 안에서 직접 편집하지 않는다 (AI 대화 또는 프로그램에서 열기).
+- 앱 안 문서·표·슬라이드 편집기는 Word·Excel·PowerPoint와 같지 않다. 저장하면 파일 꾸러미를 다시 쓴다 (`styles.xml`이 커짐, 한글·영문 사이 간격이 달라 보임 등).
+  변경 추적·메모·차트·SmartArt·필드·포함 개체가 든 중요한 문서는 저장한 뒤 미리보기(또는 그 프로그램)로 확인하거나 **프로그램에서 열기**로 고친다.
+  편집기 화면은 원래 모양·로고 그대로이고 일부 안내(새 기능 풍선 등)는 영어다. 함께 편집·맞춤법 검사는 없다.
+  편집기 상태 막대의 '모든 변경 사항이 저장되었습니다'는 편집기 안 기록 이야기다 — 파일 저장 여부는 위 막대를 본다.
+  편집 창마다 메모리를 약 0.5GB 쓴다.
 - doc · ppt · xls · rtf · odt · odp · ods 는 해당 프로그램이 있어야 열고 고칠 수 있다 (csv는 읽기와 `excel_edit`의 값 작업을 내장 엔진으로도 한다).
 - Word·PowerPoint 전용 기능(`word_*`·`ppt_*`)은 해당 프로그램이 있어야 한다. PowerPoint 차트 넣기는 작업 동안 최소화된 PowerPoint 창이 잠깐 열린다.
 - 형식별 기능의 작업마다 한계는 [`docs/FEATURES.md`](docs/FEATURES.md) 각 절 끝에 적었다.
@@ -319,8 +350,22 @@ git push origin main v0.1.0
 - [ ] 미리보기 글꼴 차이 줄이기 (함초롬 계열 글꼴 안내)
 - [ ] 편집기 웹 글꼴을 설치 파일에 넣을지 결정 (`npm run editor:build -- --with-fonts`, 설치 파일 약 19MB 더 큼)
 - [ ] 영어 README
+- [ ] Office 편집기: 첫 배포 전 법률 검토, 위쪽 소스 거울 저장소 만들기 ([`docs/LICENSES-OFFICE-EDITOR.md`](docs/LICENSES-OFFICE-EDITOR.md) 4·9절)
+- [ ] Office 편집기: 실제 MS IME(두벌식·세벌식·한자 변환) 사람 시험
 
 ## 라이선스
 
 [MIT](LICENSE) © toxh13. 함께 배포하는 오픈소스(rhwp·rhwp-studio·@rhwp/editor — MIT, Edward Kim 외 / CanvasKit — BSD-3-Clause / @noble/hashes — MIT)는
 [LICENSE](LICENSE)의 THIRD-PARTY 항목과 `vendor/rhwp-studio/THIRD_PARTY_LICENSES.md` 참고.
+
+**예외 — AGPL인 것**: 문서·표·슬라이드 편집 창의 편집기 묶음 `vendor/office-editor/`와, 이 저장소에서 머리에
+`SPDX-License-Identifier: AGPL-3.0-or-later`·`AGPL-3.0-only`가 붙은 파일(`patches/office-editor/`의 filex 패치 — AGPL-3.0-or-later, `src/app/office-editor/fonts/`의 글꼴 목록 생성기 — AGPL-3.0-only + ONLYOFFICE 추가 조항)은 MIT가 아니라 **GNU AGPL 3판**이다. 전문: [`LICENSES/AGPL-3.0.txt`](LICENSES/AGPL-3.0.txt), 추가 조항: [`LICENSES/ONLYOFFICE-additional-terms.txt`](LICENSES/ONLYOFFICE-additional-terms.txt).
+
+- 편집기는 **ONLYOFFICE Docs** Community Edition 9.4.0(빌드 9.4.0.129, Ascensio System SIA)을 바탕으로 한 **수정판**이다 —
+  AGPL-3.0 + 추가 조항, 그림·아이콘은 CC BY-SA 4.0. 바꾼 것과 날짜: `vendor/office-editor/NOTICE-OfficeKit.md`.
+- 그 편집기를 Document Server 없이 돌리는 앱 페이지·다리는 [filex-office-editor](https://github.com/BRF-Tech/filex-office-editor) v0.3.1 (BRF Tech, AGPL-3.0-or-later), 변환기 x2t는 ONLYOFFICE core + CryptPad·BRF Tech 패치 (AGPL).
+- 변환기 x2t·글꼴 엔진(WebAssembly) 안 제3자 코드(Boost, ICU, FreeType, libpng, libjpeg, Xpdf 등)와 x2t 안 URW++ PDF 기본 14 글꼴(AGPL-3.0 + PDF 포함 예외)의 고지: `vendor/office-editor/THIRD-PARTY-NATIVE.txt` ([`LICENSES/office-editor-third-party-native.txt`](LICENSES/office-editor-third-party-native.txt)). 편집용 글꼴 파일은 넣지 않는다 (이 PC의 글꼴을 읽는다).
+- 소스: Release마다 붙는 `office-editor-source-<버전>.zip` + ONLYOFFICE 소스 태그 `v9.4.0.129`. 앱 안에서는 편집 창 위 막대 **정보 · 라이선스**.
+- Office Kit 나머지는 MIT 그대로다 (편집기와는 메시지로만 주고받는 별개 프로그램). 자세한 경계·배포 전 할 일: [`docs/LICENSES-OFFICE-EDITOR.md`](docs/LICENSES-OFFICE-EDITOR.md).
+- ONLYOFFICE®·ONLYOFFICE Docs™는 Ascensio System SIA의 상표다. Office Kit은 Ascensio System SIA와 관계가 없고 보증·후원을 받지 않는다.
+  Word·Excel·PowerPoint는 Microsoft의 상표이며 파일 형식을 가리킬 때만 쓴다.

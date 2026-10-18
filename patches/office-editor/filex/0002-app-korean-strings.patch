@@ -1,0 +1,318 @@
+SPDX-License-Identifier: AGPL-3.0-or-later
+Subject: [PATCH 2/3] app: the app page in Korean, the legal notice line included
+From: Office Kit
+Date: 2026-10-18
+Upstream: https://github.com/BRF-Tech/filex-office-editor (AGPL-3.0-or-later, Copyright (C) 2026 BRF Tech)
+Base: v0.3.1 57dda3dae99af78eb26b3c64b69f1e3f711f0757 (the tag commit; the next main commit acc87f88da47 changes only README.md)
+Apply: git -C <filex checkout> apply <this file>   (in order: 0001, 0002, 0003)
+Modified: this patch changes filex-office-editor; see docs/office-editor-patches.md (Office Kit)
+
+Office Kit: 앱 페이지 문구 한국어 (아래쪽 법적 고지 줄 포함). ko locale → ko 문구, "ko" 지역 → ko-KR.
+
+The app page's own words in Korean for a `ko` locale, beside English and
+Turkish: the notice under the editor (based on ONLYOFFICE Docs by
+Ascensio System SIA, may have been modified, Docs version/build/source
+tag, GNU AGPL v3, the source address, the trademark line), the opening,
+failure and save messages. A plain `ko` locale gives the editor the
+region ko-KR (was ko-KO). The "editor page reloaded" reason, an English
+literal in main.ts, becomes a string in every language. The manifest
+(filex-app.json) is left in English and Turkish.
+
+ CHANGELOG.md             |    7 ++++++
+ README.md                |    5 ++++-
+ src/app/config.ts        |   16 ++++++++++----
+ src/app/main.ts          |    2 +-
+ src/app/strings.ts       |   45 ++++++++++++++++++++++++++++++++++++++++-
+ tests/app-config.test.ts |   51 ++++++++++++++++++++++++++++++++++++++++------
+ 6 files changed, 111 insertions(+), 15 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b7ce684989f33e1f3931dde6137ce007cda07fd2..436af0f6ec93e1723149941cea0e39e98942fd55 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -18,6 +18,13 @@ update.
+   autosave apart from the file - a copy to recover from, not written over
+   the file the person did not ask to save - tells them apart by it.
+ 
++- **The app page in Korean.** Its own words - the notice under the editor
++  (whose work the editor is, that it may be modified, the AGPL and the
++  source, the trademark line), the opening, failure and save messages - in
++  Korean for a `ko` locale, beside English and Turkish. A plain `ko` locale
++  gives the editor the region `ko-KR` (it was `ko-KO`). The message when
++  the editor's page loaded again is in the person's language too.
++
+ ### Fixed
+ 
+ - **A Save pressed during the ten-minute save is made after it.** It was
+diff --git a/README.md b/README.md
+index dcd7f3044da98cde85f715fb3a959df56a4bf256..5dc6a071694d877830695e526f026b1c141245f4 100644
+--- a/README.md
++++ b/README.md
+@@ -807,7 +807,10 @@ its own (`sandbox allow-scripts`): neither can reach into the other, a
+    on ONLYOFFICE Docs by Ascensio System SIA, this version may have been
+    modified, the Docs version and ONLYOFFICE's source tag, the AGPL and this
+    repository at the app's tag, the trademark line. The editor's own About
+-   is not touched.
++   is not touched. The app page's own words - this notice, the opening and
++   failure messages - come in English, Turkish and Korean, after the
++   session's locale (`src/app/strings.ts`); the editor has its own
++   translations.
+ 
+ **The editor page** is ONLYOFFICE's, as it ships. Its script
+ (`src/frame/main.ts`) is served at the address the editor page loads
+diff --git a/src/app/config.ts b/src/app/config.ts
+index b8bd742ad3a590bb83752fb2dfd80dde86021dd6..1a000c2defeecadc52fb27b34533471f449a7a72 100644
+--- a/src/app/config.ts
++++ b/src/app/config.ts
+@@ -149,11 +149,14 @@ export function saveParams(data: ArrayBuffer, mime: string, reason: SaveReason,
+ }
+ 
+ /** The languages the app's own words come in. */
+-export type UiLang = 'en' | 'tr';
++export type UiLang = 'en' | 'tr' | 'ko';
+ 
+-/** "tr-TR", "tr", "TR" → "tr"; anything else this app has no words for → "en". */
++/** "tr-TR", "tr", "TR" → "tr"; "ko-KR", "ko" → "ko"; anything else this app has no words for → "en". */
+ export function uiLang(locale: string | undefined | null): UiLang {
+-  return /^tr(?:[-_]|$)/i.test(String(locale ?? '')) ? 'tr' : 'en';
++  const l = String(locale ?? '');
++  if (/^tr(?:[-_]|$)/i.test(l)) return 'tr';
++  if (/^ko(?:[-_]|$)/i.test(l)) return 'ko';
++  return 'en';
+ }
+ 
+ /**
+@@ -166,13 +169,16 @@ export function editorLang(locale: string | undefined | null): string {
+   return m ? m[1].toLowerCase() : 'en';
+ }
+ 
+-/** The editor's region (number and date formats): "tr" → "tr-TR". */
++/** A language whose country is not named like it: its region when the locale names none. */
++const REGION_OF: Record<string, string> = { en: 'en-US', ko: 'ko-KR' };
++
++/** The editor's region (number and date formats): "tr" → "tr-TR", "ko" → "ko-KR". */
+ export function editorRegion(locale: string | undefined | null): string {
+   const m = /^([a-z]{2,3})(?:[-_]([A-Za-z]{2}))?$/i.exec(String(locale ?? ''));
+   if (!m) return 'en-US';
+   const lang = m[1].toLowerCase();
+   if (m[2]) return `${lang}-${m[2].toUpperCase()}`;
+-  return lang === 'en' ? 'en-US' : `${lang}-${lang.toUpperCase()}`;
++  return REGION_OF[lang] ?? `${lang}-${lang.toUpperCase()}`;
+ }
+ 
+ /** ONLYOFFICE's default light and dark themes (9.x). */
+diff --git a/src/app/main.ts b/src/app/main.ts
+index ce6cb73607005621ec06cd487c04d427fa00bf83..9330f6bec07548a0e27f5ddaa4aaa90892a1ae15 100644
+--- a/src/app/main.ts
++++ b/src/app/main.ts
+@@ -400,7 +400,7 @@ class OfficeApp {
+         this.updateDirty();
+         return;
+       case 'state':
+-        if (m.state === 'closed') setStatus(this.t.openFailed('the editor page reloaded'), true);
++        if (m.state === 'closed') setStatus(this.t.openFailed(this.t.editorReloaded), true);
+         return;
+       case 'notice':
+         console.warn('[office-editor]', m.what, m.detail ?? '');
+diff --git a/src/app/strings.ts b/src/app/strings.ts
+index 1f9a87ac02591aeb4106a7cc75c6a8722714de37..47519e58275f22011bdd3f2112d89ddac478c223 100644
+--- a/src/app/strings.ts
++++ b/src/app/strings.ts
+@@ -3,7 +3,7 @@
+ // app for filex (see README.md and NOTICE).
+ //
+ // The app page's own words (the editor has its own translations). English
+-// and Turkish, like the manifest.
++// and Turkish, like the manifest, and Korean.
+ 
+ import type { SaveRefusal, UiLang } from './config';
+ 
+@@ -46,6 +46,8 @@ export interface Strings {
+   logFull: string;
+   /** A change did not reach the others (filex refused it). */
+   changeRefused: (code: string) => string;
++  /** The reason in openFailed when the editor's page loaded again (the document it had is gone with it). */
++  editorReloaded: string;
+   /** The notice ONLYOFFICE's terms ask for: whose work it is, that it is modified, where the source is. */
+   legal: (o: LegalFacts) => string;
+   legalLabel: string;
+@@ -101,6 +103,7 @@ export const STRINGS: Record<UiLang, Strings> = {
+       'Editing together stopped: a change from the others could not be checked. The document was opened again as it was last saved; your changes that were already shared stay with the others.',
+     logFull: 'This document has gathered as many shared changes as it can hold: save it, then open it again to go on editing together.',
+     changeRefused: (code) => `A change did not reach the others (${code}).`,
++    editorReloaded: 'the editor page reloaded',
+     legal: (o) =>
+       `Based on ONLYOFFICE Docs by Ascensio System SIA; this version may have been modified (Docs ${o.version}, build ${o.build}, ONLYOFFICE source tag ${o.tag}). ` +
+       `Free software under the GNU AGPL version 3; source code: ${sourceOf(o.app)}. ` +
+@@ -139,10 +142,50 @@ export const STRINGS: Record<UiLang, Strings> = {
+       'Birlikte düzenleme durdu: diğerlerinden gelen bir değişiklik doğrulanamadı. Belge son kaydedildiği hâliyle yeniden açıldı; daha önce paylaşılan değişiklikleriniz diğerlerinde duruyor.',
+     logFull: 'Bu belge tutabileceği kadar ortak değişiklik biriktirdi: kaydedin, sonra birlikte düzenlemeye devam etmek için yeniden açın.',
+     changeRefused: (code) => `Bir değişiklik diğerlerine ulaşmadı (${code}).`,
++    editorReloaded: 'düzenleyicinin sayfası yeniden yüklendi',
+     legal: (o) =>
+       `Ascensio System SIA'nın ONLYOFFICE Docs'una dayanır; bu sürüm değiştirilmiş olabilir (Docs ${o.version}, yapı ${o.build}, ONLYOFFICE kaynak etiketi ${o.tag}). ` +
+       `GNU AGPL sürüm 3 ile lisanslı özgür yazılımdır; kaynak kodu: ${sourceOf(o.app)}. ` +
+       "ONLYOFFICE®, Ascensio System SIA'nın tescilli markasıdır; bu uygulama onunla bağlantılı değildir ve onun tarafından onaylanmamıştır.",
+     legalLabel: 'Bu düzenleyici hakkında',
+   },
++  ko: {
++    opening: (name) => `${name} 여는 중…`,
++    notInFilex: '이 페이지는 filex의 오피스 편집기 앱입니다. filex 안에서 열립니다.',
++    unsupported: (ext) => `이 앱으로는 .${ext} 파일을 열 수 없습니다.`,
++    encryptedNotHanded:
++      '이 문서는 암호화되어 있고, filex는 여기서 이 문서를 이 앱에 넘겨주지 않습니다. 암호화된 문서를 편집하려면 filex 0.56 이상과 이를 허용한 관리자가 필요합니다. 그때까지는 filex가 자체 보기 화면에서 엽니다.',
++    openFailed: (reason) => `문서를 열지 못했습니다: ${reason}`,
++    saveFailed: (reason) => `문서를 저장하지 못했습니다: ${reason}`,
++    saveRefused: {
++      changed:
++        '문서를 연 뒤에 다른 사람이 이 문서를 저장해서, 그 위에 내 편집본을 덮어쓰지 않았습니다. 변경 내용을 지키려면 문서를 내려받은 다음 다시 여세요.',
++      vault_locked:
++        '지금 다른 사람이 이 금고에 쓰고 있어서 문서를 저장하지 않았습니다. 변경 내용은 그대로 있습니다. 그 사람이 끝나면 다시 저장하세요.',
++      vault_lock_lost:
++        '저장이 끝나기 전에 금고의 쓰기 잠금이 풀려서 아무것도 저장하지 않았습니다. 변경 내용은 그대로 있습니다. 다시 저장하세요.',
++    },
++    exportFailed: (reason) => `파일을 만들지 못했습니다: ${reason}`,
++    x2tStopped: (detail) => `변환기가 이 문서에서 멈췄습니다 (${detail})`,
++    x2tTimeout: (seconds) => `변환기가 ${seconds}초 안에 끝나지 않았습니다`,
++    printAsDownload: 'filex는 아직 여기서 인쇄하지 못합니다. PDF를 넘겨 드렸으니 PDF 보기 프로그램에서 인쇄하세요.',
++    notAvailable: '이 편집기에서는 쓸 수 없는 기능입니다.',
++    edit: '편집',
++    editHint: '이 문서 편집하기 (휴대폰 보기는 읽기만 합니다)',
++    read: '읽기 보기',
++    readHint: '휴대폰 보기로 돌아가기 (먼저 변경 내용을 저장합니다)',
++    switchFailed: (reason) => `보기를 바꾸지 못했습니다: ${reason}`,
++    aloneNow: (reason) => `지금은 다른 사람과 함께 편집할 수 없어서 (${reason}) 이 문서를 혼자 편집합니다.`,
++    rejoined: '이 문서를 함께 편집하던 사람들과 연결이 끊겼습니다. 모두의 변경 내용을 담아 문서를 다시 열었습니다.',
++    togetherBroken:
++      '함께 편집이 멈췄습니다. 다른 사람의 변경 하나를 확인하지 못했습니다. 마지막으로 저장된 상태로 문서를 다시 열었습니다. 이미 공유한 내 변경 내용은 다른 사람들에게 남아 있습니다.',
++    logFull: '이 문서가 담을 수 있는 공유 변경 내용이 가득 찼습니다. 저장한 다음 다시 열어야 함께 편집을 이어 갈 수 있습니다.',
++    changeRefused: (code) => `변경 하나가 다른 사람들에게 전달되지 않았습니다 (${code}).`,
++    editorReloaded: '편집기 페이지가 다시 로드되었습니다',
++    legal: (o) =>
++      `Ascensio System SIA의 ONLYOFFICE Docs를 바탕으로 하며, 이 버전은 수정되었을 수 있습니다 (Docs ${o.version}, 빌드 ${o.build}, ONLYOFFICE 소스 태그 ${o.tag}). ` +
++      `GNU AGPL 버전 3에 따른 자유 소프트웨어입니다. 소스 코드: ${sourceOf(o.app)}. ` +
++      'ONLYOFFICE®는 Ascensio System SIA의 등록 상표이며, 이 앱은 Ascensio System SIA와 제휴 관계가 없고 그 보증을 받지 않았습니다.',
++    legalLabel: '이 편집기 정보',
++  },
+ };
+diff --git a/tests/app-config.test.ts b/tests/app-config.test.ts
+index 6f36ab73700ecba4374da7168b9397599abd68cb..b4f4e5892b32728e9a151065401223fac7926f0f 100644
+--- a/tests/app-config.test.ts
++++ b/tests/app-config.test.ts
+@@ -67,23 +67,43 @@ describe('an encrypted document', () => {
+     expect(encryptedNotHanded({ encrypted: 'vault', plaintext: true }), 'plaintext: true is filex’s word that it hands the file over').toBe(false);
+   });
+ 
+-  it('the words, in both languages', () => {
++  it('the words, in every language', () => {
+     expect(STRINGS.en.encryptedNotHanded).toMatch(/encrypted/);
+     expect(STRINGS.en.encryptedNotHanded).toMatch(/filex 0\.56/);
+     expect(STRINGS.tr.encryptedNotHanded).toMatch(/şifreli/);
+     expect(STRINGS.tr.encryptedNotHanded).not.toBe(STRINGS.en.encryptedNotHanded);
++    expect(STRINGS.ko.encryptedNotHanded).toMatch(/암호화/);
++    expect(STRINGS.ko.encryptedNotHanded).toMatch(/filex 0\.56/);
+   });
+ });
+ 
+ describe('languages', () => {
+-  it("the app's words: Turkish for tr*, English otherwise", () => {
++  it("the app's words: Turkish for tr*, Korean for ko*, English otherwise", () => {
+     expect(uiLang('tr')).toBe('tr');
+     expect(uiLang('tr-TR')).toBe('tr');
++    expect(uiLang('ko')).toBe('ko');
++    expect(uiLang('ko-KR')).toBe('ko');
++    expect(uiLang('KO_kr')).toBe('ko');
++    expect(uiLang('kok')).toBe('en');
+     expect(uiLang('en-GB')).toBe('en');
+     expect(uiLang('trk')).toBe('en');
+     expect(uiLang(undefined)).toBe('en');
+   });
+ 
++  it('every language has every word the English has, and its own', () => {
++    const keys = (o: object) => Object.keys(o).sort();
++    for (const lang of ['tr', 'ko'] as const) {
++      expect(keys(STRINGS[lang]), lang).toEqual(keys(STRINGS.en));
++      expect(keys(STRINGS[lang].saveRefused), lang).toEqual(keys(STRINGS.en.saveRefused));
++      for (const k of Object.keys(STRINGS.en) as (keyof typeof STRINGS.en)[]) {
++        if (typeof STRINGS.en[k] === 'string') expect(STRINGS[lang][k], `${lang} ${k}`).not.toBe(STRINGS.en[k]);
++      }
++    }
++    expect(STRINGS.ko.opening('보고서.docx')).toBe('보고서.docx 여는 중…');
++    expect(STRINGS.ko.openFailed(STRINGS.ko.editorReloaded)).toMatch(/^문서를 열지 못했습니다: 편집기 페이지/);
++    expect(STRINGS.ko.x2tTimeout(30)).toContain('30초');
++  });
++
+   it("the editor's language and region", () => {
+     expect(editorLang('tr')).toBe('tr');
+     expect(editorLang('pt-BR')).toBe('pt');
+@@ -91,12 +111,15 @@ describe('languages', () => {
+     expect(editorRegion('tr')).toBe('tr-TR');
+     expect(editorRegion('pt-br')).toBe('pt-BR');
+     expect(editorRegion('en')).toBe('en-US');
++    expect(editorRegion('ko')).toBe('ko-KR');
++    expect(editorRegion('ko-KR')).toBe('ko-KR');
++    expect(editorLang('ko-KR')).toBe('ko');
+     expect(editorRegion('nonsense!')).toBe('en-US');
+   });
+ 
+-  it('the legal line names ONLYOFFICE, says the version is modified, and where the source is - in both languages', () => {
++  it('the legal line names ONLYOFFICE, says the version is modified, and where the source is - in every language', () => {
+     const o = { version: '9.4.0', build: 129, tag: 'v9.4.0.129', app: '0.1.0' };
+-    for (const t of [STRINGS.en, STRINGS.tr]) {
++    for (const t of [STRINGS.en, STRINGS.tr, STRINGS.ko]) {
+       const line = t.legal(o);
+       expect(line).toMatch(/ONLYOFFICE Docs/);
+       expect(line).toMatch(/Ascensio System SIA/);
+@@ -110,6 +133,16 @@ describe('languages', () => {
+     expect(STRINGS.en.legal({ ...o, app: '0.0.0' })).toMatch(/source code: github\.com\/BRF-Tech\/filex-office-editor\. /);
+     expect(STRINGS.tr.legal(o)).toMatch(/değiştirilmiş olabilir/);
+     expect(STRINGS.en.legal(o)).toMatch(/may have been modified/);
++    // Korean: whose work it is, that it may be modified, the AGPL, the
++    // source, the trademark - with the version, build and tag as they are.
++    const ko = STRINGS.ko.legal(o);
++    expect(ko).toMatch(/Ascensio System SIA의 ONLYOFFICE Docs를 바탕으로/);
++    expect(ko).toMatch(/수정되었을 수 있습니다/);
++    expect(ko).toContain('Docs 9.4.0, 빌드 129, ONLYOFFICE 소스 태그 v9.4.0.129');
++    expect(ko).toMatch(/GNU AGPL 버전 3/);
++    expect(ko).toMatch(/등록 상표/);
++    expect(ko).toMatch(/제휴 관계가 없고 그 보증을 받지 않았습니다/);
++    expect(STRINGS.ko.legal({ ...o, app: '0.0.0' })).toMatch(/소스 코드: github\.com\/BRF-Tech\/filex-office-editor\. /);
+   });
+ });
+ 
+@@ -144,7 +177,7 @@ describe('the editor configuration', () => {
+     expect(a.editorConfig.user.id).not.toBe(b.editorConfig.user.id);
+     expect(STRINGS.tr.rejoined).toMatch(/yeniden açıldı/);
+     expect(STRINGS.en.togetherBroken).toMatch(/Editing together stopped/);
+-    for (const lang of ['en', 'tr'] as const) {
++    for (const lang of ['en', 'tr', 'ko'] as const) {
+       expect(STRINGS[lang].aloneNow('x')).toContain('x');
+       expect(STRINGS[lang].changeRefused('no_lease')).toContain('no_lease');
+       expect(STRINGS[lang].logFull.length).toBeGreaterThan(20);
+@@ -391,8 +424,8 @@ describe('a save filex refused, said in a person’s words', () => {
+     expect(saveRefusal('vault_locked')).toBeNull();
+   });
+ 
+-  it('the words, in both languages: what happened, that the changes are kept, what to do', () => {
+-    for (const lang of ['en', 'tr'] as const) {
++  it('the words, in every language: what happened, that the changes are kept, what to do', () => {
++    for (const lang of ['en', 'tr', 'ko'] as const) {
+       const said = STRINGS[lang].saveRefused;
+       expect(Object.keys(said).sort(), lang).toEqual(['changed', 'vault_lock_lost', 'vault_locked']);
+       for (const [k, v] of Object.entries(said)) {
+@@ -404,11 +437,15 @@ describe('a save filex refused, said in a person’s words', () => {
+     expect(STRINGS.en.saveRefused.vault_lock_lost).toMatch(/nothing was saved/);
+     expect(STRINGS.tr.saveRefused.vault_locked).toMatch(/kasaya başka biri yazıyor/);
+     expect(STRINGS.tr.saveRefused.changed).toMatch(/kaydedilmedi/);
++    expect(STRINGS.ko.saveRefused.vault_locked).toMatch(/다른 사람이 이 금고에 쓰고 있어서/);
++    expect(STRINGS.ko.saveRefused.vault_lock_lost).toMatch(/아무것도 저장하지 않았습니다/);
++    expect(STRINGS.ko.saveRefused.changed).toMatch(/덮어쓰지 않았습니다/);
+   });
+ 
+   it('a document of a vault filex hands over is not "not handed": the old words said a vault never was', () => {
+     expect(encryptedNotHanded({ encrypted: 'vault', plaintext: true })).toBe(false);
+     expect(STRINGS.en.encryptedNotHanded).not.toMatch(/vault/);
+     expect(STRINGS.tr.encryptedNotHanded).not.toMatch(/kasa/);
++    expect(STRINGS.ko.encryptedNotHanded).not.toMatch(/금고/);
+   });
+ });

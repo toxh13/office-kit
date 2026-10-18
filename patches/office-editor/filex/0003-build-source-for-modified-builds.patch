@@ -1,0 +1,285 @@
+SPDX-License-Identifier: AGPL-3.0-or-later
+Subject: [PATCH 3/3] build: --source <address> names where a modified build's source is
+From: Office Kit
+Date: 2026-10-18
+Upstream: https://github.com/BRF-Tech/filex-office-editor (AGPL-3.0-or-later, Copyright (C) 2026 BRF Tech)
+Base: v0.3.1 57dda3dae99af78eb26b3c64b69f1e3f711f0757 (the tag commit; the next main commit acc87f88da47 changes only README.md)
+Apply: git -C <filex checkout> apply <this file>   (in order: 0001, 0002, 0003)
+Modified: this patch changes filex-office-editor; see docs/office-editor-patches.md (Office Kit)
+
+Office Kit: build-app.mjs --source: 수정판(패치 적용판)의 소스 위치를 법적 고지 줄에 넣는다. 안 주면 예전 그대로.
+
+scripts/build-app.mjs takes --source <address> for a build made from
+changed sources (a fork, a redistribution with patches of its own): the
+notice under the editor names that address as where the source is,
+instead of this project's tag (AGPL section 6), and the banner of each
+built script says it is a modified build and where its source is.
+Without it the bundle is byte for byte what it was.
+
+ CHANGELOG.md             |  5 +++++
+ README.md                |  7 +++++++
+ scripts/build-app.mjs    | 37 ++++++++++++++++++++++++++++++-------
+ src/app/main.ts          |  4 +++-
+ src/app/strings.ts       | 17 ++++++++++++-----
+ tests/app-bundle.test.ts | 28 +++++++++++++++++++++++++++-
+ tests/app-config.test.ts | 16 ++++++++++++++++
+ 7 files changed, 100 insertions(+), 14 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 436af0f6ec93e1723149941cea0e39e98942fd55..d30b4cfa59fa939d5503e559bff29ab0b1495394 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -25,6 +25,11 @@ update.
+   gives the editor the region `ko-KR` (it was `ko-KO`). The message when
+   the editor's page loaded again is in the person's language too.
+ 
++- **`build-app.mjs --source <address>`** for a build from changed sources
++  (a fork, a redistribution with its own patches): the notice under the
++  editor names that address as where the source is, instead of this
++  project's tag. Without it nothing changes.
++
+ ### Fixed
+ 
+ - **A Save pressed during the ten-minute save is made after it.** It was
+diff --git a/README.md b/README.md
+index dec05409b83b75a12278b83b30d7be2f55fa8776..a29fde2df4682483a4cb5e65e7c63f5424698976 100644
+--- a/README.md
++++ b/README.md
+@@ -685,6 +685,13 @@ with esbuild (pinned in `package-lock.json`); the app page; `LICENSE` and
+ `NOTICE`. It checks filex's limits, that the app page has no inline code
+ and that every file `filex-app.json` names is in it.
+ 
++A build from changed sources - a fork, or a redistribution with patches of
++its own - names where its source is with `--source <address>`
++(`node scripts/build-app.mjs --source github.com/you/fork/tree/v1.2.0`):
++the notice under the editor then points there instead of at this project's
++tag, so a person is pointed at the source of what they run. Without it the
++notice names this project's tag, as before.
++
+ ### Building a release
+ 
+ A release's `ui.zip` is built from its tag with docker alone, every step
+diff --git a/scripts/build-app.mjs b/scripts/build-app.mjs
+index 9857388e47481105cdf9969f51e1f3dc294bdd43..651c34e9d5c7f269d4bc0d43587268960b34eea4 100644
+--- a/scripts/build-app.mjs
++++ b/scripts/build-app.mjs
+@@ -29,7 +29,12 @@
+ // pinned in package-lock.json, nothing in the output carries a date or a
+ // path of the machine it was built on.
+ //
+-//   node scripts/build-app.mjs [--editor DIR] [--x2t DIR] [--out DIR] [--no-zip]
++//   node scripts/build-app.mjs [--editor DIR] [--x2t DIR] [--out DIR] [--no-zip] [--source WHERE]
++//
++// --source: where the source of THIS build is, for a build made from
++// changed sources (a fork, a redistribution with its own patches). The
++// notice under the editor then names it instead of this project's tag, so
++// the person is pointed at the source of what they run (AGPL section 6).
+ 
+ import { createHash } from 'node:crypto';
+ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+@@ -64,6 +69,7 @@ function args(argv) {
+     const a = argv[i];
+     if (a === '--editor' || a === '--x2t' || a === '--out') out[a.slice(2)] = path.resolve(argv[++i]);
+     else if (a === '--no-zip') out.zip = false;
++    else if (a === '--source') out.source = checkSource(argv[++i]);
+     else throw new Error(`unknown argument ${a}`);
+   }
+   return out;
+@@ -122,13 +128,26 @@ export function readX2t(dir, x2t) {
+   return files;
+ }
+ 
+-/** The three scripts of this project, bundled. */
+-export async function bundleScripts({ pin, version }) {
++/**
++ * A --source: an address a person can read off the notice and type - one
++ * line, no spaces, at most 200 characters ("github.com/you/fork/tree/v1",
++ * "https://example.org/src/app-1.2.zip").
++ */
++export function checkSource(s) {
++  if (typeof s !== 'string' || !/^[\x21-\x7e]{4,200}$/.test(s) || /["'<>\\`]/.test(s)) {
++    throw new Error(`--source takes where the source is: one address, no spaces, at most 200 characters (got ${JSON.stringify(s)})`);
++  }
++  return s;
++}
++
++/** The three scripts of this project, bundled. `source`: where this build's source is (--source), '' for this project's tag. */
++export async function bundleScripts({ pin, version, source = '' }) {
+   const number = Number(pin.build.split('.').pop());
+   const define = {
+     __OO_BUILD__: JSON.stringify({ version: pin.version, number }),
+     __OO_SOURCE_TAG__: JSON.stringify(pin.source_tag),
+     __APP_VERSION__: JSON.stringify(version),
++    __APP_SOURCE__: JSON.stringify(source ? checkSource(source) : ''),
+   };
+   const entries = {
+     'filex/app.js': 'src/app/main.ts',
+@@ -153,9 +172,13 @@ export async function bundleScripts({ pin, version }) {
+       logLevel: 'silent',
+     });
+     if (r.errors.length) throw new Error(`${from}: ${r.errors.map((e) => e.text).join('; ')}`);
+-    const banner =
+-      `/* filex-office-editor ${version} - ${to}, built from ${from} (scripts/build-app.mjs).\n` +
+-      ' * SPDX-License-Identifier: AGPL-3.0-or-later. Source: https://github.com/BRF-Tech/filex-office-editor */\n';
++    // A build from changed sources (--source) says so, and where its own source is.
++    const banner = source
++      ? `/* MODIFIED build of filex-office-editor ${version} - ${to}, built from ${from} (scripts/build-app.mjs)\n` +
++        ` * from changed sources. Source of this build: ${source}\n` +
++        ' * Original: https://github.com/BRF-Tech/filex-office-editor. SPDX-License-Identifier: AGPL-3.0-or-later */\n'
++      : `/* filex-office-editor ${version} - ${to}, built from ${from} (scripts/build-app.mjs).\n` +
++        ' * SPDX-License-Identifier: AGPL-3.0-or-later. Source: https://github.com/BRF-Tech/filex-office-editor */\n';
+     out.set(to, Buffer.from(banner + r.outputFiles[0].text, 'utf8'));
+   }
+   return out;
+@@ -205,7 +228,7 @@ export async function buildApp(o) {
+   if (lock.files['plugins.json']) throw new Error('the editor files hold a plugins.json; the build would replace it');
+   put(`${EDITOR_PREFIX}plugins.json`, Buffer.from(`${JSON.stringify({ pluginsData: [] })}\n`, 'utf8'));
+ 
+-  for (const [p, data] of await bundleScripts({ pin, version })) put(p, data);
++  for (const [p, data] of await bundleScripts({ pin, version, source: o.source ?? '' })) put(p, data);
+   for (const [f, data] of readX2t(o.x2t, x2tPin)) put(`x2t/${f}`, data);
+   for (const p of walk(path.join(ROOT, 'app'))) put(p, readFileSync(path.join(ROOT, 'app', ...p.split('/'))));
+   put('LICENSE', readFileSync(path.join(ROOT, 'LICENSE')));
+diff --git a/src/app/main.ts b/src/app/main.ts
+index 9330f6bec07548a0e27f5ddaa4aaa90892a1ae15..2a92befbde330710b1c020cb6090ed3d2bfffa46 100644
+--- a/src/app/main.ts
++++ b/src/app/main.ts
+@@ -89,6 +89,8 @@ import { X2tClient, X2tFailure, type Converted } from './x2t-client';
+ declare const __OO_BUILD__: { version: string; number: number };
+ declare const __OO_SOURCE_TAG__: string;
+ declare const __APP_VERSION__: string;
++/** Where this build's source is, when it was built from changed sources (scripts/build-app.mjs --source); '' otherwise. */
++declare const __APP_SOURCE__: string;
+ 
+ /** A save every ten minutes while there are changes (the policy of #189). */
+ const AUTOSAVE_MS = 10 * 60 * 1000;
+@@ -153,7 +155,7 @@ function setStatus(text: string | null, error = false): void {
+ function setLegal(t: Strings): void {
+   const box = el('fx-legal');
+   box.setAttribute('aria-label', t.legalLabel);
+-  box.textContent = t.legal({ version: __OO_BUILD__.version, build: __OO_BUILD__.number, tag: __OO_SOURCE_TAG__, app: __APP_VERSION__ });
++  box.textContent = t.legal({ version: __OO_BUILD__.version, build: __OO_BUILD__.number, tag: __OO_SOURCE_TAG__, app: __APP_VERSION__, source: __APP_SOURCE__ });
+ }
+ 
+ function loadScript(src: string): Promise<void> {
+diff --git a/src/app/strings.ts b/src/app/strings.ts
+index 47519e58275f22011bdd3f2112d89ddac478c223..467300754f14cf8e9e3166e261ba0580e90d341a 100644
+--- a/src/app/strings.ts
++++ b/src/app/strings.ts
+@@ -63,10 +63,17 @@ export interface LegalFacts {
+   tag: string;
+   /** This app's version ("0.0.0" for a build between releases). */
+   app: string;
++  /** Where this build's source is, when it was built from changed sources (scripts/build-app.mjs --source); empty: this project's. */
++  source?: string;
+ }
+ 
+-/** Where this exact version's source is: the release's tag, or the repository for a build between releases. */
+-export function sourceOf(app: string): string {
++/**
++ * Where this exact version's source is: the release's tag, or the
++ * repository for a build between releases - or, for a build from changed
++ * sources, where its builder says (`source`).
++ */
++export function sourceOf(app: string, source?: string): string {
++  if (source) return source;
+   return /^\d+\.\d+\.\d+$/.test(app) && app !== '0.0.0' ? `${SOURCE}/tree/v${app}` : SOURCE;
+ }
+ 
+@@ -106,7 +113,7 @@ export const STRINGS: Record<UiLang, Strings> = {
+     editorReloaded: 'the editor page reloaded',
+     legal: (o) =>
+       `Based on ONLYOFFICE Docs by Ascensio System SIA; this version may have been modified (Docs ${o.version}, build ${o.build}, ONLYOFFICE source tag ${o.tag}). ` +
+-      `Free software under the GNU AGPL version 3; source code: ${sourceOf(o.app)}. ` +
++      `Free software under the GNU AGPL version 3; source code: ${sourceOf(o.app, o.source)}. ` +
+       'ONLYOFFICE® is a registered trademark of Ascensio System SIA; this app is not affiliated with or endorsed by it.',
+     legalLabel: 'About this editor',
+   },
+@@ -145,7 +152,7 @@ export const STRINGS: Record<UiLang, Strings> = {
+     editorReloaded: 'düzenleyicinin sayfası yeniden yüklendi',
+     legal: (o) =>
+       `Ascensio System SIA'nın ONLYOFFICE Docs'una dayanır; bu sürüm değiştirilmiş olabilir (Docs ${o.version}, yapı ${o.build}, ONLYOFFICE kaynak etiketi ${o.tag}). ` +
+-      `GNU AGPL sürüm 3 ile lisanslı özgür yazılımdır; kaynak kodu: ${sourceOf(o.app)}. ` +
++      `GNU AGPL sürüm 3 ile lisanslı özgür yazılımdır; kaynak kodu: ${sourceOf(o.app, o.source)}. ` +
+       "ONLYOFFICE®, Ascensio System SIA'nın tescilli markasıdır; bu uygulama onunla bağlantılı değildir ve onun tarafından onaylanmamıştır.",
+     legalLabel: 'Bu düzenleyici hakkında',
+   },
+@@ -184,7 +191,7 @@ export const STRINGS: Record<UiLang, Strings> = {
+     editorReloaded: '편집기 페이지가 다시 로드되었습니다',
+     legal: (o) =>
+       `Ascensio System SIA의 ONLYOFFICE Docs를 바탕으로 하며, 이 버전은 수정되었을 수 있습니다 (Docs ${o.version}, 빌드 ${o.build}, ONLYOFFICE 소스 태그 ${o.tag}). ` +
+-      `GNU AGPL 버전 3에 따른 자유 소프트웨어입니다. 소스 코드: ${sourceOf(o.app)}. ` +
++      `GNU AGPL 버전 3에 따른 자유 소프트웨어입니다. 소스 코드: ${sourceOf(o.app, o.source)}. ` +
+       'ONLYOFFICE®는 Ascensio System SIA의 등록 상표이며, 이 앱은 Ascensio System SIA와 제휴 관계가 없고 그 보증을 받지 않았습니다.',
+     legalLabel: '이 편집기 정보',
+   },
+diff --git a/tests/app-bundle.test.ts b/tests/app-bundle.test.ts
+index dcd65694f4d45b6ef5aa5ee838e8cfe8dfcdecfe..333b537bc38bd2de0e32e16be610fe2a0d4e07f4 100644
+--- a/tests/app-bundle.test.ts
++++ b/tests/app-bundle.test.ts
+@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
+ 
+ import { describe, expect, it } from 'vitest';
+ 
+-import { EDITOR_PREFIX, SOCKET_IO, readEditor } from '../scripts/build-app.mjs';
++import { EDITOR_PREFIX, SOCKET_IO, bundleScripts, checkSource, readEditor } from '../scripts/build-app.mjs';
+ import { inlineCodeIn } from '../scripts/editor/html.mjs';
+ 
+ const here = path.dirname(fileURLToPath(import.meta.url));
+@@ -138,3 +138,29 @@ describe.skipIf(!existsSync(path.join(UI, 'index.html')))('dist/ui (a bundle bui
+     for (const p of ['filex/app.js', 'filex/app.css', 'filex/x2t-worker.js', 'LICENSE', 'NOTICE']) expect(existsSync(path.join(UI, p)), p).toBe(true);
+   });
+ });
++
++describe('a build from changed sources (--source)', () => {
++  const pin = JSON.parse(readFileSync(path.join(ROOT, 'upstream', 'onlyoffice.json'), 'utf8'));
++
++  it('takes one address a person can type', () => {
++    expect(checkSource('github.com/you/fork/tree/v1.2.0')).toBe('github.com/you/fork/tree/v1.2.0');
++    expect(checkSource('https://example.org/src/app-1.2.zip')).toBe('https://example.org/src/app-1.2.zip');
++    for (const bad of ['', 'a b', 'x'.repeat(201), 'a\nb', '<script>', 'say "hi"', undefined]) {
++      expect(() => checkSource(bad as string), String(bad)).toThrow(/--source/);
++    }
++  });
++
++  it("puts it where the app page's notice reads it; none: empty, the notice names this project's tag", async () => {
++    const withSource = await bundleScripts({ pin, version: '0.3.1', source: 'example.org/fork/tree/v1.2.0' });
++    expect(withSource.get('filex/app.js')!.toString('utf8')).toContain('"example.org/fork/tree/v1.2.0"');
++    // the file's own banner says it is a modified build and where its source is
++    for (const [, data] of withSource) {
++      expect(data.toString('utf8').split('\n', 2).join('\n')).toMatch(/^\/\* MODIFIED build of filex-office-editor 0\.3\.1 .*\n \* from changed sources\. Source of this build: example\.org\/fork\/tree\/v1\.2\.0$/);
++    }
++    const without = await bundleScripts({ pin, version: '0.3.1' });
++    const app = without.get('filex/app.js')!.toString('utf8');
++    expect(app.startsWith('/* filex-office-editor 0.3.1 - filex/app.js')).toBe(true);
++    expect(app).not.toContain('__APP_SOURCE__');
++    expect(app).not.toContain('example.org');
++  }, 30_000);
++});
+diff --git a/tests/app-config.test.ts b/tests/app-config.test.ts
+index b4f4e5892b32728e9a151065401223fac7926f0f..7b331d6a6dfab08c66792cac040ebcf76cf28ae0 100644
+--- a/tests/app-config.test.ts
++++ b/tests/app-config.test.ts
+@@ -144,6 +144,22 @@ describe('languages', () => {
+     expect(ko).toMatch(/제휴 관계가 없고 그 보증을 받지 않았습니다/);
+     expect(STRINGS.ko.legal({ ...o, app: '0.0.0' })).toMatch(/소스 코드: github\.com\/BRF-Tech\/filex-office-editor\. /);
+   });
++
++  it('a build from changed sources names where its own source is (build-app.mjs --source)', () => {
++    const o = { version: '9.4.0', build: 129, tag: 'v9.4.0.129', app: '0.3.1', source: 'example.org/fork/tree/v1.2.0' };
++    for (const t of [STRINGS.en, STRINGS.tr, STRINGS.ko]) {
++      const line = t.legal(o);
++      expect(line).toContain('example.org/fork/tree/v1.2.0');
++      expect(line).not.toContain('github.com/BRF-Tech/filex-office-editor');
++      // The rest of the notice stays: whose work, modified, the AGPL, the trademark.
++      expect(line).toMatch(/ONLYOFFICE Docs/);
++      expect(line).toMatch(/v9\.4\.0\.129/);
++      expect(line).toMatch(/AGPL/);
++      expect(line).toMatch(/ONLYOFFICE®/);
++    }
++    // None given: this project's tag, as before.
++    expect(STRINGS.en.legal({ ...o, source: '' })).toContain('github.com/BRF-Tech/filex-office-editor/tree/v0.3.1');
++  });
+ });
+ 
+ describe('the editor configuration', () => {

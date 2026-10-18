@@ -14,9 +14,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
   chatCollapsed: false,
   window: null,            // { x, y, width, height, maximized }
   recent: [],              // [{ path, openedAt }]
+  officeEditor: { settings: {} }, // 문서·표·슬라이드 편집기가 보관하는 설정 (편집기의 state.get/set, 값마다 8KB)
 });
 
 const RECENT_MAX = 10;
+/** Office 편집기 설정: 이름 규칙·값 크기(JSON 바이트)·개수 한도 */
+export const OFFICE_STATE_KEY = /^[\w.:-]{1,128}$/;
+export const OFFICE_STATE_VALUE_MAX = 8 * 1024;
+export const OFFICE_STATE_MAX_KEYS = 128;
 const BACKUP_KEEP = 50;
 
 // 같은 경로인지 (Windows는 대소문자 무시)
@@ -62,7 +67,22 @@ function migrate(data) {
   delete data.model;
   data.models = models;
   if (!Array.isArray(data.recent)) data.recent = [];
+  data.officeEditor = { settings: cleanOfficeState(data.officeEditor?.settings) };
   return data;
+}
+
+/** 저장된 Office 편집기 설정 걸러 내기 (이름 규칙·크기에 맞는 것만, 자기 속성으로) */
+function cleanOfficeState(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = [];
+  for (const [k, v] of Object.entries(raw)) {
+    if (!OFFICE_STATE_KEY.test(k) || v === null || v === undefined) continue;
+    let json;
+    try { json = JSON.stringify(v); } catch { continue; }
+    if (typeof json === 'string' && Buffer.byteLength(json) <= OFFICE_STATE_VALUE_MAX) out.push([k, v]);
+  }
+  // Object.fromEntries는 '__proto__' 같은 이름도 자기 속성으로 둔다 (프로토타입을 바꾸지 않음)
+  return Object.fromEntries(out.slice(-OFFICE_STATE_MAX_KEYS));
 }
 
 /** 설정 저장소. dir = app.getPath('userData') */
@@ -88,6 +108,34 @@ export function createSettings(dir) {
     },
     removeRecent(path) { data.recent = data.recent.filter((r) => !samePath(r.path, path)); save(); },
     clearRecent() { data.recent = []; save(); },
+
+    // ── Office 편집기 설정 (편집 창의 editor:state) ─────────
+    /** 값 하나 → 값(사본) | null */
+    officeGet(key) {
+      if (typeof key !== 'string' || !OFFICE_STATE_KEY.test(key)) return null;
+      const all = data.officeEditor.settings;
+      return Object.hasOwn(all, key) ? structuredClone(all[key]) : null;
+    },
+    /**
+     * 값 하나 보관 (null = 지우기). 같은 값이면 파일을 다시 쓰지 않는다.
+     * 개수가 한도를 넘으면 오래된 것부터 지운다 → 바뀌었으면 true
+     */
+    officeSet(key, value) {
+      if (typeof key !== 'string' || !OFFICE_STATE_KEY.test(key)) throw new Error('잘못된 설정 이름입니다');
+      const all = data.officeEditor.settings;
+      const entries = Object.entries(all).filter(([k]) => k !== key);
+      if (value === null || value === undefined) {
+        if (!Object.hasOwn(all, key)) return false;
+      } else {
+        const json = JSON.stringify(value);
+        if (typeof json !== 'string' || Buffer.byteLength(json) > OFFICE_STATE_VALUE_MAX) throw new Error('설정 값이 너무 큽니다 (8KB 넘음)');
+        if (Object.hasOwn(all, key) && JSON.stringify(all[key]) === json) return false;
+        entries.push([key, JSON.parse(json)]);
+      }
+      data = { ...data, officeEditor: { ...data.officeEditor, settings: Object.fromEntries(entries.slice(-OFFICE_STATE_MAX_KEYS)) } };
+      save();
+      return true;
+    },
   };
 }
 

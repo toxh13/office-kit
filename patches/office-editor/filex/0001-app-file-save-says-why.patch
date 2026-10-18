@@ -1,0 +1,596 @@
+SPDX-License-Identifier: AGPL-3.0-or-later
+Subject: [PATCH 1/3] app: every file.save says why - reason "user" or "auto"
+From: Office Kit
+Date: 2026-10-18
+Upstream: https://github.com/BRF-Tech/filex-office-editor (AGPL-3.0-or-later, Copyright (C) 2026 BRF Tech)
+Base: v0.3.1 57dda3dae99af78eb26b3c64b69f1e3f711f0757 (the tag commit; the next main commit acc87f88da47 changes only README.md)
+Apply: git -C <filex checkout> apply <this file>   (in order: 0001, 0002, 0003)
+Modified: this patch changes filex-office-editor; see docs/office-editor-patches.md (Office Kit)
+
+Office Kit: file.save에 reason을 더한다 ("user" = 사용자 저장, "auto" = 10분 자동 저장). 자동 저장 중 누른 저장은 그 뒤에 따로 한다.
+
+file.save carries `reason`: "user" for a save the person asked for (the
+editor's Save or Ctrl+S, filex's Save / the host's {hid, request:'save'},
+a switch of view, the last writer leaving), "auto" for the ten-minute save.
+filex writes both as a new version, as before; a host that keeps an
+autosave apart from the file (a recovery copy) tells them apart by it.
+Alone, the save goes through the SDK's raw request (the 0.53 SDK's save()
+has no field for it); together, coedit-client passes it with `through`.
+
+Saves stay one at a time (src/app/save-queue.ts), but a Save pressed
+during an autosave is made after it instead of being answered by it.
+
+ CHANGELOG.md              |   15 +++++
+ README.md                 |    8 ++
+ src/app/coedit-client.ts  |    9 ++-
+ src/app/config.ts         |   27 ++++++++
+ src/app/main.ts           |   98 ++++++++++++++++++------------
+ src/app/save-queue.ts     |   51 ++++++++++++++++
+ src/app/together.ts       |    7 +-
+ tests/save-reason.test.ts |  145 +++++++++++++++++++++++++++++++++++++++++++++
+ tests/together.test.ts    |   16 +++--
+ 9 files changed, 323 insertions(+), 53 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 6f368d74dfb58bd0396409590ad9f879b1b52bbc..b7ce684989f33e1f3931dde6137ce007cda07fd2 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,21 @@ update.
+ 
+ ## [Unreleased]
+ 
++### Added
++
++- **Every save says why.** `file.save` carries `reason`: `"user"` for a
++  save the person asked for (the editor's Save, filex's Save, Ctrl+S, a
++  switch of view, the last writer leaving), `"auto"` for the ten-minute
++  save. filex writes both as a new version, as before; a host that keeps an
++  autosave apart from the file - a copy to recover from, not written over
++  the file the person did not ask to save - tells them apart by it.
++
++### Fixed
++
++- **A Save pressed during the ten-minute save is made after it.** It was
++  answered by the autosave under way, whose snapshot could be older than
++  the last change.
++
+ ## [0.3.1] - 2026-10-10
+ 
+ A patch release, from 0.3.0's measurement in filex 0.56 itself: a save that
+diff --git a/README.md b/README.md
+index fe5eec9bbe2a25faa3558c8ac7226cf80dc354a3..dcd7f3044da98cde85f715fb3a959df56a4bf256 100644
+--- a/README.md
++++ b/README.md
+@@ -782,7 +782,13 @@ its own (`sandbox allow-scripts`): neither can reach into the other, a
+    document as the editor holds it (`asc_nativeGetFile`, with its images),
+    converts it back to the file's own format with x2t and writes it as a
+    new version (`file.save`). filex is told "unsaved changes" while there
+-   are and asks before the person leaves them.
++   are and asks before the person leaves them. Each save says why
++   (`file.save`'s `reason`): `"user"` for the person's - the editor's Save,
++   filex's Save, Ctrl+S, a switch of view, the last writer leaving - and
++   `"auto"` for the ten-minute one. filex writes both as a new version; a
++   host that keeps an autosave apart from the file (a copy to recover from)
++   tells them apart by it. Saves go one at a time; a Save pressed during an
++   autosave is made after it (`src/app/save-queue.ts`).
+ 6. **Download as and Print.** The editor page hands over what the editor
+    asked for (below); x2t writes it in the worker - the formats in
+    `src/formats.ts`, and PDF from the pages as the editor laid them out
+diff --git a/src/app/coedit-client.ts b/src/app/coedit-client.ts
+index afea3a89f8e4db14592631d4a0f5d665f5f17651..cb981da35601f5731bee4edb07a7e35bf02bf3c0 100644
+--- a/src/app/coedit-client.ts
++++ b/src/app/coedit-client.ts
+@@ -11,6 +11,7 @@
+ import type { FilexApp } from '@brftech/filex-app-ui';
+ 
+ import type { CoEditCursor, CoEditDropped, CoEditHello } from '../coedit';
++import { saveParams, type SaveReason } from './config';
+ 
+ /** What the app page needs of filex to edit together; tests hand it a stand-in. */
+ export interface CoEditApi {
+@@ -22,8 +23,8 @@ export interface CoEditApi {
+   putBlob(name: string, bytes: ArrayBuffer): Promise<void>;
+   getBlob(name: string): Promise<ArrayBuffer>;
+   leave(): Promise<void>;
+-  /** A new version of the opened file, holding the log up to `through`. */
+-  save(bytes: ArrayBuffer, mime: string, through: number): Promise<void>;
++  /** A new version of the opened file, holding the log up to `through`, and why it is saved (config.ts SaveReason). */
++  save(bytes: ArrayBuffer, mime: string, through: number, reason: SaveReason): Promise<void>;
+   onEntry(h: (e: unknown) => void): () => void;
+   onCursor(h: (c: CoEditCursor) => void): () => void;
+   onDropped(h: (d: CoEditDropped) => void): () => void;
+@@ -61,8 +62,8 @@ export function coeditApi(fx: FilexApp): CoEditApi {
+     leave: async () => {
+       await call('coedit.leave');
+     },
+-    save: async (bytes, mime, through) => {
+-      await call('file.save', { index: 0, data: bytes, mime, through }, [bytes]);
++    save: async (bytes, mime, through, reason) => {
++      await call('file.save', saveParams(bytes, mime, reason, through), [bytes]);
+     },
+     onEntry: (h) => on('coedit.entry' as never, h),
+     onCursor: (h) => on('coedit.cursor' as never, (d) => h(d as CoEditCursor)),
+diff --git a/src/app/config.ts b/src/app/config.ts
+index 136d6486c41fae4ac94417b0ad4ddd316e63baa7..b8bd742ad3a590bb83752fb2dfd80dde86021dd6 100644
+--- a/src/app/config.ts
++++ b/src/app/config.ts
+@@ -121,6 +121,33 @@ export function saveRefusal(e: unknown): SaveRefusal | null {
+   return SAVE_REFUSALS.includes(message) ? (message as SaveRefusal) : null;
+ }
+ 
++/**
++ * Why a save is made, said to filex with it (`file.save`'s `reason`):
++ * `user` - the person asked for it (the editor's Save or Ctrl+S, filex's
++ * Save, a switch of view, the last writer leaving); `auto` - the ten-minute
++ * save while there are changes. filex writes both as a new version of the
++ * file and may ignore the word; a host that keeps an autosave apart from the
++ * file (a copy to recover from, not written over the file the person did
++ * not ask to save) tells the two apart by it.
++ */
++export type SaveReason = 'user' | 'auto';
++
++export const SAVE_REASONS: readonly SaveReason[] = ['user', 'auto'];
++
++/** `file.save`'s params: the document, its type, why it is saved and - together - how far into the session's log it reaches. */
++export interface SaveParams {
++  index: number;
++  data: ArrayBuffer;
++  mime: string;
++  reason: SaveReason;
++  through?: number;
++}
++
++export function saveParams(data: ArrayBuffer, mime: string, reason: SaveReason, through?: number): SaveParams {
++  if (!SAVE_REASONS.includes(reason)) throw new Error(`a save's reason is user or auto, not ${String(reason)}`);
++  return through === undefined ? { index: 0, data, mime, reason } : { index: 0, data, mime, reason, through };
++}
++
+ /** The languages the app's own words come in. */
+ export type UiLang = 'en' | 'tr';
+ 
+diff --git a/src/app/main.ts b/src/app/main.ts
+index ec8ae42236abe3afbf02a98ea196345006369d96..ce6cb73607005621ec06cd487c04d427fa00bf83 100644
+--- a/src/app/main.ts
++++ b/src/app/main.ts
+@@ -12,6 +12,8 @@
+ //   4. save: the editor's Save, filex's Save, Ctrl+S, and every ten minutes
+ //      while there are changes - the document as the editor holds it, back
+ //      through x2t to the file's own format, as a new version of the file.
++//      Each save says why (`file.save`'s `reason`, config.ts SaveReason):
++//      "user" for the person's, "auto" for the ten-minute one.
+ //
+ //   5. "Download as" and Print: the editor page hands over what the editor
+ //      asked for (frame/export.ts), x2t writes it, filex hands it to the
+@@ -64,8 +66,22 @@ import {
+ } from '../frame-protocol';
+ import { adaptOpaqueOrigin } from '../origin';
+ import { SETTINGS_KEY, readSettings, sameSettings, type Settings } from '../settings';
+-import { NARROW_PX, editorConfig, encryptedNotHanded, isPhone, kindOf, saveRefusal, uiLang, type EncryptionInfo, type Kind, type View } from './config';
++import {
++  NARROW_PX,
++  editorConfig,
++  encryptedNotHanded,
++  isPhone,
++  kindOf,
++  saveParams,
++  saveRefusal,
++  uiLang,
++  type EncryptionInfo,
++  type Kind,
++  type SaveReason,
++  type View,
++} from './config';
+ import { coeditApi } from './coedit-client';
++import { SaveQueue } from './save-queue';
+ import { STRINGS, type Strings } from './strings';
+ import { Together, joinSession } from './together';
+ import { X2tClient, X2tFailure, type Converted } from './x2t-client';
+@@ -265,7 +281,8 @@ class OfficeApp {
+   /** The editor has changes it has not handed to the bridge yet (api.js onDocumentStateChange). */
+   private editorDirty = false;
+   private shownDirty = false;
+-  private saving: Promise<void> | null = null;
++  /** One save at a time (save-queue.ts says what a save asked for meanwhile is). */
++  private readonly saves = new SaveQueue((reason) => this.write(reason));
+   private lastSave = Date.now();
+   private settleWaiters: (() => void)[] = [];
+   /** The settings filex holds for the editor, and the ones waiting to go there. */
+@@ -322,7 +339,7 @@ class OfficeApp {
+    * are saved first (the editor that holds them is about to go).
+    */
+   async current(): Promise<Converted> {
+-    if (this.shownDirty || this.editorDirty) await this.save();
++    if (this.shownDirty || this.editorDirty) await this.save('user');
+     await this.settle();
+     const snap = await this.link.snapshot();
+     if (snap.error || typeof snap.bin !== 'string') throw new Error(snap.error ?? 'no document');
+@@ -369,7 +386,8 @@ class OfficeApp {
+     }
+     switch (m.t) {
+       case 'save':
+-        void this.save().catch(() => {});
++        // The editor's Save (its button, Ctrl+S in the editor): the person's.
++        void this.save('user').catch(() => {});
+         return;
+       case 'settings-changed':
+         this.settingsChanged(readSettings(m.values));
+@@ -428,37 +446,38 @@ class OfficeApp {
+     });
+   }
+ 
+-  /** Write the document as the editor holds it now, as a new version of the file. One at a time. */
+-  save(): Promise<void> {
++  /**
++   * Write the document as the editor holds it now, as a new version of the
++   * file, saying why (`reason`). One at a time (save-queue.ts).
++   */
++  save(why: SaveReason): Promise<void> {
+     if (!this.editing) return Promise.resolve();
+-    if (this.saving) return this.saving;
+-    const run = (async () => {
+-      let through = 0;
+-      try {
+-        await this.settle();
+-        const snap = await this.link.snapshot();
+-        if (snap.error || typeof snap.bin !== 'string') throw new Error(snap.error ?? 'no document');
+-        through = snap.through ?? 0;
+-        const out = await this.x2t.convert('bin', this.kind.ext, snap.bin, snap.media ?? []);
+-        // Together, the save says how far into the log it reaches; filex
+-        // writes that into the log, and every member's "unsaved" follows it.
+-        const t = this.together;
+-        if (t?.active) await t.saveFile(out.bytes, this.kind.mime, through);
+-        else await this.fx.save(out.bytes, { mime: this.kind.mime });
+-        this.lastSave = Date.now();
+-        this.link.send({ t: 'saved', ok: true, through });
+-      } catch (e) {
+-        this.link.send({ t: 'saved', ok: false, through: 0 });
+-        // A refusal filex said the reason of, in words a person can act on.
+-        const refused = saveRefusal(e);
+-        this.fx.toast(refused ? this.t.saveRefused[refused] : this.t.saveFailed(reason(e, this.t)), 'error');
+-        throw e;
+-      }
+-    })();
+-    this.saving = run.finally(() => {
+-      this.saving = null;
+-    });
+-    return this.saving;
++    return this.saves.save(why);
++  }
++
++  private async write(why: SaveReason): Promise<void> {
++    let through = 0;
++    try {
++      await this.settle();
++      const snap = await this.link.snapshot();
++      if (snap.error || typeof snap.bin !== 'string') throw new Error(snap.error ?? 'no document');
++      through = snap.through ?? 0;
++      const out = await this.x2t.convert('bin', this.kind.ext, snap.bin, snap.media ?? []);
++      // Together, the save says how far into the log it reaches; filex
++      // writes that into the log, and every member's "unsaved" follows it.
++      // Alone, the SDK's save (0.53) has no word for why: its raw request.
++      const t = this.together;
++      if (t?.active) await t.saveFile(out.bytes, this.kind.mime, through, why);
++      else await this.fx.request('file.save', saveParams(out.bytes, this.kind.mime, why), [out.bytes]);
++      this.lastSave = Date.now();
++      this.link.send({ t: 'saved', ok: true, through });
++    } catch (e) {
++      this.link.send({ t: 'saved', ok: false, through: 0 });
++      // A refusal filex said the reason of, in words a person can act on.
++      const refused = saveRefusal(e);
++      this.fx.toast(refused ? this.t.saveRefused[refused] : this.t.saveFailed(reason(e, this.t)), 'error');
++      throw e;
++    }
+   }
+ 
+   /** Write what "Download as" or Print asked for, and hand it to filex. */
+@@ -511,20 +530,20 @@ class OfficeApp {
+    * reaches the same answer from the same log.
+    */
+   tick(): void {
+-    if (this.saving || !this.editing) return;
++    if (this.saves.busy || !this.editing) return;
+     const t = this.together;
+     if (t?.active) {
+-      if (t.autosaveDue()) void this.save().catch(() => {});
++      if (t.autosaveDue()) void this.save('auto').catch(() => {});
+       return;
+     }
+-    if (this.shownDirty && Date.now() - this.lastSave >= AUTOSAVE_MS) void this.save().catch(() => {});
++    if (this.shownDirty && Date.now() - this.lastSave >= AUTOSAVE_MS) void this.save('auto').catch(() => {});
+   }
+ 
+   /** The last writer leaves with changes no save has: they are saved first. */
+   async saveIfLast(): Promise<void> {
+     const t = this.together;
+     if (!t?.active || !this.editing || !t.lastWriter) return;
+-    if (t.unsaved || this.editorDirty) await this.save().catch(() => {});
++    if (t.unsaved || this.editorDirty) await this.save('user').catch(() => {});
+   }
+ }
+ 
+@@ -899,8 +918,9 @@ async function main(): Promise<void> {
+   showSwitch();
+ 
+   if (canEdit) {
++    // filex's Save (and the host's save request), Ctrl+S on the app page: the person's.
+     fx.onSave(async () => {
+-      await app.save();
++      await app.save('user');
+     });
+     setInterval(() => app.tick(), 30_000);
+   }
+diff --git a/src/app/save-queue.ts b/src/app/save-queue.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..59c18412e510413a089613156f706e7e45df932a
+--- /dev/null
++++ b/src/app/save-queue.ts
+@@ -0,0 +1,51 @@
++// SPDX-License-Identifier: AGPL-3.0-or-later
++// Part of filex-office-editor, the office editor app for filex (see README.md
++// and NOTICE). Contributed by Office Kit.
++//
++// The app's saves, one at a time. A save asked for while one is under way is
++// that one - but for the person's save asked for during an autosave: it is
++// made after it. The autosave's snapshot may be older than the person's last
++// change, and a host may have kept it apart from the file (config.ts
++// SaveReason), so it does not stand for the save the person asked for.
++
++import type { SaveReason } from './config';
++
++export class SaveQueue {
++  private current: { reason: SaveReason; done: Promise<void> } | null = null;
++  private userNext: Promise<void> | null = null;
++
++  /** `write` makes one save; the queue never runs two at once. */
++  constructor(private readonly write: (reason: SaveReason) => Promise<void>) {}
++
++  /** A save is under way. */
++  get busy(): boolean {
++    return this.current !== null;
++  }
++
++  /** Why the save under way is made, or null. */
++  get reason(): SaveReason | null {
++    return this.current?.reason ?? null;
++  }
++
++  save(reason: SaveReason): Promise<void> {
++    const now = this.current;
++    if (now) {
++      if (reason === 'auto' || now.reason === 'user') return now.done;
++      // The person's save during an autosave: once, after it, whatever it came to.
++      this.userNext ??= now.done
++        .catch(() => {})
++        .then(() => {
++          this.userNext = null;
++          return this.save('user');
++        });
++      return this.userNext;
++    }
++    const done = Promise.resolve()
++      .then(() => this.write(reason))
++      .finally(() => {
++        if (this.current?.done === done) this.current = null;
++      });
++    this.current = { reason, done };
++    return done;
++  }
++}
+diff --git a/src/app/together.ts b/src/app/together.ts
+index fff0296f1c5f60a98bc5d01e6717a1f2e18b6693..7309277ecb22b29548a1bccb64d96486753bb023 100644
+--- a/src/app/together.ts
++++ b/src/app/together.ts
+@@ -44,6 +44,7 @@ import {
+ import type { BridgeEntry, BridgeMember } from '../bridge';
+ import type { FromFrame, ToFrame } from '../frame-protocol';
+ import { ALONE_CODES, codeOf, messageOf, type CoEditApi } from './coedit-client';
++import type { SaveReason } from './config';
+ 
+ /** How long apart the app page hands filex a cursor (the latest wins). */
+ export const CURSOR_EVERY_MS = 250;
+@@ -353,9 +354,9 @@ export class Together {
+     return !this.stopped;
+   }
+ 
+-  /** Write a new version holding the log up to `through`; filex records it in the log. */
+-  saveFile(bytes: ArrayBuffer, mime: string, through: number): Promise<void> {
+-    return this.o.api.save(bytes, mime, through);
++  /** Write a new version holding the log up to `through`, saying why; filex records it in the log. */
++  saveFile(bytes: ArrayBuffer, mime: string, through: number, reason: SaveReason): Promise<void> {
++    return this.o.api.save(bytes, mime, through, reason);
+   }
+ 
+   /** Leave the session (the editor is going away). */
+diff --git a/tests/save-reason.test.ts b/tests/save-reason.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d202eb59e54a3337070248832b23184e4b7cb64f
+--- /dev/null
++++ b/tests/save-reason.test.ts
+@@ -0,0 +1,145 @@
++// SPDX-License-Identifier: AGPL-3.0-or-later
++// Tests for filex-office-editor (see README.md and NOTICE).
++//
++// Every save says why it is made (`file.save`'s `reason`, src/app/config.ts
++// SaveReason): "user" for the person's, "auto" for the ten-minute one; and
++// the saves go one at a time, the person's asked for during an autosave made
++// after it (src/app/save-queue.ts).
++import { describe, expect, it } from 'vitest';
++
++import type { FilexApp } from '@brftech/filex-app-ui';
++
++import { coeditApi } from '../src/app/coedit-client';
++import { SAVE_REASONS, saveParams, type SaveReason } from '../src/app/config';
++import { SaveQueue } from '../src/app/save-queue';
++
++describe("file.save's params", () => {
++  it('the document, its type and why, for the opened file', () => {
++    const data = new Uint8Array([1, 2, 3]).buffer;
++    expect(saveParams(data, 'application/x', 'user')).toEqual({ index: 0, data, mime: 'application/x', reason: 'user' });
++    expect(saveParams(data, 'application/x', 'auto')).toEqual({ index: 0, data, mime: 'application/x', reason: 'auto' });
++    expect(SAVE_REASONS).toEqual(['user', 'auto']);
++  });
++
++  it('together, how far into the log it reaches too', () => {
++    const data = new ArrayBuffer(1);
++    expect(saveParams(data, 'm', 'auto', 7)).toEqual({ index: 0, data, mime: 'm', reason: 'auto', through: 7 });
++    expect(saveParams(data, 'm', 'user', 0)).toMatchObject({ through: 0 });
++  });
++
++  it('no other reason', () => {
++    expect(() => saveParams(new ArrayBuffer(1), 'm', 'later' as SaveReason)).toThrow(/user or auto/);
++  });
++
++  it("together, the session's save goes to filex with its reason", async () => {
++    const calls: { method: string; params: unknown; transfer: unknown[] }[] = [];
++    const fx = {
++      request: async (method: string, params: unknown, transfer: unknown[] = []) => {
++        calls.push({ method, params, transfer });
++        return { saved: true, size: 3 };
++      },
++      on: () => () => {},
++    } as unknown as FilexApp;
++    const bytes = new Uint8Array([1, 2, 3]).buffer;
++    await coeditApi(fx).save(bytes, 'application/x', 5, 'auto');
++    expect(calls).toEqual([{ method: 'file.save', params: { index: 0, data: bytes, mime: 'application/x', reason: 'auto', through: 5 }, transfer: [bytes] }]);
++  });
++});
++
++/** A save the test ends when it likes. */
++function writer() {
++  const made: SaveReason[] = [];
++  const open: { reason: SaveReason; end: (ok?: boolean) => void }[] = [];
++  const write = (reason: SaveReason) =>
++    new Promise<void>((resolve, reject) => {
++      made.push(reason);
++      open.push({ reason, end: (ok = true) => (ok ? resolve() : reject(new Error('refused'))) });
++    });
++  return { made, open, write };
++}
++
++const tick = () => new Promise((r) => setTimeout(r, 0));
++
++describe('one save at a time', () => {
++  it('a save asked for during one of the same kind is that one', async () => {
++    for (const reason of SAVE_REASONS) {
++      const w = writer();
++      const q = new SaveQueue(w.write);
++      const a = q.save(reason);
++      const b = q.save(reason);
++      expect(b).toBe(a);
++      await tick();
++      expect(q.busy).toBe(true);
++      expect(q.reason).toBe(reason);
++      w.open[0].end();
++      await a;
++      expect(w.made).toEqual([reason]);
++      expect(q.busy).toBe(false);
++      expect(q.reason).toBeNull();
++    }
++  });
++
++  it("an autosave due during the person's save is the person's save", async () => {
++    const w = writer();
++    const q = new SaveQueue(w.write);
++    const a = q.save('user');
++    expect(q.save('auto')).toBe(a);
++    await tick();
++    w.open[0].end();
++    await a;
++    expect(w.made).toEqual(['user']);
++  });
++
++  it("the person's save during an autosave is made after it, once, as theirs", async () => {
++    const w = writer();
++    const q = new SaveQueue(w.write);
++    const auto = q.save('auto');
++    const u1 = q.save('user');
++    const u2 = q.save('user');
++    expect(u2).toBe(u1);
++    await tick();
++    expect(w.made).toEqual(['auto']);
++    w.open[0].end();
++    await auto;
++    await tick();
++    expect(w.made).toEqual(['auto', 'user']);
++    expect(q.reason).toBe('user');
++    let done = false;
++    void u1.then(() => (done = true));
++    await tick();
++    expect(done, 'not before its own save').toBe(false);
++    w.open[1].end();
++    await u1;
++    expect(w.made).toEqual(['auto', 'user']);
++    expect(q.busy).toBe(false);
++  });
++
++  it('a failed autosave does not stop the save the person asked for meanwhile', async () => {
++    const w = writer();
++    const q = new SaveQueue(w.write);
++    const auto = q.save('auto');
++    const user = q.save('user');
++    await tick();
++    w.open[0].end(false);
++    await expect(auto).rejects.toThrow('refused');
++    await tick();
++    expect(w.made).toEqual(['auto', 'user']);
++    w.open[1].end();
++    await expect(user).resolves.toBeUndefined();
++  });
++
++  it("the person's save that fails says so to the one who asked", async () => {
++    const w = writer();
++    const q = new SaveQueue(w.write);
++    const user = q.save('user');
++    await tick();
++    w.open[0].end(false);
++    await expect(user).rejects.toThrow('refused');
++    expect(q.busy).toBe(false);
++    const again = q.save('user');
++    await tick();
++    w.open[1].end();
++    await again;
++    expect(w.made).toEqual(['user', 'user']);
++  });
++});
+diff --git a/tests/together.test.ts b/tests/together.test.ts
+index 6b83edab2d43420e6df5fab4f8dcd46ddebba992..8bc1a15252452e8f60c03524e79ffa54a30722eb 100644
+--- a/tests/together.test.ts
++++ b/tests/together.test.ts
+@@ -37,7 +37,7 @@ class Filex implements CoEditApi {
+   appendRefusal: Refusal | null = null;
+   leaseAnswer = true;
+   cursors: unknown[] = [];
+-  saves: { size: number; mime: string; through: number }[] = [];
++  saves: { size: number; mime: string; through: number; reason: string }[] = [];
+   private entry: ((e: unknown) => void) | null = null;
+   private cursorH: ((c: CoEditCursor) => void) | null = null;
+   private droppedH: ((d: CoEditDropped) => void) | null = null;
+@@ -82,8 +82,8 @@ class Filex implements CoEditApi {
+   async leave(): Promise<void> {
+     this.calls.push('leave');
+   }
+-  async save(bytes: ArrayBuffer, mime: string, through: number): Promise<void> {
+-    this.saves.push({ size: bytes.byteLength, mime, through });
++  async save(bytes: ArrayBuffer, mime: string, through: number, reason: string): Promise<void> {
++    this.saves.push({ size: bytes.byteLength, mime, through, reason });
+   }
+   onEntry(h: (e: unknown) => void) {
+     this.entry = h;
+@@ -420,10 +420,14 @@ describe('who is told "unsaved changes", who saves', () => {
+     expect(t.autosaveDue()).toBe(true);
+   });
+ 
+-  it('a save goes to filex with how far into the log it reaches', async () => {
++  it('a save goes to filex with how far into the log it reaches, and why it is made', async () => {
+     const { fx, t } = setup();
+-    await t.saveFile(new Uint8Array([1, 2, 3]).buffer, 'application/x', 9);
+-    expect(fx.saves).toEqual([{ size: 3, mime: 'application/x', through: 9 }]);
++    await t.saveFile(new Uint8Array([1, 2, 3]).buffer, 'application/x', 9, 'user');
++    await t.saveFile(new Uint8Array([1, 2]).buffer, 'application/x', 12, 'auto');
++    expect(fx.saves).toEqual([
++      { size: 3, mime: 'application/x', through: 9, reason: 'user' },
++      { size: 2, mime: 'application/x', through: 12, reason: 'auto' },
++    ]);
+   });
+ 
+   it('leaving: once, and nothing is listened to after', async () => {

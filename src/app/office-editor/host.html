@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <title>문서 편집</title>
+  <link rel="stylesheet" href="host.css">
+  <script type="module" src="host.js"></script>
+</head>
+<body>
+  <!-- 아이콘 모음 -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4.5h11.2L19.5 7.8V18a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5z"/><path d="M8 4.5v4.2h7V4.5"/><rect x="7.5" y="13" width="9" height="6.5" rx="1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.7v.2"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5"/><path d="M12 16.3v.2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.5 4 4L18.5 7.5"/></symbol>
+  </svg>
+
+  <div class="frame">
+    <header class="bar" id="bar">
+      <span class="kind-badge" id="doc-kind">문서</span>
+      <span class="doc-name" id="doc-name"></span>
+      <span class="state-badge" id="doc-state" data-state="loading">불러오는 중</span>
+      <span class="state-badge" id="doc-readonly" data-state="readonly" hidden>읽기 전용</span>
+      <span class="spacer"></span>
+      <button class="btn primary" id="btn-save" type="button" title="저장 (Ctrl+S)" disabled><svg class="i"><use href="#i-save"/></svg><span>저장</span></button>
+      <button class="btn ghost" id="btn-about" type="button" title="편집기의 원 개발사·라이선스·소스 코드"><svg class="i"><use href="#i-info"/></svg><span>정보 · 라이선스</span></button>
+    </header>
+
+    <div class="banner" id="banner" role="alert" hidden>
+      <svg class="i"><use href="#i-alert"/></svg>
+      <span class="banner-text" id="banner-text"></span>
+      <span class="banner-actions" id="banner-actions"></span>
+    </div>
+
+    <main class="stage" id="stage">
+      <div class="app-box" id="app-box"></div>
+      <div class="overlay" id="loading">
+        <div class="loading-card"><span class="spinner" aria-hidden="true"></span><span id="loading-text">편집기를 준비하는 중…</span></div>
+      </div>
+      <div class="overlay" id="failure" hidden>
+        <div class="failure-card" role="alert">
+          <svg class="i big"><use href="#i-alert"/></svg>
+          <h1 id="failure-title">편집기를 열 수 없습니다</h1>
+          <p id="failure-reason"></p>
+          <p class="detail" id="failure-detail" hidden></p>
+          <div class="failure-actions">
+            <button class="btn" id="btn-failure-close" type="button">닫기</button>
+            <button class="btn ghost" id="btn-failure-about" type="button">정보 · 라이선스</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <dialog class="about" id="about" aria-labelledby="about-title">
+    <div class="dlg">
+      <header class="dlg-head">
+        <h2 id="about-title">정보 · 라이선스</h2>
+        <div class="tabs" role="tablist" aria-label="정보 · 라이선스">
+          <button type="button" role="tab" data-tab="info" aria-selected="true" aria-controls="about-info">정보</button>
+          <button type="button" role="tab" data-tab="texts" aria-selected="false" aria-controls="about-texts" tabindex="-1">라이선스 원문</button>
+        </div>
+        <button class="btn ghost icon" id="about-close" type="button" title="닫기 (Esc)" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg></button>
+      </header>
+      <div class="dlg-body about-info" id="about-info" role="tabpanel"></div>
+      <div class="dlg-body about-texts" id="about-texts" role="tabpanel" hidden>
+        <nav class="file-list" aria-label="고지 파일">
+          <div id="about-files"></div>
+          <p class="muted" id="about-files-empty" hidden>편집기 묶음의 고지 파일 주소를 알 수 없습니다.</p>
+        </nav>
+        <div class="viewer-wrap">
+          <iframe class="viewer" id="about-viewer" title="고지 파일" sandbox="" referrerpolicy="no-referrer"></iframe>
+          <p class="viewer-note" id="about-viewer-note" role="status" hidden></p>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

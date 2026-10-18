@@ -10,10 +10,16 @@ src/mcp/       MCP 서버 — Claude/Codex가 문서 도구를 쓰게 함 (stdio
 src/cli.mjs    명령줄 도구 office-kit
 src/setup/     외부 연결: Claude Desktop/Claude Code/Codex 등록, 명령줄 등록, 한글 보안 모듈
 src/app/       Electron 앱 (main.mjs, preload.cjs, renderer/, ai.mjs)
-               한글 편집 창: editor-window.mjs(창·저장·감시), editor-server.mjs(127.0.0.1·127.0.0.2 정적 서버), editor/(host 페이지·preload)
+               편집 창 (종류 kind = 'hwp' | 'office'): editor-window.mjs(창·저장·감시), editor-server.mjs(127.0.0.1·.2·.3 정적 서버)
+               한글: editor/(host 페이지·preload) / 문서·표·슬라이드: office-editor/(host 페이지·preload, fonts/ 글꼴 목록 생성기 — AGPL)
+src/core/ooxml-fixups.mjs  Office 편집 창이 저장한 docx·xlsx·pptx를 Office가 경고 없이 열게 고치기
 scripts/com/   office.ps1 — 설치된 프로그램을 COM으로 조작. 형식별 작업은 word-ops.ps1, ppt-ops.ps1, excel-ops.ps1
 scripts/build-editor.mjs  한글 편집기 묶음 만들기 (rhwp-studio v0.8.7 → vendor/)
-vendor/        만들어지는 폴더 (git 밖): rhwp-studio/ 편집기, rhwp-editor-sdk/ 연결 SDK
+scripts/build-office-editor.mjs  Office 편집기 묶음 만들기 (filex-office-editor v0.3.1 ui.zip → vendor/office-editor), 고정 값·규칙은 scripts/office-editor/
+scripts/make-office-source.mjs   Office 편집기 AGPL 소스 꾸러미 (office-editor-source-<버전>.zip)
+patches/office-editor/filex/     filex 앱 패치 (AGPL-3.0-or-later)
+LICENSES/                        AGPL 3판 전문·ONLYOFFICE 추가 조항·편집기 기계어 제3자 고지 (third-party.mjs가 만듦)
+vendor/        만들어지는 폴더 (git 밖): rhwp-studio/ 편집기, rhwp-editor-sdk/ 연결 SDK, office-editor/ 문서·표·슬라이드 편집기 (AGPL)
 build/         아이콘, NSIS 추가 설정
 ```
 
@@ -52,6 +58,10 @@ MCP 도구  src/mcp/tools/<형식>.mjs ─┐
 | `OFFICEKIT_EDITOR_VENDOR` | 앱(개발용) | 편집기 묶음 폴더 바꾸기 (`<폴더>/rhwp-studio`, `rhwp-editor-sdk`). 없는 폴더 = 묶음 없음 시험 |
 | `OFFICEKIT_EDITOR_TEST=1` | 앱(개발용) | 편집 창 host 페이지에 시험 고리 `window.__editorTest` (`?test=1`) |
 | `OFFICEKIT_EDITOR_CACHE` | build-editor | rhwp 소스·의존성 캐시 폴더 (기본 `tmp/editor-build`) |
+| `OFFICEKIT_OFFICE_EDITOR_CACHE` | build-office-editor, make-office-source | Office 편집기 받은 파일·filex 소스 캐시 폴더 (기본 `tmp/office-editor-build`) |
+| `OFFICEKIT_FILEX_SRC` | make-office-source | filex 고정 커밋이 있는 git 폴더 (`--filex-src`와 같음) |
+| `OFFICEKIT_FILEX_REPO` | make-office-source | filex 소스를 받을 곳 — 거울 저장소를 쓸 때 (`--filex-repo`와 같음) |
+| `SOURCE_DATE_EPOCH` | make-office-source | 소스 꾸러미 안 파일 시각 (없으면 HEAD 커밋 시각 → 같은 입력이면 같은 바이트) |
 | `OFFICEKIT_EDITOR_SMOKE=1` | 테스트 | `test/editor-integration.test.mjs`의 실제 Electron 캡처 시험 켜기 (창이 잠깐 뜸) |
 | `OFFICEKIT_USER_DATA` | 앱 | 설정·백업 폴더 바꾸기 (시험용) |
 | `OFFICEKIT_AI_MODULE` | 앱(개발용) | 가짜 AI 모듈로 바꿔 끼우기 |
@@ -261,18 +271,67 @@ main.mjs가 잇는 것:
 | 언제 | 무엇을 |
 |---|---|
 | 시작 | `createEditorManager({ getBackups, onSaved, onDirtyChange, icon, dirs?, testHooks? })` 한 번. 모듈을 못 불러와도 앱은 뜨고 `직접 편집`만 이유를 알린다 |
-| `app:init` | `editor: { available, reason, exts }` (묶음이 있는지, 한국어 이유) |
-| `doc:edit` | 열린 문서가 한글이 아니면 `UNSUPPORTED`(프로그램에서 열기 안내), 묶음이 없으면 `EDITOR_MISSING`(한국어 이유), 아니면 `openEditor` → `{ path, reused }` |
+| `app:init` | `editor: { available, reason, exts }` (묶음이 있는지, 한국어 이유) — 한글·Office 편집기를 종류(kind)마다 따로 알린다 |
+| `doc:edit` | 열린 문서가 편집 창 형식(한글 hwp·hwpx·hwt, Office docx·xlsx·pptx)이 아니면 `UNSUPPORTED`(프로그램에서 열기 안내), 그 종류의 묶음이 없으면 `EDITOR_MISSING`(한국어 이유), 아니면 `openEditor` → `{ path, reused }` |
 | 문서 정보·`doc:editor` 이벤트 | `editor: { open, dirty }` — 창이 열리고 닫히고 고쳐질 때(`onDirtyChange`, 창 `closed`, 저장 뒤) 주 창에 보낸다 (상태 막대 '편집 창 열림', 대화창 경고 띠) |
 | `onSaved` | 최근 목록 맨 위로, 열린 문서면 `doc:changed { by:'editor' }` → 미리보기 새로 고침 (감시보다 먼저, 알림 없이). 백업은 편집 창이 저장 전에 만든다 |
 | 파일 감시(주 창) | 바뀌거나 없어지면 `notifyExternalChange(path)` (내용이 같으면 편집 창은 무시) |
 | 원래대로 | 되돌린 뒤 `notifyExternalChange(path, { force: 편집 창에 저장 안 한 내용 })` → 결과의 `editorNotified`. 파일이 이미 원본과 같아도 저장 안 한 편집이 있으면 알려 편집 창이 다시 불러오기 / 내 편집 유지를 묻는다 |
 | `ai:send` | 그 문서 편집 창에 저장 안 한 내용이 있으면 `EDITOR_DIRTY`로 거절. 화면이 묻고(편집 창 보기 / 그대로 보내기 / 취소) 그대로 보내면 `editorOk:true` |
-| `doc:new` | `edit:true`이고 한글 형식이면 만든 뒤 `doc:edit`와 같은 길로 연다 → `editor` 또는 `editorError` (문서는 만들어졌으므로 실패로 돌려주지 않음). 같은 경로의 문서를 지웠다가 다시 만든 경우 예전 '원래대로' 기준·AI 대화는 버린다 |
+| `doc:new` | `edit:true`이고 편집 창 형식(한글·docx·xlsx·pptx)이면 만든 뒤 `doc:edit`와 같은 길로 연다 → `editor` 또는 `editorError` (문서는 만들어졌으므로 실패로 돌려주지 않음). 같은 경로의 문서를 지웠다가 다시 만든 경우 예전 '원래대로' 기준·AI 대화는 버린다 |
 | 주 창 닫기 | 편집 창이 있으면 `closeAll()` (저장 안 한 창마다 묻기) → 모두 닫혔을 때만 주 창도 닫는다. 취소하면 둘 다 그대로 |
 
 - 시험: `test/editor-server.test.mjs`(서버·저장 도우미), `test/editor-integration.test.mjs`(가짜 electron으로 main.mjs의 위 흐름, `OFFICEKIT_EDITOR_SMOKE=1`이면 실제 앱 캡처),
   끝까지 시험 `tmp/editor-int/e2e.mjs`(CDP로 두 창 조작 — 개발용, 저장소에 넣지 않음).
+
+### 문서·표·슬라이드 편집 창 (kind 'office' — src/app/office-editor/ · vendor/office-editor/)
+
+docx·xlsx·pptx를 앱 안에서 고치는 창. 한글 편집 창과 같은 틀(창·IPC·저장·감시·닫기)에 편집기 종류만 하나 더 있다.
+편집기는 **ONLYOFFICE Docs CE 9.4.0(빌드 9.4.0.129)** 을 바탕으로 한 filex-office-editor v0.3.1 묶음이고 **AGPL**이다 (아래 '라이선스 경계').
+자세한 설계·근거: [`OFFICE-EDITOR-DESIGN.md`](OFFICE-EDITOR-DESIGN.md).
+
+```
+주 창 ─ doc:edit ─→ openEditor(path)  (확장자 docx·xlsx·pptx → kind 'office', 창 제목 '<파일> - 문서 편집 / 표 편집 / 슬라이드 편집 (Office Kit)')
+                       │ 문서마다 BrowserWindow 하나 (partition 'officekit-office', 디스크에 안 남음)
+                       ▼
+  http://127.0.0.1:<A>/office-host/host.html   (src/app/office-editor/host.*, preload office-preload.cjs)
+        └ iframe sandbox="allow-scripts"  http://127.0.0.3:<C>/office/<ver>/index.html   (filex 앱 페이지, CSP sandbox → opaque origin)
+             └ iframe  …/editor/web-apps/apps/<documenteditor|spreadsheeteditor|presentationeditor>/main/index.html
+                  ├ socket.io.min.js 자리 = filex 다리 (Document Server 흉내, 틀 안에서만)
+                  └ Worker: x2t.wasm (docx/xlsx/pptx ↔ 편집기 형식)
+        ↑ MessagePort (filex 앱 SDK v1): session.get · file.read · file.save{reason} · ui.dirty · ui.download · ui.print · state.* · {hid, request:'save'}
+```
+
+- **세 출처**: host(`127.0.0.1:A`, preload API가 붙는 곳), 한글 studio(`127.0.0.2:B`), Office 편집기(`127.0.0.3:C`). 편집기 스크립트는 host에 닿지 못한다.
+  127.0.0.3을 못 쓰는 PC면 127.0.0.1의 다른 포트 (출처만 분리). 서버가 받은 포트가 Chromium 금지 포트면 다시 받는다.
+- **글꼴**: 묶음에 글꼴이 없다. `office-editor/fonts/`가 이 PC의 글꼴(`C:\Windows\Fonts`, 사용자 글꼴 폴더)로 `AllFonts.js`·미리보기 그림을 만들어
+  `userData/office-editor/fonts/<편집기 버전>-<폴더 목록 해시>/`에 두고, 서버가 그 주소에 대신 내준다. 글꼴 파일은 복사하지 않고 읽어서 앞 32바이트만 XOR해 보낸다.
+- **IPC**: 한글 편집 창의 `editor:*`를 그대로 쓰고 Office에만 `editor:download`(다른 형식 내려받기), `editor:print`(PDF → 기본 PDF 앱), `editor:state`(편집기 설정 보관),
+  `editor:draft`(자동 저장 사본)가 더 있다. `editor:get-document`는 office면 `about: { appVersion, bundle(VERSION.json 고정 값), sources }`도 준다 ('정보 · 라이선스').
+- **저장**: Ctrl+S → host가 앱에 `{hid, request:'save'}` → 앱이 x2t로 원래 형식 바이트 → `file.save{reason:'user'}` → `editor:save` →
+  main이 형식 확인(ZIP·`[Content_Types].xml`·주 부분) → `src/core/ooxml-fixups.mjs`(pptx 노트 테마 분리 — **필수**, xlsx 남는 테마, docx 혼자 있는 `vMerge`) →
+  백업 → `atomicWrite` → `onSaved`. 고치기가 실패하면 원래 바이트를 저장하고 로그만 남긴다.
+- **자동 저장**: filex 앱이 스스로 부르는 `file.save{reason:'auto'}`는 원본에 쓰지 않고 `userData/office-drafts/<경로 sha1>.<ext>`에 복구 사본만 둔다.
+- **보안**: 한글 편집 창과 같은 네트워크 차단(webRequest·죽은 프록시·`disable_non_proxied_udp`·맞춤법 사전 주소) + 편집기 HTML에 CSP `sandbox allow-scripts`
+  (`'unsafe-eval'`은 ONLYOFFICE가 꼭 쓰므로 네트워크 없는 opaque origin 틀 안에 가둔다). host는 편집기 틀 안에 스크립트를 넣지 않는다. 매크로·플러그인 없음.
+- **이름**: 창 제목·메뉴·기능 이름에 'ONLYOFFICE'를 쓰지 않는다. 편집기 안 로고·'정보'·filex의 아래쪽 법적 고지 줄은 그대로 둔다.
+- 시험: `test/editor-server.test.mjs`, `test/editor-window-office.test.mjs`, `test/office-host.test.mjs`, `test/ooxml-fixups.test.mjs`, `scripts/office-editor/office-editor.test.mjs`(묶음 만들기),
+  e2e는 `OFFICEKIT_EDITOR_SMOKE=1` (설계 10장).
+
+**묶음 만들기** (`scripts/build-office-editor.mjs`, 고정 값 `scripts/office-editor/pins.mjs`)
+- filex 릴리스 `ui.zip`(크기·SHA-256 고정) → 편집기 파일마다 filex `upstream/editor.lock.json`과 비교, x2t 두 파일은 고정 SHA-256 →
+  (패치가 있으면) filex 소스 고정 커밋 + `patches/office-editor/filex/*.patch`로 앱 페이지만 다시 빌드 → 덜어 내기(`scripts/office-editor/rules.mjs`, 파일 통째로만) →
+  `vendor/office-editor/` + `VERSION.json` + `NOTICE-OfficeKit.md`(날짜 붙은 수정 고지).
+- `beforePack`(`scripts/check-editor-bundle.cjs`)이 묶음·라이선스 파일·`VERSION.json`이 없으면 설치 파일을 만들지 않는다.
+
+**라이선스 경계** ([`LICENSES-OFFICE-EDITOR.md`](LICENSES-OFFICE-EDITOR.md))
+- AGPL: `vendor/office-editor/` 전체, `patches/office-editor/`, `src/app/office-editor/fonts/` (파일 머리 `SPDX-License-Identifier`: 패치는 `AGPL-3.0-or-later`, 글꼴 생성기는 `AGPL-3.0-only` + ONLYOFFICE 추가 조항). 전문은 `LICENSES/`, 편집기 묶음 안 기계어(WebAssembly) 제3자 고지는 `THIRD-PARTY-NATIVE.txt` (`scripts/office-editor/third-party.mjs`).
+  나머지(호스트 페이지·서버·창·`ooxml-fixups`·묶음 스크립트)는 MIT — 편집기와는 MessagePort·로컬 서버로만 주고받는다. ONLYOFFICE·filex·CryptPad 코드를 MIT 파일에 붙여 넣지 않는다.
+- 소스 제공(AGPL 6조): `scripts/make-office-source.mjs` → `office-editor-source-<버전>.zip`
+  (filex 소스 고정 커밋 `git archive` 그대로 + 묶음 스크립트·규칙·패치·글꼴 생성기 + `NOTICE-OfficeKit.md`·`VERSION.json`·ONLYOFFICE 라이선스 파일
+  + `UPSTREAM.md`: ONLYOFFICE sdkjs·web-apps·core·build_tools `v9.4.0.129` 커밋·x2t 빌드 방법). 빠진 부분이 있거나 고정 값이 서로 다르면 멈춘다.
+  같은 입력이면 같은 바이트. 거울 저장소는 만들지 않는다 (사람이 할 일).
+- 화면 고지(추가 조항 3): host 위 막대 **정보 · 라이선스** 대화상자. 글의 기준: [`office-editor-legal-ko.md`](office-editor-legal-ko.md).
 
 ## 편집 원자성
 
@@ -328,5 +387,9 @@ main.mjs가 잇는 것:
     (`RHWP_WITHOUT_HWPCTRL=1`, `RHWP_DISABLE_EXTERNAL_WEBFONTS=1`, `--base=./`) → 샘플·서비스 워커(PWA)·manifest를 빼고 index.html에서 등록 코드를 지운다
     (남아 있으면 빌드 실패) → 라이선스 파일과 `VERSION.json`(파일마다 크기·sha256)을 넣어 `vendor/`로 바꿔 놓는다. 같은 것이 있으면 건너뛴다.
   - `@rhwp/editor`(SDK)는 devDependency로 받아 필요한 세 파일만 `vendor/rhwp-editor-sdk`에 복사한다 (`node_modules`로는 배포하지 않음).
+- Office 편집기 묶음 `vendor/office-editor`도 들어간다 (설치 파일 약 +50~65MB, 설치 폴더 약 +213MB). `npm run dist`/`release`와 CI가 `editor:build` 다음에 `office-editor:build`를 돈다.
+  - 고정 값(filex 태그·커밋·`ui.zip` SHA-256, x2t SHA-256, ONLYOFFICE 판)은 `scripts/office-editor/pins.mjs` 한 곳. 올릴 때 `make-office-source.mjs`의 소스 주소(같은 태그의 커밋)와
+    `docs/office-editor-legal-ko.md`도 함께 바꾼다 (`make-office-source.mjs`가 서로 맞는지 확인하고, 다르면 멈춘다).
+  - 릴리스마다 `node scripts/make-office-source.mjs`로 `office-editor-source-<버전>.zip`(+ `.sha256`)을 만들어 같은 Release에 붙이고, 공개 전에 붙었는지 확인한다 (AGPL 6조).
 - 탐색기 오른쪽 클릭 "Office Kit로 열기" (기본 연결 프로그램은 바꾸지 않음).
 - GitHub Actions: `v*` 태그를 올리면 Release에 설치 파일 업로드.

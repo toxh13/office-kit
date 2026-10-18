@@ -688,7 +688,7 @@ body.resizing { cursor: col-resize; }
 .st.ready .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
 /* 편집 창 열림 (누르면 그 창으로) */
 button.st { border: 0; background: none; font: inherit; color: inherit; cursor: pointer; }
-.st-editor { color: var(--accent-text); font-weight: 600; }
+.st-editor { color: var(--accent-text); font-weight: 600; white-space: nowrap; }
 .st-editor.dirty { color: var(--warn); }
 .st-editor:hover { background: var(--hover); }
 

@@ -1,0 +1,331 @@
+{
+  "$comment": "docs/office-editor-legal-ko.md에서 만든 Office 편집 창 '정보 · 라이선스' 글. 고치려면 그 문서를 고친 뒤 OFFICEKIT_UPDATE_LEGAL=1 node --test test/editor-integration.test.mjs. {{appVersion}}은 편집 창이 앱 버전으로 바꾼다.",
+  "source": "docs/office-editor-legal-ko.md",
+  "title": "정보 · 라이선스",
+  "intro": [
+    {
+      "p": [
+        {
+          "text": "이 편집 창(문서 편집 · 표 편집 · 슬라이드 편집)은 "
+        },
+        {
+          "text": "ONLYOFFICE Docs",
+          "bold": true
+        },
+        {
+          "text": "를 바탕으로 합니다."
+        }
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "title": "원 개발사",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "편집기의 원 개발사는 "
+              },
+              {
+                "text": "Ascensio System SIA",
+                "bold": true
+              },
+              {
+                "text": "(ONLYOFFICE)입니다. "
+              },
+              {
+                "text": "www.onlyoffice.com",
+                "href": "https://www.onlyoffice.com"
+              }
+            ],
+            [
+              {
+                "text": "쓰는 판: ONLYOFFICE Docs Community Edition 9.4.0 (빌드 9.4.0.129), 소스 태그 "
+              },
+              {
+                "text": "v9.4.0.129",
+                "code": true
+              }
+            ],
+            [
+              {
+                "text": "편집기 파일을 브라우저 안에서 돌리는 다리 코드와 앱 페이지는 BRF Tech의 filex-office-editor v0.3.1입니다."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "수정된 판일 수 있습니다",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "Office Kit에 든 편집기는 원본 그대로가 아니라 "
+              },
+              {
+                "text": "수정된 판일 수 있습니다",
+                "bold": true
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "바뀐 것: filex-office-editor가 편집기 파일을 묶으며 바꾼 것, Office Kit이 쓰지 않는 파일(다른 나라 말 파일, 휴대폰용 화면, 편집기 묶음의 글꼴 폴더)을 덜어 낸 것, 편집 중에 글꼴 목록을 이 PC의 글꼴로 바꿔 내주는 것."
+              }
+            ],
+            [
+              {
+                "text": "날짜가 붙은 목록: "
+              },
+              {
+                "text": "수정 고지 (NOTICE-OfficeKit.md)",
+                "local": "NOTICE-OfficeKit.md"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "filex-office-editor 고지 (NOTICE)",
+                "local": "NOTICE"
+              }
+            ],
+            [
+              {
+                "text": "편집기 안의 로고와 편집기 자체의 '정보' 화면은 바꾸지 않고 그대로 둡니다."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "라이선스",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "편집기, 변환기(x2t), filex-office-editor는 "
+              },
+              {
+                "text": "GNU Affero General Public License 3판(AGPL-3.0)",
+                "bold": true
+              },
+              {
+                "text": " 을 따릅니다. ONLYOFFICE 부분에는 추가 조항(7조) 1~5가 붙습니다."
+              }
+            ],
+            [
+              {
+                "text": "자유 소프트웨어입니다. 이 라이선스에 따라 다시 배포하거나 고칠 수 있고, "
+              },
+              {
+                "text": "아무런 보증이 없습니다",
+                "bold": true
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "AGPL 3판 전문과 ONLYOFFICE 추가 조항 (LICENSE.txt)",
+                "local": "editor/LICENSE.txt"
+              }
+            ],
+            [
+              {
+                "text": "filex-office-editor 라이선스 (LICENSE)",
+                "local": "LICENSE"
+              }
+            ],
+            [
+              {
+                "text": "편집기 안 제3자 구성 요소 (3rd-Party.txt)",
+                "local": "editor/3rd-Party.txt"
+              },
+              {
+                "text": " — Bootstrap, jQuery, RequireJS, Underscore, Backbone, Socket.IO 등 (MIT · BSD · Apache-2.0)"
+              }
+            ],
+            [
+              {
+                "text": "변환기·글꼴 엔진(WebAssembly) 안 제3자 구성 요소 (THIRD-PARTY-NATIVE.txt)",
+                "local": "THIRD-PARTY-NATIVE.txt"
+              },
+              {
+                "text": " — Boost, ICU, FreeType, HarfBuzz, libpng, libjpeg, libtiff, OpenJPEG, libxml2, Xpdf, DjVuLibre, emscripten 런타임, URW++ 글꼴 등"
+              }
+            ],
+            [
+              {
+                "text": "그림 · 아이콘 · 설명 글처럼 코드가 아닌 것은 "
+              },
+              {
+                "text": "CC BY-SA 4.0",
+                "bold": true
+              },
+              {
+                "text": "입니다. 저작자: Ascensio System SIA (ONLYOFFICE). "
+              },
+              {
+                "text": "CC BY-SA 4.0 전문",
+                "href": "https://creativecommons.org/licenses/by-sa/4.0/legalcode"
+              }
+            ],
+            [
+              {
+                "text": "창, 저장, 글꼴 목록 등 Office Kit 자신의 코드는 MIT입니다. 단 filex 패치는 AGPL-3.0-or-later, 글꼴 목록 생성기는 AGPL-3.0-only(+ ONLYOFFICE 추가 조항)입니다."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "소스 코드",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "이 판(Office Kit {{appVersion}})의 편집기 소스 꾸러미: "
+              },
+              {
+                "text": "office-editor-source-{{appVersion}}.zip",
+                "href": "https://github.com/toxh13/office-kit/releases/download/v{{appVersion}}/office-editor-source-{{appVersion}}.zip"
+              }
+            ],
+            [
+              {
+                "text": "Office Kit 소스: "
+              },
+              {
+                "text": "github.com/toxh13/office-kit (v{{appVersion}})",
+                "href": "https://github.com/toxh13/office-kit/tree/v{{appVersion}}"
+              }
+            ],
+            [
+              {
+                "text": "filex-office-editor v0.3.1: "
+              },
+              {
+                "text": "github.com/BRF-Tech/filex-office-editor",
+                "href": "https://github.com/BRF-Tech/filex-office-editor/tree/v0.3.1"
+              }
+            ],
+            [
+              {
+                "text": "ONLYOFFICE 원본 소스 (태그 "
+              },
+              {
+                "text": "v9.4.0.129",
+                "code": true
+              },
+              {
+                "text": "): "
+              },
+              {
+                "text": "sdkjs",
+                "href": "https://github.com/ONLYOFFICE/sdkjs/tree/v9.4.0.129"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "web-apps",
+                "href": "https://github.com/ONLYOFFICE/web-apps/tree/v9.4.0.129"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "core",
+                "href": "https://github.com/ONLYOFFICE/core/tree/v9.4.0.129"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "build_tools",
+                "href": "https://github.com/ONLYOFFICE/build_tools/tree/v9.4.0.129"
+              }
+            ],
+            [
+              {
+                "text": "변환기 x2t는 ONLYOFFICE core "
+              },
+              {
+                "text": "v9.4.0.129",
+                "code": true
+              },
+              {
+                "text": "에 CryptPad의 WebAssembly 패치와 BRF Tech의 패치를 더해 만든 것입니다. 만드는 방법은 소스 꾸러미의 "
+              },
+              {
+                "text": "UPSTREAM.md",
+                "code": true
+              },
+              {
+                "text": "에 있습니다."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "상표",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "ONLYOFFICE®와 ONLYOFFICE Docs™는 Ascensio System SIA의 상표입니다. Office Kit은 Ascensio System SIA와 관계가 없고, 보증이나 후원을 받지 않습니다. "
+              },
+              {
+                "text": "상표 정책",
+                "href": "https://www.onlyoffice.com/trademark-policy"
+              }
+            ],
+            [
+              {
+                "text": "Microsoft Word, Excel, PowerPoint는 Microsoft의 상표입니다. Office Kit은 파일 형식을 가리킬 때만 이 이름을 씁니다."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "글꼴",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "편집할 때 쓰는 글꼴은 함께 배포하지 않습니다. 편집기는 이 PC에 설치된 글꼴을 읽기만 합니다."
+              }
+            ],
+            [
+              {
+                "text": "다만 변환기 x2t 안에는 ONLYOFFICE core가 넣어 둔 PDF 기본 14 글꼴(URW++ Nimbus Sans · Nimbus Roman · Nimbus Mono, Standard Symbols L, Dingbats)이 들어 있습니다. 이 글꼴은 AGPL-3.0에 PDF·PostScript 문서에 넣어도 된다는 예외가 붙은 자유 글꼴입니다. "
+              },
+              {
+                "text": "고지 (THIRD-PARTY-NATIVE.txt)",
+                "local": "THIRD-PARTY-NATIVE.txt"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

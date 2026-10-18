@@ -24,7 +24,8 @@ contextBridge.exposeInMainWorld('officeKit', {
     openInApp: invoke('doc:openInApp'),
     savePdf: invoke('doc:savePdf'),
     showInFolder: invoke('doc:showInFolder'),
-    // 한글 편집 창 열기 (이미 열려 있으면 앞으로)
+    // 편집 창 열기 (한글 → 한글 편집, docx·xlsx·pptx → 문서·표·슬라이드 편집. 이미 열려 있으면 앞으로)
+    // → { path, kind: 'hwp' | 'office', reused, notice }
     edit: invoke('doc:edit'),
     // 새 문서
     newInfo: invoke('doc:newInfo'),
@@ -84,5 +85,5 @@ contextBridge.exposeInMainWorld('officeKit', {
   },
 
   /** 확인용 캡처 신호 (OFFICEKIT_SMOKE일 때만 main이 듣는다) */
-  smokeReady: (info) => ipcRenderer.send('smoke:ready', info && typeof info === 'object' ? { ok: !!info.ok, kind: String(info.kind ?? ''), error: String(info.error ?? '') } : {}),
+  smokeReady: (info) => ipcRenderer.send('smoke:ready', info && typeof info === 'object' ? { ok: !!info.ok, kind: String(info.kind ?? ''), error: String(info.error ?? ''), editable: info.editable === true } : {}),
 });

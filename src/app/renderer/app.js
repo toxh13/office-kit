@@ -160,7 +160,14 @@
     smokeSent: false,
     demo: false,
     packaged: true,
-    editor: { available: false, reason: null, exts: ['hwp', 'hwpx', 'hwt'] }, // 한글 편집기 묶음 (init에서 받음)
+    // 편집기 묶음 (init에서 받음): 종류마다 { exts, available, reason }. hwp = 한글 편집, office = 문서·표·슬라이드 편집
+    editor: {
+      exts: ['hwp', 'hwpx', 'hwt', 'docx', 'xlsx', 'pptx'],
+      kinds: {
+        hwp: { exts: ['hwp', 'hwpx', 'hwt'], available: false, reason: null },
+        office: { exts: ['docx', 'xlsx', 'pptx'], available: false, reason: null },
+      },
+    },
   };
 
   const el = {
@@ -388,32 +395,52 @@
     set(el.stPages, pages);
     set(el.stSaved, d?.mtime ? `마지막 저장 ${whenText(d.mtime)}` : '', d?.path);
     if (d?.missing) set(el.stSaved, '파일을 찾을 수 없음');
-    // 이 문서의 편집 창이 열려 있으면 (누르면 그 창으로)
+    // 이 문서의 편집 창이 열려 있으면 (누르면 그 창으로). 창 이름: 한글 편집 · 문서 편집 · 표 편집 · 슬라이드 편집
     const ed = d?.editor;
-    set(el.stEditor, ed?.open ? (ed.dirty ? '편집 창 열림 · 저장 안 됨' : '편집 창 열림') : '',
-      ed?.open ? (ed.dirty ? '편집 창에 저장하지 않은 내용이 있어요. 눌러서 편집 창 보기' : '눌러서 편집 창 보기') : '');
+    const win = `${(d && editorLabel(d.path)) || '편집'} 창`;
+    set(el.stEditor, ed?.open ? (ed.dirty ? `${win} 열림 · 저장 안 됨` : `${win} 열림`) : '',
+      ed?.open ? (ed.dirty ? `${win}에 저장하지 않은 내용이 있어요. 눌러서 ${win} 보기` : `눌러서 ${win} 보기`) : '');
     el.stEditor.classList.toggle('dirty', !!ed?.dirty);
     renderEditorWarn();
   }
 
-  // ── 한글 편집 창 ─────────────────────────────────────
+  // ── 편집 창 (한글 · 문서·표·슬라이드) ─────────────────
   // main: doc:edit(열기·앞으로), doc:editor 이벤트({ path, open, dirty }). 편집 창 자체는 editor-window.mjs
+  //   종류는 확장자로: hwp·hwpx·hwt → 'hwp'(한글 편집), docx → 문서 편집, xlsx → 표 편집, pptx → 슬라이드 편집 ('office')
 
-  const isEditable = (doc) => !!doc && state.editor.exts.includes(extOf(doc.path));
+  // 창 이름 ('ONLYOFFICE'는 쓰지 않는다. Word·Excel·PowerPoint는 형식 설명에만)
+  const EDITOR_LABEL_BY_EXT = { hwp: '한글 편집', hwpx: '한글 편집', hwt: '한글 편집', docx: '문서 편집', xlsx: '표 편집', pptx: '슬라이드 편집' };
+  /** 파일 경로(또는 확장자) → 'hwp' | 'office' | null */
+  function editorKindOf(p) {
+    const ext = String(p ?? '').includes('.') ? extOf(p) : String(p ?? '').toLowerCase();
+    for (const [kind, k] of Object.entries(state.editor.kinds ?? {})) if (k?.exts?.includes(ext)) return kind;
+    return null;
+  }
+  const editorKindInfo = (p) => state.editor.kinds?.[editorKindOf(p)] ?? null;
+  /** '한글 편집' | '문서 편집' | '표 편집' | '슬라이드 편집' | null */
+  const editorLabel = (p) => (editorKindOf(p) ? EDITOR_LABEL_BY_EXT[String(p ?? '').includes('.') ? extOf(p) : String(p ?? '').toLowerCase()] ?? '문서 편집' : null);
+  const isEditable = (doc) => !!doc && !!editorKindOf(doc.path);
+  /** 그 종류의 편집기 묶음이 있다/없다로 고쳐 둔다 (열기 결과로 알게 된 것) */
+  function setEditorAvailable(p, available, reason = null) {
+    const kind = editorKindOf(p);
+    if (!kind) return;
+    state.editor = { ...state.editor, kinds: { ...state.editor.kinds, [kind]: { ...state.editor.kinds[kind], available, reason } } };
+  }
 
   function renderEditButton() {
     const d = state.doc;
     const b = el.btnEdit;
     const ok = isEditable(d);
     b.disabled = !ok;
-    // Word·PowerPoint·Excel 문서에서는 쓸 일이 없으므로 숨겨 문서 이름 자리를 넓힌다 (문서가 없을 때는 안내용으로 보인다)
+    // 편집 창으로 열 수 없는 형식(옛 형식 doc·xls·ppt, csv, odt …)에서는 숨겨 문서 이름 자리를 넓힌다 (문서가 없을 때는 안내용으로 보인다)
     b.hidden = !!d && !ok;
     b.classList.toggle('active', !!d?.editor?.open);
-    if (!d) b.title = '한글 문서를 열면 앱 안에서 직접 편집할 수 있어요';
-    else if (!ok) b.title = `${d.kind} 문서는 앱 안에서 직접 편집할 수 없어요. ‘프로그램에서 열기’로 ${d.kind}에서 고쳐 주세요. (직접 편집은 한글 HWP·HWPX 문서만)`;
-    else if (!state.editor.available) b.title = '한글 편집기가 설치돼 있지 않아요. 눌러서 이유를 확인하세요.';
-    else if (d.editor?.open) b.title = '열려 있는 편집 창으로 가기';
-    else b.title = '한글 편집 창에서 직접 고치기 (Ctrl+E, 인터넷 없이 동작)';
+    if (!d) { b.title = '한글·Word·Excel·PowerPoint 문서를 열면 앱 안에서 직접 편집할 수 있어요'; return; }
+    const label = editorLabel(d.path);
+    if (!ok) b.title = `${d.kind} 문서(.${extOf(d.path)})는 앱 안에서 직접 편집할 수 없어요. ‘프로그램에서 열기’로 고쳐 주세요. (직접 편집: HWP·HWPX·DOCX·XLSX·PPTX)`;
+    else if (!editorKindInfo(d.path)?.available) b.title = `${label}기가 설치돼 있지 않아요. 눌러서 이유를 확인하세요.`;
+    else if (d.editor?.open) b.title = `열려 있는 ${label} 창으로 가기`;
+    else b.title = `${label} 창에서 직접 고치기 (Ctrl+E, 인터넷 없이 동작)`;
   }
 
   /** 대화창 위 경고: 편집 창에 저장 안 한 내용이 있을 때 */
@@ -421,24 +448,32 @@
     el.editorWarn.hidden = !(state.doc?.editor?.open && state.doc.editor.dirty);
   }
 
-  /** 편집기를 쓸 수 없을 때 이유를 보여 준다 */
-  function showEditorMissing(reason) {
+  /** 편집기를 쓸 수 없을 때 이유를 보여 준다 (p: 문서 경로 → 종류별 문구) */
+  function showEditorMissing(reason, p) {
+    const office = editorKindOf(p) === 'office';
+    const label = editorLabel(p) ?? '편집';
     // 이유 끝의 '(개발 중이면 …)'은 아래에 자세히 적으므로 뺀다
-    const why = String(reason || '한글 편집기 파일이 없습니다.').replace(/\s*\(개발 중이면.*\)\s*$/, '');
+    const why = String(reason || `${label}기 파일이 없습니다.`).replace(/\s*\(개발 중이면.*\)\s*$/, '');
+    const cmd = office ? 'npm run office-editor:build' : 'npm run editor:build';
+    const what = office ? '문서·표·슬라이드 편집기 묶음(vendor/office-editor)' : '한글 편집기 묶음(vendor/rhwp-studio)';
     return confirmDialog({
-      title: '한글 편집기를 열 수 없어요',
+      title: `${label}기를 열 수 없어요`,
       tone: 'warn', cancel: null,
       body: [
         why,
         state.packaged ? '문서 보기와 AI 대화는 그대로 쓸 수 있어요. 직접 고치려면 ‘프로그램에서 열기’를 써 주세요.'
-          : h('p', {}, '개발 중이면 저장소 폴더에서 ', h('code', { text: 'npm run editor:build' }), '를 한 번 실행한 뒤 다시 눌러 주세요. 편집기 묶음(vendor/rhwp-studio)을 인터넷 없이 쓸 수 있게 만듭니다.'),
+          : h('p', {}, '개발 중이면 저장소 폴더에서 ', h('code', { text: cmd }), `를 한 번 실행한 뒤 다시 눌러 주세요. ${what}을 인터넷 없이 쓸 수 있게 만듭니다.`),
       ],
     });
   }
 
-  function editorError(err) {
-    if (err.code === 'EDITOR_MISSING') { state.editor = { ...state.editor, available: false, reason: err.message }; renderEditButton(); return showEditorMissing(err.message); }
-    if (err.code === 'UNSUPPORTED') {
+  // 편집 창을 열기 전에 거른 문서 (암호·옛 형식): 프로그램에서 열기를 권한다
+  const OPEN_IN_APP_CODES = new Set(['UNSUPPORTED', 'ENCRYPTED', 'OLD_FORMAT']);
+
+  /** p: 열려던 문서 경로 */
+  function editorError(err, p = state.doc?.path) {
+    if (err.code === 'EDITOR_MISSING') { setEditorAvailable(p, false, err.message); renderEditButton(); return showEditorMissing(err.message, p); }
+    if (OPEN_IN_APP_CODES.has(err.code)) {
       toast(err.message, { type: 'info', action: { label: '프로그램에서 열기', run: actOpenInApp } });
       return null;
     }
@@ -448,14 +483,18 @@
 
   async function actEdit() {
     if (!state.doc) return;
-    setBusy('edit', state.doc.editor?.open ? '편집 창 여는 중…' : '한글 편집기 여는 중…');
-    let error = null;
+    const p = state.doc.path;
+    const label = editorLabel(p) ?? '편집';
+    setBusy('edit', state.doc.editor?.open ? `${label} 창 여는 중…` : `${label}기 여는 중…`);
+    let error = null; let r = null;
     try {
-      await call(K.doc.edit());
+      r = await call(K.doc.edit());
       // 열렸으면 편집기 묶음이 있는 것
-      if (!state.editor.available) { state.editor = { ...state.editor, available: true, reason: null }; renderEditButton(); }
+      if (!editorKindInfo(p)?.available) { setEditorAvailable(p, true); renderEditButton(); }
     } catch (err) { error = err; } finally { clearBusy('edit'); }
-    if (error) await editorError(error);
+    if (error) { await editorError(error, p); return; }
+    // Office 편집 창이 많이 열림 → 메모리 안내
+    if (r?.notice) toast(r.notice, { type: 'warn', timeout: 8000 });
   }
 
   function onDocEditor(ev) {
@@ -1218,8 +1257,8 @@
   const NAME_CODES = new Set(['EMPTY', 'BAD_CHARS', 'SPACES', 'RESERVED', 'TOO_LONG', 'PATH_TOO_LONG', 'EXISTS']);
 
   // format은 창을 닫아도 기억한다 (이번 실행 동안). start는 열 때마다 '빈 문서'부터
-  // edit: 한글 문서를 만든 뒤 바로 편집 창 열기 (이번 실행 동안 기억)
-  const nd ={ format: 'hwpx', start: 'blank', edit: true, folder: '', autoName: '', busy: false, opening: false, seq: 0, timer: 0 };
+  // edit: 만든 뒤 바로 편집 창 열기 (한글·docx·xlsx·pptx, 이번 실행 동안 기억)
+  const nd = { format: 'hwpx', start: 'blank', edit: true, folder: '', autoName: '', busy: false, opening: false, seq: 0, timer: 0 };
   const ne = {
     dlg: $('#dlg-new'), name: $('#new-name'), nameBox: $('#new-name-box'), nameMsg: $('#new-name-msg'), ext: $('#new-ext'),
     folder: $('#new-folder'), folderText: $('#new-folder-text'), change: $('#new-folder-change'), formatHint: $('#new-format-hint'),
@@ -1228,8 +1267,15 @@
     create: $('#new-create'), cancel: $('#new-cancel'), close: $('#new-close'),
     editField: $('#new-edit-field'), edit: $('#new-edit'), editRow: $('#new-edit-row'), editDesc: $('#new-edit-desc'),
   };
-  /** 이 형식으로 만들면 편집 창을 열 수 있는지 (한글이고 편집기 묶음이 있음) */
-  const newDocEditable = (format) => NEW_FORMATS[format]?.kind === '한글' && state.editor.available;
+  /** 이 형식으로 만들면 편집 창을 열 수 있는지 (편집 창 형식이고 그 편집기 묶음이 있음) */
+  const newDocEditable = (format) => !!NEW_FORMATS[format] && !!editorKindInfo(format)?.available;
+  // 만든 뒤 바로 편집 창에서 할 일 (빈 문서로 시작할 때)
+  const NEW_EDIT_DESC = {
+    한글: '한글 편집 창에서 바로 글을 써요. 인터넷 없이 동작해요.',
+    Word: '문서 편집 창에서 바로 글을 써요. 인터넷 없이 동작해요.',
+    PowerPoint: '슬라이드 편집 창에서 바로 슬라이드를 꾸며요. 인터넷 없이 동작해요.',
+    Excel: '표 편집 창에서 바로 표를 채워요. 인터넷 없이 동작해요.',
+  };
 
   /** 새 문서 창 열기. format: 미리 고를 형식, start: 'blank' | 'ai' (AI를 못 쓰면 빈 문서) */
   async function openNewDoc({ format, start } = {}) {
@@ -1279,16 +1325,18 @@
     ne.aiHint.replaceChildren(...[icon(ai.wait ? 'clock' : 'info'), h('span', { text: ai.reason ?? '' }),
       ai.ok || ai.wait ? null : h('button', { class: 'link-btn', type: 'button', onclick: () => { ne.dlg.close(); openSettings('ai'); } }, '설정 열기')].filter(Boolean));
     ne.aiBox.hidden = nd.start !== 'ai';
-    // 한글 형식만: 만든 뒤 바로 편집 창 열기
-    const hangul = f.kind === '한글';
+    // 편집 창 형식(한글·docx·xlsx·pptx): 만든 뒤 바로 편집 창 열기
+    const editKind = editorKindOf(nd.format);
     const editOk = newDocEditable(nd.format);
-    ne.editField.hidden = !hangul;
+    const label = editorLabel(nd.format) ?? '편집';
+    ne.editField.hidden = !editKind;
     ne.edit.checked = editOk && nd.edit;
     ne.edit.disabled = busy || !editOk;
-    ne.editRow.classList.toggle('disabled', hangul && !editOk);
+    ne.editRow.classList.toggle('disabled', !!editKind && !editOk);
     ne.editDesc.textContent = !editOk
-      ? (state.packaged ? '한글 편집기가 설치돼 있지 않아 쓸 수 없어요.' : '한글 편집기 묶음이 없어요. npm run editor:build로 먼저 만들어 주세요.')
-      : nd.start === 'ai' ? 'AI가 채우는 내용이 편집 창에도 바로 보여요.' : '한글 편집 창에서 바로 글을 써요. 인터넷 없이 동작해요.';
+      ? (state.packaged ? `${label}기가 설치돼 있지 않아 쓸 수 없어요.`
+        : `${label}기 묶음이 없어요. ${editKind === 'office' ? 'npm run office-editor:build' : 'npm run editor:build'}로 먼저 만들어 주세요.`)
+      : nd.start === 'ai' ? 'AI가 채우는 내용이 편집 창에도 바로 보여요.' : NEW_EDIT_DESC[f.kind];
     ne.request.placeholder = `예: ${NEW_SUGGESTS[f.kind][0]}`;
     ne.suggests.replaceChildren(...NEW_SUGGESTS[f.kind].map((s) => h('button', {
       class: 'suggest-chip', type: 'button', disabled: busy,
@@ -1399,7 +1447,8 @@
       if (ai && !res.chat?.chatId) toast(`${baseName(path)}을(를) 만들었지만 AI를 시작하지 못했어요`, { type: 'warn' });
       else toast(ai ? `${baseName(path)}을(를) 만들고 AI에게 부탁했어요` : `새 문서를 만들었어요: ${baseName(path)}`, { type: 'success' });
       // 편집 창은 main이 열었다 (못 열었으면 이유만 알린다. 문서는 만들어졌음)
-      if (res.editorError) editorError(res.editorError);
+      if (res.editorError) editorError(res.editorError, path);
+      else if (res.editor?.notice) toast(res.editor.notice, { type: 'warn', timeout: 8000 });
     } catch (err) {
       if (queued) dropQueuedChat(check.path, queued);
       nd.busy = false;
@@ -1832,7 +1881,9 @@
       try { await openSettings(state.smoke.settings); } catch {}
       await sleep(300);
     }
-    setTimeout(() => K.smokeReady(info), 50);
+    // '직접 편집' 단추를 누를 수 있는지도 함께 (편집 창 형식 확인용)
+    const editable = !el.btnEdit.hidden && !el.btnEdit.disabled;
+    setTimeout(() => K.smokeReady({ ...info, editable }), 50);
   }
 
   // ── 연결 · 시작 ──────────────────────────────────────

@@ -1,6 +1,7 @@
 # CI · 배포
-#  - main push / PR: npm test (+ main push: 한글 편집기 빌드 확인)
-#  - v* 태그 push: 시험 → 한글 편집기(rhwp-studio) 빌드 → NSIS 설치 파일을 만들어 GitHub Release에 올림
+#  - main push / PR: npm test (+ main push: 한글·Office 편집기 묶음 빌드 확인)
+#  - v* 태그 push: 시험 → 한글 편집기(rhwp-studio)·Office 편집기(vendor/office-editor) 묶음 → NSIS 설치 파일을 만들어
+#    GitHub Release에 올림 → Office 편집기 소스 꾸러미(AGPL 6조)를 같은 Release에 붙임 → 둘 다 있으면 공개
 #  - 수동 실행(workflow_dispatch): 같은 빌드를 초안(draft) Release로 올림
 name: CI · Release
 
@@ -41,9 +42,35 @@ jobs:
         run: |
           node --check scripts/build-editor.mjs
           node scripts/build-editor.mjs --help
+      # Office 편집기 묶음 스크립트: 문법·옵션은 늘 (단위 시험 scripts/office-editor/*.test.mjs는 npm test에 들어 있음)
+      - name: Office 편집기 묶음 스크립트 확인
+        shell: bash
+        run: |
+          node --check scripts/build-office-editor.mjs
+          for f in scripts/office-editor/*.mjs; do node --check "$f"; done
+          node scripts/build-office-editor.mjs --help
+          node scripts/office-editor/third-party.mjs --check
+          # AGPL 6조 소스 꾸러미 스크립트는 반드시 있어야 한다 (없으면 소스 없이 배포하게 됨)
+          node --check scripts/make-office-source.mjs
+          node scripts/make-office-source.mjs --help
       - name: 한글 편집기 빌드 (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: npm run editor:build
+      # filex ui.zip(약 100MB)·lock 파일: 키 = 고정 값 파일(pins.mjs)의 해시 — 고정 값을 올리면 새로 받는다
+      - name: Office 편집기 받은 파일 캐시 (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache@v4
+        with:
+          path: tmp/office-editor-build/download
+          key: office-editor-${{ hashFiles('scripts/office-editor/pins.mjs') }}
+      - name: Office 편집기 묶음 빌드 (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          npm run office-editor:build
+          node scripts/build-office-editor.mjs --verify
+          # 소스 꾸러미가 태그 때 깨지지 않게 (쓰지 않고 확인만)
+          node scripts/make-office-source.mjs --dry-run
 
   release:
     name: 설치 파일 만들기 · Release 업로드
@@ -57,6 +84,21 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+
+      # 수동 실행은 v<package.json 버전> Release에 올린다 — 이미 공개된 Release(다른 빌드의 설치 파일)에 덧붙이지 않는다
+      - name: 수동 실행 대상 Release 확인
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if draft=$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "::error::Release $tag 은(는) 이미 공개되었습니다. 수동 빌드를 덧붙이지 않습니다 — package.json 버전을 올리세요."
+              exit 1
+            fi
+          fi
 
       - name: 태그와 package.json 버전 확인
         if: startsWith(github.ref, 'refs/tags/v')
@@ -72,6 +114,21 @@ jobs:
       # 묶음이 없으면 electron-builder의 beforePack(scripts/check-editor-bundle.cjs)이 빌드를 멈춘다.
       - name: 한글 편집기 빌드 (rhwp-studio → vendor/)
         run: npm run editor:build
+
+      # 앱 안 Office 편집기(문서·표·슬라이드): filex ui.zip을 고정 크기·SHA-256으로 받고, 편집기 파일마다 filex lock과 맞춰 본 뒤
+      # 덜어 내어 vendor/office-editor에 넣는다 (VERSION.json·NOTICE-OfficeKit.md 포함).
+      # patches/office-editor/filex/*.patch가 있으면 filex 소스(고정 커밋)에 얹어 앱 페이지를 다시 빌드한다 (git·npm).
+      # 묶음·라이선스 파일·수정 고지가 없으면 beforePack이 빌드를 멈춘다.
+      - name: Office 편집기 받은 파일 캐시
+        uses: actions/cache@v4
+        with:
+          path: tmp/office-editor-build/download
+          key: office-editor-${{ hashFiles('scripts/office-editor/pins.mjs') }}
+      - name: Office 편집기 묶음 (filex v0.3.1 → vendor/office-editor)
+        shell: bash
+        run: |
+          npm run office-editor:build
+          node scripts/build-office-editor.mjs --verify
 
       # electron-builder는 파일마다 따로 Release를 찾다가 동시에 "없음"을 보고 Release를 두 개 만든다
       # (v0.1.0·v0.1.1에서 설치 파일과 .blockmap이 서로 다른 Release로 갈라짐).
@@ -95,7 +152,39 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft && 'true' || 'false' }}
 
-      - name: Release 공개 (설치 파일이 올라갔는지 확인 후)
+      # AGPL 6조: 설치 파일에 든 Office 편집기의 소스 꾸러미 office-editor-source-<버전>.zip(+ .sha256)을 같은 Release에 붙인다.
+      # (scripts/make-office-source.mjs: filex 소스 고정 커밋 + 우리 패치 + 묶음 만들기·덜어 내기 규칙 + 글꼴 생성기 + 상류 소스 주소)
+      - name: Office 편집기 소스 꾸러미 만들기 · 올리기
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f scripts/make-office-source.mjs ]; then
+            echo "::error::scripts/make-office-source.mjs가 없습니다 — Office 편집기 소스 꾸러미 없이는 배포하지 않습니다 (AGPL 6조)."
+            exit 1
+          fi
+          version=$(node -p "require('./package.json').version")
+          zip="dist/office-editor-source-$version.zip"
+          rm -f dist/office-editor-source-*.zip dist/office-editor-source-*.zip.sha256
+          node scripts/make-office-source.mjs --out dist
+          if [ ! -f "$zip" ]; then
+            echo "::error::$zip 가 만들어지지 않았습니다."
+            ls -la dist || true
+            exit 1
+          fi
+          files=("$zip")
+          if [ -f "$zip.sha256" ]; then files+=("$zip.sha256"); fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then tag="$GITHUB_REF_NAME"; else tag="v$version"; fi
+          # 공개된 Release에는 붙이지 않는다 (다른 빌드의 설치 파일과 짝이 맞지 않게 됨) — 초안만
+          draft=$(gh release view "$tag" --json isDraft -q .isDraft)
+          if [ "$draft" != "true" ]; then
+            echo "::error::Release $tag 이(가) 초안이 아닙니다. 소스 꾸러미를 붙이지 않습니다."
+            exit 1
+          fi
+          gh release upload "$tag" "${files[@]}" --clobber
+          echo "Release $tag 에 올림: ${files[*]}"
+
+      - name: Release 공개 (설치 파일·소스 꾸러미가 올라갔는지 확인 후)
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
@@ -105,6 +194,10 @@ jobs:
           echo "$assets"
           if ! echo "$assets" | grep -q '^OfficeKit-Setup-.*\.exe$'; then
             echo "::error::Release $GITHUB_REF_NAME 에 설치 파일이 없습니다. 초안으로 남겨 둡니다."
+            exit 1
+          fi
+          if ! echo "$assets" | grep -q "^office-editor-source-${GITHUB_REF_NAME#v}\.zip$"; then
+            echo "::error::Release $GITHUB_REF_NAME 에 Office 편집기 소스 꾸러미(office-editor-source-${GITHUB_REF_NAME#v}.zip)가 없습니다 (AGPL 6조). 초안으로 남겨 둡니다."
             exit 1
           fi
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest
@@ -121,4 +214,5 @@ jobs:
           path: |
             dist/OfficeKit-Setup-*.exe
             dist/latest.yml
+            dist/office-editor-source-*.zip
           if-no-files-found: error

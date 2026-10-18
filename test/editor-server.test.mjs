@@ -1,21 +1,25 @@
 // editor-server.mjs 단위 시험 — 임시 폴더의 가짜 편집기 묶음으로만
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  editorAvailable, editorDirs, hostCsp, mimeOf, resolveRequestFile, splitUrlPath, startEditorServer, studioCsp,
+  editorAvailable, editorDirs, FONT_XOR_KEY, hostCsp, isUnsafePort, listenSafe, mimeOf, officeCsp, officeEditorAvailable,
+  officeEditorVersion, officeHostCsp, resolveRequestFile, splitUrlPath, startEditorServer, studioCsp, UNSAFE_PORTS, xorFontHead,
 } from '../src/app/editor-server.mjs';
-import { atomicWrite, bytesMatchExt, EDITABLE_EXTS } from '../src/app/editor-window.mjs';
+import { atomicWrite, bytesMatchExt, EDITABLE_EXTS, OFFICE_EXTS } from '../src/app/editor-window.mjs';
 
-let base; let root; let srv;
+let base; let root; let srv; let fontsDir;
 const SECRET = '비밀 내용';
-// 포트 → 주소 (studio 서버는 127.0.0.2)
+// 포트 → 주소 (studio 서버는 127.0.0.2, office 서버는 127.0.0.3)
 const hostOf = new Map();
-const track = (s) => { hostOf.set(s.studioPort, s.studioHost); return s; };
+const track = (s) => { hostOf.set(s.studioPort, s.studioHost); if (s.officePort) hostOf.set(s.officePort, s.officeHost); return s; };
+const VERSION_JSON = JSON.stringify({ filex: 'v0.3.1', files: { 'index.html': 1 } });
+const FONT_BYTES = Buffer.from(Array.from({ length: 100 }, (_, i) => (i * 7 + 3) & 255));
 
 function put(path, text = 'x') {
   mkdirSync(join(path, '..'), { recursive: true });
@@ -44,7 +48,52 @@ function makeTree(dir) {
   put(join(host, 'host.js'), 'console.log(1)');
   put(join(host, 'host.css'), 'body{}');
   put(join(host, 'editor-preload.cjs'), 'require("electron")');
-  return { studio, sdk, host };
+  // Office 묶음 (vendor/office-editor 흉내)
+  const office = join(dir, 'vendor', 'office-editor');
+  put(join(office, 'index.html'), '<!doctype html><title>office app</title>');
+  put(join(office, 'filex', 'app.js'), 'console.log("app")');
+  put(join(office, 'filex', 'app.css'), 'body{}');
+  put(join(office, 'editor', 'web-apps', 'apps', 'documenteditor', 'main', 'index.html'), '<!doctype html><title>de</title>');
+  put(join(office, 'editor', 'sdkjs', 'common', 'AllFonts.js'), 'window["__fonts_files"] = ["000"]; // 묶음');
+  put(join(office, 'editor', 'sdkjs', 'common', 'Images', 'fonts_thumbnail.png'), 'BUNDLE-PNG');
+  put(join(office, 'editor', 'sdkjs', 'common', 'Images', 'fonts_thumbnail@2x.png.bin'), 'BUNDLE-BIN2');
+  put(join(office, 'editor', 'sdkjs', 'common', 'Images', 'themes_thumbnail.png'), 'THEMES');
+  put(join(office, 'editor', 'fonts', '000'), 'BUNDLE-FONT-000');
+  put(join(office, 'editor', 'LICENSE.txt'), 'AGPL');
+  put(join(office, 'editor', 'plugins.json'), '{}');
+  put(join(office, 'x2t', 'x2t.js'), 'var x2t;');
+  put(join(office, 'x2t', 'x2t.wasm'), Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+  put(join(office, 'VERSION.json'), VERSION_JSON);
+  put(join(office, '.secret'), SECRET);
+  put(join(office, 'preload.cjs'), SECRET);
+  const officeHost = join(dir, 'src', 'app', 'office-editor');
+  put(join(officeHost, 'host.html'), '<!doctype html><title>office host</title>');
+  put(join(officeHost, 'host.js'), 'console.log(2)');
+  put(join(officeHost, 'host.css'), 'body{}');
+  put(join(officeHost, 'office-preload.cjs'), SECRET);
+  put(join(officeHost, 'fonts', 'index.mjs'), SECRET);
+  put(join(officeHost, 'fonts', 'notes.txt'), SECRET);
+  put(join(officeHost, 'helper.mjs'), SECRET);
+  return { studio, sdk, host, office, officeHost };
+}
+
+/** W5 글꼴 색인 흉내: AllFonts.js·미리보기 폴더·글꼴 파일 (번호 0 = a.ttf, 1 = 문서, 2 = 없는 파일, 3 = 오류, 4 = 짧은 글꼴, 5 = 상대 경로) */
+function makeFonts(dir) {
+  const allFontsJsPath = join(dir, 'AllFonts.js');
+  put(allFontsJsPath, 'window["__fonts_files"] = ["000"]; // 이 PC');
+  const thumbnailsDir = join(dir, 'thumbs');
+  put(join(thumbnailsDir, 'fonts_thumbnail.png'), 'PC-PNG');
+  put(join(dir, 'sys', 'a.ttf'), FONT_BYTES);
+  put(join(dir, 'sys', 'tiny.otf'), Buffer.from([1, 2, 3]));
+  put(join(dir, 'sys', '문서.docx'), SECRET);
+  const files = [join(dir, 'sys', 'a.ttf'), join(dir, 'sys', '문서.docx'), join(dir, 'sys', 'none.ttf'), null, join(dir, 'sys', 'tiny.otf'), 'a.ttf'];
+  return {
+    allFontsJsPath, thumbnailsDir,
+    fontFileByIndex(i) {
+      if (i === 3) throw new Error('색인 오류');
+      return files[i] ?? null;
+    },
+  };
 }
 
 /** 주소를 고치지 않고 그대로 보내는 요청 (fetch는 '..'을 정리해 버린다) */
@@ -71,6 +120,8 @@ before(async () => {
   put(join(base, 'outside', 'secret.txt'), SECRET);
   symlinkSync(join(base, 'outside'), join(dirs.studio, 'link'), 'junction');
   try { symlinkSync(join(base, 'secret.txt'), join(dirs.studio, 'filelink.txt'), 'file'); } catch {}
+  symlinkSync(join(base, 'outside'), join(dirs.office, 'link'), 'junction');
+  fontsDir = join(base, 'fonts');
   srv = track(await startEditorServer({ root }));
 });
 
@@ -283,14 +334,17 @@ test('editorAvailable: 묶음이 다 있으면 true, 없으면 한국어 이유'
 test('close: 닫으면 더 받지 않는다', async () => {
   const s = track(await startEditorServer({ root }));
   assert.equal((await raw(s.studioPort, '/studio/index.html')).status, 200);
+  assert.equal((await raw(s.officePort, `/office/${s.officeKey}/index.html`)).status, 200);
   await s.close();
   await s.close(); // 두 번 불러도 괜찮다
   await assert.rejects(raw(s.studioPort, '/studio/index.html'));
   await assert.rejects(raw(s.port, '/host/host.html'));
+  await assert.rejects(raw(s.officePort, `/office/${s.officeKey}/index.html`));
 });
 
 test('편집 창 도우미: 형식 확인과 원자적 쓰기', async () => {
   assert.deepEqual(EDITABLE_EXTS, ['hwp', 'hwpx', 'hwt']);
+  assert.deepEqual(OFFICE_EXTS, ['docx', 'xlsx', 'pptx']);
   const ole = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0]);
   const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0]);
   assert.equal(bytesMatchExt(ole, 'hwp'), true);
@@ -300,6 +354,10 @@ test('편집 창 도우미: 형식 확인과 원자적 쓰기', async () => {
   assert.equal(bytesMatchExt(ole, 'hwpx'), false);
   assert.equal(bytesMatchExt(new Uint8Array(2), 'hwp'), false);
   assert.equal(bytesMatchExt('PK', 'hwpx'), false);
+  for (const ext of OFFICE_EXTS) {
+    assert.equal(bytesMatchExt(zip, ext), true, ext);
+    assert.equal(bytesMatchExt(ole, ext), false, ext);
+  }
 
   const dir = join(base, 'write');
   mkdirSync(dir, { recursive: true });
@@ -316,4 +374,255 @@ test('편집 창 도우미: 형식 확인과 원자적 쓰기', async () => {
   assert.equal(readFileSync(join(dir, 'new.hwp'), 'utf8'), 'x');
   assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
   await assert.rejects(atomicWrite(join(dir, 'no-such-dir', 'a.hwp'), Buffer.from('x')), { code: 'ENOENT' });
+});
+
+// ── 문서·표·슬라이드 편집기 (office) ─────────────────────────
+
+const ob = () => `/office/${srv.officeKey}`;
+
+test('office: 다른 사이트 127.0.0.3, 주소는 /office/<판>/ (판 = VERSION.json 해시)', () => {
+  if (process.platform === 'win32') assert.equal(srv.officeHost, '127.0.0.3');
+  assert.equal(srv.officeOrigin, `http://${srv.officeHost}:${srv.officePort}`);
+  assert.notEqual(srv.officeOrigin, srv.origin);
+  assert.notEqual(srv.officeOrigin, srv.studioOrigin);
+  assert.equal(srv.officeVersion, createHash('sha256').update(VERSION_JSON).digest('hex').slice(0, 16));
+  assert.equal(srv.officeVersion, officeEditorVersion(editorDirs(root).office));
+  assert.equal(srv.officeBase, `${srv.officeOrigin}/office/${srv.officeKey}/`);
+  assert.match(srv.officeKey, new RegExp(`^${srv.officeVersion}-[0-9a-f]{32}$`), '판 + 실행마다 새 열쇠 (주소를 미리 알 수 없게)');
+  assert.equal(srv.officeUrl, `${srv.officeBase}index.html`);
+  assert.equal(srv.officeHostUrl, `${srv.origin}/office-host/host.html`);
+  assert.equal(srv.officeError, null);
+  assert.equal(officeEditorVersion(join(base, 'no-such')), 'dev');
+});
+
+test('office: 열쇠 없는 주소 /office/<판>/는 없다 (설치본마다 같은 주소로 글꼴 목록·글꼴 파일을 읽지 못하게)', async () => {
+  for (const p of ['/index.html', '/editor/sdkjs/common/AllFonts.js', '/VERSION.json']) {
+    assert.equal((await raw(srv.officePort, `/office/${srv.officeVersion}${p}`)).status, 404, p);
+    assert.equal((await raw(srv.officePort, `/office/${srv.officeVersion}-${'0'.repeat(32)}${p}`)).status, 404, p);
+  }
+  assert.equal((await raw(srv.officePort, `${ob()}/VERSION.json`)).status, 200);
+});
+
+test('office: HTML은 sandbox CSP(opaque origin), 나머지 파일은 CORS·CORP를 연다', async () => {
+  let r = await raw(srv.officePort, `${ob()}/index.html`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['content-type'], 'text/html; charset=utf-8');
+  const csp = r.headers['content-security-policy'];
+  assert.equal(csp, officeCsp(srv.officeBase));
+  for (const part of ["default-src 'none'", `script-src ${srv.officeBase} 'unsafe-eval' 'wasm-unsafe-eval'`, `style-src ${srv.officeBase} 'unsafe-inline'`,
+    `img-src ${srv.officeBase} data: blob:`, `font-src ${srv.officeBase} data:`, `connect-src ${srv.officeBase} blob:`, 'worker-src blob:',
+    `frame-src ${srv.officeBase}`, "object-src 'none'", "base-uri 'none'", "form-action 'none'", 'sandbox allow-scripts']) {
+    assert.ok(csp.split('; ').includes(part), part);
+  }
+  assert.doesNotMatch(csp, /allow-same-origin/);
+  assert.doesNotMatch(csp, /https?:\/\/(?!127\.0\.0\.)/);
+  assert.equal(r.headers['cross-origin-resource-policy'], 'cross-origin');
+  assert.equal(r.headers['x-content-type-options'], 'nosniff');
+  r = await raw(srv.officePort, `${ob()}/`);
+  assert.equal(r.status, 200);
+  assert.match(r.body.toString(), /office app/);
+  r = await raw(srv.officePort, `${ob()}/editor/web-apps/apps/documenteditor/main/index.html`);
+  assert.equal(r.headers['content-security-policy'], officeCsp(srv.officeBase));
+  // 나머지: sandbox 틀(origin null)이 읽으므로 ACAO *, CORP cross-origin, 직접 열어도 스크립트가 돌지 않게 sandbox
+  for (const [path, type] of [['/filex/app.js', 'text/javascript; charset=utf-8'], ['/x2t/x2t.wasm', 'application/wasm'],
+    ['/filex/app.css', 'text/css; charset=utf-8'], ['/editor/plugins.json', 'application/json; charset=utf-8']]) {
+    r = await raw(srv.officePort, `${ob()}${path}`, { headers: { Origin: 'null' } });
+    assert.equal(r.status, 200, path);
+    assert.equal(r.headers['content-type'], type, path);
+    assert.equal(r.headers['access-control-allow-origin'], '*', path);
+    assert.equal(r.headers['cross-origin-resource-policy'], 'cross-origin', path);
+    assert.equal(r.headers['content-security-policy'], "default-src 'none'; sandbox", path);
+    assert.match(r.headers['cache-control'], /immutable/, path);
+  }
+});
+
+test('office: 판이 다르거나 맡지 않은 경로는 404, 출처마다 맡은 폴더만', async () => {
+  for (const path of ['/office/0000000000000000/index.html', '/office/dev/index.html', `${ob()}`, '/office/', '/office',
+    `${ob()}/.secret`, `${ob()}/preload.cjs`, `${ob()}/link/secret.txt`, `${ob()}/editor/`, `${ob()}/x2t`,
+    '/studio/index.html', '/host/host.html', '/office-host/host.html', '/sdk/index.js']) {
+    const r = await raw(srv.officePort, path);
+    assert.equal(r.status, 404, path);
+    assert.ok(!r.body.toString().includes(SECRET), path);
+  }
+  for (const port of [srv.port, srv.studioPort]) {
+    assert.equal((await raw(port, `${ob()}/index.html`)).status, 404);
+  }
+  assert.equal((await raw(srv.studioPort, '/office-host/host.html')).status, 404);
+});
+
+test('office: 경로 넘기 시도·Host 머리글·허용 안 된 방식', async () => {
+  const attempts = ['/../secret.txt', '/..%2f..%2fsecret.txt', '/%2e%2e/%2e%2e/secret.txt', '/editor/..%5c..%5csecret.txt',
+    '/editor/fonts/..%2f..%2f..%2fsecret.txt', '/editor/fonts/000%00', '/NUL', '/index.html.', '/index.html::$DATA',
+    `/${encodeURIComponent(join(base, 'secret.txt'))}`, '/editor//LICENSE.txt'];
+  for (const a of attempts) {
+    const r = await raw(srv.officePort, `${ob()}${a}`);
+    assert.ok([400, 404].includes(r.status), `${a} → ${r.status}`);
+    assert.ok(!r.body.toString().includes(SECRET), a);
+  }
+  assert.equal((await raw(srv.officePort, `${ob()}/index.html`, { headers: { Host: 'evil.example' } })).status, 403);
+  assert.equal((await raw(srv.officePort, `${ob()}/index.html`, { headers: { Host: `localhost:${srv.officePort}` } })).status, 403);
+  for (const method of ['POST', 'PUT', 'OPTIONS']) {
+    assert.equal((await raw(srv.officePort, `${ob()}/index.html`, { method })).status, 405, method);
+  }
+});
+
+test('office-host: CSP는 자기 출처 + office 묶음 틀만, Node 쪽 파일(*.mjs·*.cjs·fonts/)은 내주지 않는다', async () => {
+  const r = await raw(srv.port, '/office-host/host.html');
+  assert.equal(r.status, 200);
+  const csp = r.headers['content-security-policy'];
+  assert.equal(csp, officeHostCsp(srv.officeBase));
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /script-src 'self'(;|$)/);
+  assert.ok(csp.includes(`frame-src ${srv.officeBase};`), csp);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.doesNotMatch(csp, /unsafe/);
+  assert.equal(r.headers['cross-origin-resource-policy'], 'same-site');
+  assert.equal(r.headers['access-control-allow-origin'], undefined);
+  assert.equal((await raw(srv.port, '/office-host/host.js')).status, 200);
+  assert.equal((await raw(srv.port, '/office-host/host.css')).status, 200);
+  for (const path of ['/office-host/office-preload.cjs', '/office-host/fonts/index.mjs', '/office-host/fonts/notes.txt',
+    '/office-host/FONTS/notes.txt', '/office-host/helper.mjs', '/office-host/HELPER.MJS', '/office-host/', '/office-host/../editor/host.html']) {
+    const x = await raw(srv.port, path);
+    assert.equal(x.status, 404, path);
+    assert.ok(!x.body.toString().includes(SECRET), path);
+  }
+  // 한글 host CSP는 그대로 (studio 틀만)
+  assert.equal((await raw(srv.port, '/host/host.html')).headers['content-security-policy'], hostCsp(srv.studioOrigin));
+});
+
+test('office 글꼴: 색인이 없으면 묶음 것 그대로, 색인을 걸면 이 PC 글꼴 목록·미리보기·글꼴 파일(앞 32바이트 XOR)', async () => {
+  const s = track(await startEditorServer({ root }));
+  try {
+    const o = (p, opts) => raw(s.officePort, `/office/${s.officeKey}${p}`, opts);
+    assert.match((await o('/editor/sdkjs/common/AllFonts.js')).body.toString(), /묶음/);
+    let r = await o('/editor/fonts/000');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.toString(), 'BUNDLE-FONT-000', '묶음 글꼴은 이미 XOR된 것이라 그대로');
+    assert.equal((await o('/editor/sdkjs/common/Images/fonts_thumbnail.png')).body.toString(), 'BUNDLE-PNG');
+
+    const fonts = makeFonts(fontsDir);
+    s.setOfficeFonts(fonts);
+    r = await o('/editor/sdkjs/common/AllFonts.js');
+    assert.equal(r.status, 200);
+    assert.match(r.body.toString(), /이 PC/);
+    assert.equal(r.headers['content-type'], 'text/javascript; charset=utf-8');
+    assert.equal(r.headers['cache-control'], 'no-cache', '글꼴 목록은 바뀔 수 있다');
+    assert.equal(r.headers['access-control-allow-origin'], '*');
+    // 미리보기: 만든 것이 있으면 그것, 없으면 묶음 것
+    assert.equal((await o('/editor/sdkjs/common/Images/fonts_thumbnail.png')).body.toString(), 'PC-PNG');
+    assert.equal((await o('/editor/sdkjs/common/Images/fonts_thumbnail@2x.png.bin')).body.toString(), 'BUNDLE-BIN2');
+    assert.equal((await o('/editor/sdkjs/common/Images/themes_thumbnail.png')).body.toString(), 'THEMES');
+    // 미리보기가 나중에 생기면 바로 그것을
+    put(join(fonts.thumbnailsDir, 'fonts_thumbnail@2x.png.bin'), 'PC-BIN2');
+    assert.equal((await o('/editor/sdkjs/common/Images/fonts_thumbnail@2x.png.bin')).body.toString(), 'PC-BIN2');
+    // 글꼴 파일: 번호 → 실제 파일, 앞 32바이트만 XOR (ONLYOFFICE가 기대하는 모양), 원본은 그대로
+    for (const n of ['0', '000', '00000']) {
+      r = await o(`/editor/fonts/${n}`);
+      assert.equal(r.status, 200, n);
+      assert.equal(r.headers['content-type'], 'application/octet-stream');
+      assert.equal(r.headers['access-control-allow-origin'], '*');
+      assert.equal(r.headers['cross-origin-resource-policy'], 'cross-origin');
+      assert.equal(r.headers['content-length'], String(FONT_BYTES.length));
+      assert.deepEqual(r.body, xorFontHead(FONT_BYTES));
+      assert.deepEqual(r.body.subarray(32), FONT_BYTES.subarray(32));
+      assert.equal(r.body[0], FONT_BYTES[0] ^ FONT_XOR_KEY[0]);
+      assert.equal(r.body[31], FONT_BYTES[31] ^ FONT_XOR_KEY[15]);
+    }
+    assert.deepEqual(readFileSync(join(fontsDir, 'sys', 'a.ttf')), FONT_BYTES, '원본 글꼴 파일은 고치지 않는다');
+    assert.deepEqual(xorFontHead(xorFontHead(FONT_BYTES)), FONT_BYTES);
+    // 32바이트보다 짧은 글꼴
+    r = await o('/editor/fonts/4');
+    assert.deepEqual(r.body, Buffer.from([1 ^ FONT_XOR_KEY[0], 2 ^ FONT_XOR_KEY[1], 3 ^ FONT_XOR_KEY[2]]));
+    const head = await o('/editor/fonts/0', { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers['content-length'], String(FONT_BYTES.length));
+    assert.equal(head.body.length, 0);
+    assert.equal((await o('/editor/fonts/0', { headers: { 'If-None-Match': head.headers.etag } })).status, 304);
+    // 색인이 걸리면 묶음 글꼴은 쓰지 않는다. 글꼴이 아닌 파일·없는 파일·오류·상대 경로·이상한 번호는 404
+    for (const n of ['1', '2', '3', '5', '99', '000000', 'abc', '1e3', '-1', '0x1', '0.1']) {
+      const x = await o(`/editor/fonts/${n}`);
+      assert.equal(x.status, 404, n);
+      assert.ok(!x.body.toString().includes(SECRET), n);
+    }
+    // 색인을 떼면 다시 묶음 것
+    s.setOfficeFonts(null);
+    assert.equal((await o('/editor/fonts/000')).body.toString(), 'BUNDLE-FONT-000');
+    // 처음부터 색인을 넘길 수도 있다
+    const s2 = track(await startEditorServer({ root, officeFonts: makeFonts(fontsDir) }));
+    try {
+      assert.match((await raw(s2.officePort, `/office/${s2.officeKey}/editor/sdkjs/common/AllFonts.js`)).body.toString(), /이 PC/);
+    } finally { await s2.close(); }
+  } finally { await s.close(); }
+});
+
+test('office 주소 후보: 127.0.0.3을 못 쓰면 127.0.0.1의 다른 포트로, 아예 못 띄워도 한글 편집은 된다', async () => {
+  const s = track(await startEditorServer({ root, officeHosts: ['203.0.113.7', '127.0.0.1'] }));
+  try {
+    assert.equal(s.officeHost, '127.0.0.1');
+    assert.equal(s.officeOrigin, `http://127.0.0.1:${s.officePort}`);
+    assert.notEqual(s.port, s.officePort);
+    assert.equal((await raw(s.officePort, `/office/${s.officeKey}/index.html`)).status, 200);
+  } finally { await s.close(); }
+  const s2 = track(await startEditorServer({ root, officeHosts: ['203.0.113.7'] }));
+  try {
+    assert.equal(s2.officeOrigin, null);
+    assert.equal(s2.officeUrl, null);
+    assert.match(s2.officeError, /문서 편집기 서버를 시작하지 못했습니다/);
+    assert.equal((await raw(s2.studioPort, '/studio/index.html')).status, 200);
+  } finally { await s2.close(); }
+});
+
+test('Chromium 금지 포트: 목록, listenSafe는 다시 받고, 편집기 서버 셋 다 피한다', async () => {
+  for (const p of [1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080, 21, 22, 25, 110, 143, 995]) {
+    assert.equal(isUnsafePort(p), true, p);
+  }
+  for (const p of [80, 443, 2161, 3982, 4017, 8080, 9357, 49152]) assert.equal(isUnsafePort(p), false, p);
+  assert.ok(UNSAFE_PORTS.size >= 80);
+  // 받은 포트를 금지로 보는 판정 → 다른 포트를 받는다 (금지된 포트는 끝내 쓰지 않는다)
+  const rejected = [];
+  const server = createServer();
+  const port = await listenSafe(server, '127.0.0.1', { isUnsafe: (p) => { if (rejected.length < 2) { rejected.push(p); return true; } return false; } });
+  try {
+    assert.equal(rejected.length, 2);
+    assert.ok(!rejected.includes(port), `${port} ∉ ${rejected}`);
+    assert.equal(server.address().port, port);
+  } finally { await new Promise((r) => server.close(r)); }
+  // 늘 금지면 몇 번 뒤 포기
+  await assert.rejects(listenSafe(createServer(), '127.0.0.1', { isUnsafe: () => true, tries: 3 }), { code: 'NO_SAFE_PORT' });
+  // 한글 host·studio·office 서버 모두
+  const seen = [];
+  const s = track(await startEditorServer({ root, isUnsafe: (p) => { if (seen.length < 5) { seen.push(p); return true; } return false; } }));
+  try {
+    assert.equal(seen.length, 5);
+    for (const p of [s.port, s.studioPort, s.officePort]) assert.ok(!seen.includes(p), `${p} ∉ ${seen}`);
+    assert.equal((await raw(s.studioPort, '/studio/index.html')).status, 200);
+    assert.equal((await raw(s.officePort, `/office/${s.officeKey}/index.html`)).status, 200);
+  } finally { await s.close(); }
+});
+
+test('officeEditorAvailable: 묶음·호스트가 다 있으면 true, 없으면 한국어 이유', () => {
+  assert.deepEqual(officeEditorAvailable(root), { available: true, reason: null });
+  const empty = join(base, 'empty-office');
+  mkdirSync(empty, { recursive: true });
+  let r = officeEditorAvailable(empty);
+  assert.equal(r.available, false);
+  assert.match(r.reason, /문서 편집기 파일이 없습니다 \(vendor\/office-editor\)/);
+  assert.match(r.reason, /다시 설치하세요\.$/);
+  assert.doesNotMatch(r.reason, /ONLYOFFICE/i);
+  assert.match(officeEditorAvailable(empty, {}, { dev: true }).reason, /office-editor:build/);
+  for (const [f, re] of [[['x2t', 'x2t.wasm'], /변환 엔진/], [['VERSION.json'], /VERSION\.json/], [['editor', 'LICENSE.txt'], /LICENSE\.txt/]]) {
+    const dir = join(base, `office-${f.at(-1)}`);
+    const d = makeTree(dir);
+    rmSync(join(d.office, ...f));
+    r = officeEditorAvailable(dir);
+    assert.equal(r.available, false, f.join('/'));
+    assert.match(r.reason, re);
+  }
+  const nohost = join(base, 'office-nohost');
+  const d = makeTree(nohost);
+  rmSync(join(d.officeHost, 'office-preload.cjs'));
+  assert.match(officeEditorAvailable(nohost).reason, /편집 창 파일이 없습니다 \(src\/app\/office-editor\/office-preload\.cjs\)/);
+  // 폴더 바꾸기, 한글 편집기 확인과는 따로
+  assert.equal(officeEditorAvailable(empty, { office: editorDirs(root).office, officeHost: editorDirs(root).officeHost }).available, true);
+  assert.equal(editorAvailable(empty).available, false);
 });

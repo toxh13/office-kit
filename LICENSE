@@ -30,6 +30,61 @@ under its own license; the full license texts are included in the respective
 package folders under resources/app/node_modules/ in the installed app (and in
 node_modules/ of this repository after `npm install`).
 
+The MIT License above does NOT apply to the office editor bundle
+(vendor/office-editor/, below) or to the files in this repository that carry
+an "SPDX-License-Identifier: AGPL-3.0-or-later" or "AGPL-3.0-only" header:
+the filex patches in patches/office-editor/ (AGPL-3.0-or-later) and the font
+list generator in src/app/office-editor/fonts/ (AGPL-3.0-only with the
+ONLYOFFICE additional terms, as it is derived from ONLYOFFICE core). Those are
+licensed under the GNU Affero General Public License version 3, whose text is
+in LICENSES/AGPL-3.0.txt; the ONLYOFFICE section 7 additional terms are in
+LICENSES/ONLYOFFICE-additional-terms.txt. The rest of Office Kit stays MIT; it talks to the
+office editor only through messages (a MessagePort) and a local file server.
+
+- Office editor bundle — the in-app document, spreadsheet and presentation
+  editing windows (vendor/office-editor/, built by
+  scripts/build-office-editor.mjs from filex-office-editor v0.3.1)
+  GNU Affero General Public License v3 (AGPL-3.0), NOT MIT. It contains:
+  - ONLYOFFICE Docs Community Edition 9.4.0 (build 9.4.0.129) editor files
+    (web-apps, sdkjs; source tag v9.4.0.129 of
+    https://github.com/ONLYOFFICE/web-apps and https://github.com/ONLYOFFICE/sdkjs)
+    Copyright (C) 2009-2026 Ascensio System SIA — AGPL-3.0 with the
+    additional terms of its section 7 (vendor/office-editor/editor/LICENSE.txt);
+    non-code content (illustrations, icon sets, documentation) is licensed
+    under CC BY-SA 4.0. Office Kit ships a MODIFIED version (whole files left
+    out; font list served from the user's installed fonts at run time): see
+    vendor/office-editor/NOTICE-OfficeKit.md for the dated list of changes.
+  - x2t, ONLYOFFICE's document converter, built to WebAssembly (release
+    v9.4.0.129+2) from ONLYOFFICE core v9.4.0.129 (AGPL-3.0) with CryptPad's
+    WebAssembly changes (AGPL-3.0-or-later) and BRF Tech's patches.
+  - filex-office-editor (the app page and the bridge that answers the editor
+    in place of a Document Server) — Copyright (C) 2026 BRF Tech —
+    AGPL-3.0-or-later; its src/locks.ts is AGPL-3.0-only.
+    https://github.com/BRF-Tech/filex-office-editor (commit 57dda3dae99a, tag
+    v0.3.1); its LICENSE, NOTICE and editor/filex/CHANGES.txt are shipped in
+    vendor/office-editor/.
+  - third-party JavaScript inside the editor (Bootstrap, jQuery, RequireJS,
+    Underscore, Backbone, Socket.IO and others) — MIT, BSD and Apache-2.0
+    licenses, listed in vendor/office-editor/editor/3rd-Party.txt with their
+    texts in vendor/office-editor/editor/license/.
+  - third-party code compiled into the WebAssembly files (x2t.wasm and the
+    sdkjs font/zlib engines: Boost, ICU, FreeType, HarfBuzz, Brotli, libpng,
+    libjpeg, LibTIFF, OpenJPEG, JasPer, libxml2, Xpdf, DjVuLibre, Crypto++,
+    the emscripten runtime and others) and the es6-promise and fetch
+    polyfills — BSL-1.0, ICU, FTL, MIT, BSD, Apache-2.0, IJG, GPL/LGPL and
+    other licenses, with their notices in
+    vendor/office-editor/THIRD-PARTY-NATIVE.txt (LICENSES/office-editor-third-
+    party-native.txt in this repository).
+  - the 14 URW++ base-14 Type 1 fonts (Nimbus Sans, Nimbus Roman, Nimbus
+    Mono, Standard Symbols L, Dingbats) that ONLYOFFICE core embeds in x2t.wasm
+    for PDF output — AGPL-3.0 with an exception allowing them to be embedded
+    in PDF and PostScript documents. No other fonts are bundled: the editor
+    reads the fonts installed on the PC.
+  Corresponding Source: office-editor-source-<version>.zip, attached to each
+  GitHub Release of Office Kit (made by scripts/make-office-source.mjs), plus
+  the ONLYOFFICE sources at tag v9.4.0.129 named in its UPSTREAM.md.
+  Details (in Korean): docs/LICENSES-OFFICE-EDITOR.md.
+
 - rhwp (@rhwp/core) — HWP/HWPX engine (Rust/WebAssembly)
   Copyright (c) 2025-2026 Edward Kim — MIT License
   https://github.com/edwardkim/rhwp
@@ -91,5 +146,7 @@ distribution (https://developer.hancom.com/hwpautomation) and it remains subject
 to Hancom's terms.
 
 Hancom, Hangul (한글), HWP, Microsoft Word, PowerPoint, Excel, Claude and Codex
-are trademarks of their respective owners. Office Kit is not affiliated with or
-endorsed by them.
+are trademarks of their respective owners. ONLYOFFICE® and ONLYOFFICE Docs™
+are registered trademarks or trademarks of Ascensio System SIA; this license
+grants no right to use them. Office Kit is not affiliated with or endorsed by
+any of them.
