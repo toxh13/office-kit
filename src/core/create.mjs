@@ -1,11 +1,13 @@
-// create.mjs — 마크다운 원고 하나로 hwp/hwpx/docx/pptx/xlsx 새 문서를 만든다.
-import { writeFileSync } from 'node:fs';
+// create.mjs — 마크다운 원고 하나로 hwp/hwpx/docx/pptx/xlsx 새 문서를 만든다. 빈 문서·새 파일 이름 도우미도 여기.
+import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { extname, isAbsolute, join, resolve } from 'node:path';
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell,
   WidthType, PageBreak,
 } from 'docx';
 import PptxGenJS from 'pptxgenjs';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { Hwp } from './hwp.mjs';
 
 /**
@@ -152,4 +154,193 @@ export async function createDocument(output, markdown) {
   if (!build) throw new Error(`새로 만들 수 없는 형식: .${ext} (hwp, hwpx, docx, pptx, xlsx 가능)`);
   writeFileSync(output, Buffer.from(await build(blocks)));
   return output;
+}
+
+// ── 빈 문서 ──────────────────────────────────────────────
+
+/** 빈 문서로 만들 수 있는 형식 (앞이 기본) */
+export const BLANK_FORMATS = Object.freeze(['hwpx', 'hwp', 'docx', 'pptx', 'xlsx']);
+const FONT = '맑은 고딕';
+
+// 만든 꾸러미(zip)의 XML 몇 개를 고친다 (라이브러리가 채우는 영어 기본값 정리)
+async function patchZip(buf, edits) {
+  const zip = await JSZip.loadAsync(buf);
+  for (const [name, fn] of Object.entries(edits)) {
+    const f = zip.file(name);
+    if (f) zip.file(name, fn(await f.async('string')));
+  }
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+async function blankBytes(ext, title) {
+  if (ext === 'hwp' || ext === 'hwpx') {
+    const h = Hwp.create();
+    try {
+      if (title) h.addHeading(title, 1, { align: 'center' });
+      return Buffer.from(h.toBytes(ext));
+    } finally { h.close(); }
+  }
+  if (ext === 'docx') {
+    // 지은이는 비워 둔다 (Word가 저장할 때 사용자 이름을 넣는다)
+    const children = title
+      ? [new Paragraph({ text: title, heading: HeadingLevel.TITLE }), new Paragraph({})]
+      : [new Paragraph({})];
+    const doc = new Document({
+      creator: '', lastModifiedBy: '', title: title || undefined,
+      styles: { default: { document: { run: { font: FONT } } } },
+      sections: [{ children }],
+    });
+    return Buffer.from(await Packer.toBuffer(doc));
+  }
+  if (ext === 'pptx') {
+    // 제목 슬라이드 하나: 비어 있는 제목·부제목 개체 틀 (PowerPoint에서 '제목을 입력하세요'로 보인다)
+    const pptx = new PptxGenJS();
+    pptx.layout = 'LAYOUT_WIDE';
+    pptx.author = ''; pptx.company = ''; pptx.subject = ''; pptx.title = title || '';
+    pptx.theme = { headFontFace: FONT, bodyFontFace: FONT };
+    pptx.defineSlideMaster({
+      title: '제목 슬라이드',
+      objects: [
+        { placeholder: { options: { name: 'title', type: 'title', x: 1, y: 2.1, w: 11.33, h: 1.6, fontSize: 44, align: 'center', valign: 'bottom', fontFace: FONT }, text: '제목을 입력하세요' } },
+        { placeholder: { options: { name: 'subtitle', type: 'body', x: 1, y: 3.9, w: 11.33, h: 1.1, fontSize: 22, align: 'center', valign: 'top', fontFace: FONT, color: '595959' }, text: '부제목을 입력하세요' } },
+      ],
+    });
+    // PowerPoint의 '새 슬라이드'가 제목 슬라이드 다음에 고르는 '제목 및 내용' (본문 개체 틀이 있는 레이아웃)
+    pptx.defineSlideMaster({
+      title: '제목 및 내용',
+      objects: [
+        { placeholder: { options: { name: 'title', type: 'title', x: 0.92, y: 0.4, w: 11.5, h: 1.45, fontSize: 40, valign: 'middle', fontFace: FONT }, text: '제목을 입력하세요' } },
+        { placeholder: { options: { name: 'body', type: 'body', x: 0.92, y: 1.99, w: 11.5, h: 4.76, fontSize: 28, valign: 'top', fontFace: FONT }, text: '텍스트를 입력하세요' } },
+      ],
+    });
+    const slide = pptx.addSlide({ masterName: '제목 슬라이드' });
+    slide.addText(title || '', { placeholder: 'title', lang: 'ko-KR' });
+    slide.addText('', { placeholder: 'subtitle', lang: 'ko-KR' });
+    // PowerPoint의 새 프레젠테이션처럼 고친다: 개체 틀을 가운데 제목·부제목으로, 레이아웃을 '제목 슬라이드'·'빈 화면' 종류로,
+    // 개체 이름('Text 0' 둘)을 '제목 1'·'부제목 2'로 (ppt_inspect가 레이아웃을 title로 알아본다)
+    const ph = (xml) => xml.replace(/(<p:ph\b[^>]*?\btype=")title"/g, '$1ctrTitle"').replace(/(<p:ph\b[^>]*?\btype=")body"/g, '$1subTitle"');
+    const layout = (xml) => {
+      if (xml.includes('<p:cSld name="제목 슬라이드"')) return ph(xml).replace(/<p:sldLayout\b(?![^>]*\btype=)/, '<p:sldLayout type="title"');
+      if (xml.includes('<p:cSld name="DEFAULT"')) return xml.replace('<p:cSld name="DEFAULT"', '<p:cSld name="빈 화면"').replace(/<p:sldLayout\b(?![^>]*\btype=)/, '<p:sldLayout type="blank"');
+      // 본문 개체 틀은 글·표·차트·그림을 넣을 수 있는 '내용'(obj) 개체 틀로
+      if (xml.includes('<p:cSld name="제목 및 내용"')) {
+        return xml.replace(/(<p:ph\b[^>]*?\btype=")body"/g, '$1obj"').replace(/<p:sldLayout\b(?![^>]*\btype=)/, '<p:sldLayout type="obj"');
+      }
+      return xml;
+    };
+    // 레이아웃 갤러리 순서를 PowerPoint 새 프레젠테이션처럼: 제목 슬라이드 → 제목 및 내용 → 빈 화면
+    // (pptxgenjs는 빈 화면(DEFAULT)을 늘 맨 앞(rId1)에 둔다)
+    const order = (xml) => xml.replace(/<p:sldLayoutIdLst>([\s\S]*?)<\/p:sldLayoutIdLst>/, (all, inner) => {
+      const ids = [...inner.matchAll(/<p:sldLayoutId\b[^>]*\bid="(\d+)"[^>]*\/>/g)].map((m) => m[1]);
+      if (ids.length !== 3) return all;
+      const rids = ['rId2', 'rId3', 'rId1'];
+      return `<p:sldLayoutIdLst>${ids.map((id, i) => `<p:sldLayoutId id="${id}" r:id="${rids[i]}"/>`).join('')}</p:sldLayoutIdLst>`;
+    });
+    const names = ['제목 1', '부제목 2'];
+    return patchZip(await pptx.write({ outputType: 'nodebuffer' }), {
+      'ppt/slideLayouts/slideLayout1.xml': layout,
+      'ppt/slideLayouts/slideLayout2.xml': layout,
+      'ppt/slideLayouts/slideLayout3.xml': layout,
+      'ppt/slideMasters/slideMaster1.xml': order,
+      'ppt/slides/slide1.xml': (xml) => ph(xml).replace(/name="Text 0"/g, (m) => (names.length ? `name="${names.shift()}"` : m)),
+    });
+  }
+  if (ext === 'xlsx') {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = ''; wb.lastModifiedBy = '';
+    if (title) wb.title = title;
+    const ws = wb.addWorksheet('Sheet1');
+    if (title) { ws.getCell('A1').value = title; ws.getCell('A1').font = { name: FONT, bold: true, size: 14 }; }
+    // 지은이가 비면 ExcelJS가 'Unknown'을 넣으므로 뺀다
+    return patchZip(Buffer.from(await wb.xlsx.writeBuffer()), {
+      'docProps/core.xml': (xml) => xml.replace(/<dc:creator>Unknown<\/dc:creator>|<cp:lastModifiedBy>Unknown<\/cp:lastModifiedBy>/g, ''),
+    });
+  }
+  throw new Error(`빈 문서를 만들 수 없는 형식입니다: .${ext || '(확장자 없음)'} (${BLANK_FORMATS.join(', ')} 가능)`);
+}
+
+/**
+ * 빈 문서 만들기. 형식은 출력 확장자로 정한다 (hwpx·hwp·docx·pptx·xlsx).
+ * title이 있으면 제목으로 넣는다 (한글·Word 첫 문단, PowerPoint 제목 슬라이드, Excel A1).
+ * 이미 있는 파일은 overwrite=true일 때만 덮어쓴다 (아니면 code 'EXISTS' 오류).
+ */
+export async function createBlankDocument(output, { title, overwrite = false } = {}) {
+  output = resolve(output);
+  const ext = extname(output).slice(1).toLowerCase();
+  const t = typeof title === 'string' ? title.trim() : '';
+  const bytes = await blankBytes(ext, t);
+  if (overwrite) { writeFileSync(output, bytes); return output; }
+  try {
+    writeFileSync(output, bytes, { flag: 'wx' }); // 없을 때만 만든다
+  } catch (err) {
+    if (err.code === 'EEXIST') throw Object.assign(new Error(`같은 이름의 파일이 이미 있습니다: ${output}`), { code: 'EXISTS' });
+    try { rmSync(output, { force: true }); } catch {} // 쓰다 만 파일
+    throw err;
+  }
+  return output;
+}
+
+// ── 새 파일 이름 ─────────────────────────────────────────
+
+export const DEFAULT_DOC_NAME = '새 문서';
+const BAD_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
+// Windows 예약 이름 (확장자가 붙어도 안 됨: con.hwpx)
+const RESERVED = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$/i;
+const NAME_MAX = 200;   // 확장자 뺀 이름 길이
+const PATH_MAX = 259;   // Office가 열 수 있는 전체 경로 길이
+
+/** 사용자가 쓴 이름 다듬기: 앞뒤 공백을 떼고, 고른 형식의 확장자를 붙여 썼으면 뗀다 */
+export function cleanDocName(name, ext) {
+  let n = String(name ?? '').trim();
+  if (ext && n.toLowerCase().endsWith(`.${String(ext).toLowerCase()}`)) n = n.slice(0, -(String(ext).length + 1)).trim();
+  return n;
+}
+
+/** 파일 이름(확장자 뺀 것)의 문제 → { code, message } 또는 null */
+export function fileNameProblem(name) {
+  const n = String(name ?? '');
+  if (!n.trim() || /^[.\s]+$/.test(n)) return { code: 'EMPTY', message: '파일 이름을 입력해 주세요' };
+  const bad = [...new Set(n.match(BAD_CHARS) ?? [])];
+  if (bad.length) {
+    const shown = bad.map((c) => (c.charCodeAt(0) < 32 ? '제어 문자' : c));
+    return { code: 'BAD_CHARS', message: `파일 이름에 쓸 수 없는 문자가 있어요: ${[...new Set(shown)].join(' ')}` };
+  }
+  if (n !== n.trim()) return { code: 'SPACES', message: '파일 이름 앞뒤에 공백을 둘 수 없어요' };
+  const stem = n.split('.')[0].trimEnd();
+  if (RESERVED.test(stem)) return { code: 'RESERVED', message: `Windows가 예약한 이름(${stem.toUpperCase()})이라 쓸 수 없어요` };
+  if (n.length > NAME_MAX) return { code: 'TOO_LONG', message: `파일 이름이 너무 길어요 (${NAME_MAX}자 이하)` };
+  return null;
+}
+
+/** 폴더 안에서 겹치지 않는 이름: '새 문서' → '새 문서 (2)' → '새 문서 (3)' … */
+export function freeDocName(folder, ext, base = DEFAULT_DOC_NAME, exists = existsSync) {
+  const taken = (n) => exists(join(folder, `${n}.${ext}`));
+  if (!taken(base)) return base;
+  // '새 문서 (2)'에서 다시 찾으면 '새 문서 (3)'부터
+  const m = /^(.*) \((\d+)\)$/.exec(base);
+  const stem = m ? m[1] : base;
+  for (let i = m ? Number(m[2]) + 1 : 2; i < 10_000; i++) if (!taken(`${stem} (${i})`)) return `${stem} (${i})`;
+  return `${stem} (${Date.now()})`;
+}
+
+/**
+ * 새 문서 만들 자리 확인 → { path, name, ext, folder }. 문제가 있으면 한국어 오류 (code 붙음):
+ * BAD_FORMAT · NO_FOLDER · EMPTY · BAD_CHARS · SPACES · RESERVED · TOO_LONG · PATH_TOO_LONG · EXISTS
+ */
+export function planBlankDocument({ folder, name, format } = {}, { exists = existsSync } = {}) {
+  const err = (code, message) => Object.assign(new Error(message), { code });
+  const ext = String(format ?? '').toLowerCase();
+  if (!BLANK_FORMATS.includes(ext)) throw err('BAD_FORMAT', '지원하지 않는 형식입니다');
+  if (typeof folder !== 'string' || !folder.trim() || folder.length > 4096 || !isAbsolute(folder)) throw err('NO_FOLDER', '저장할 폴더를 골라 주세요');
+  const dir = resolve(folder);
+  let isDir = false;
+  try { isDir = statSync(dir).isDirectory(); } catch {}
+  if (!isDir) throw err('NO_FOLDER', `저장할 폴더를 찾을 수 없어요: ${dir}`);
+  const n = cleanDocName(name, ext);
+  const problem = fileNameProblem(n);
+  if (problem) throw err(problem.code, problem.message);
+  const path = join(dir, `${n}.${ext}`);
+  if (path.length > PATH_MAX) throw err('PATH_TOO_LONG', '경로가 너무 길어요. 더 짧은 이름이나 다른 폴더를 골라 주세요');
+  if (exists(path)) throw err('EXISTS', `이 폴더에 같은 이름의 파일이 이미 있어요: ${n}.${ext}`);
+  return { path, name: n, ext, folder: dir };
 }

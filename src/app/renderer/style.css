@@ -229,13 +229,28 @@ kbd {
 
 .actions { display: flex; align-items: center; gap: 2px; flex: none; }
 
+/* 직접 편집 (한글 편집 창) — 다른 문서 작업보다 눈에 띄게 */
+.btn.edit-btn { margin-right: 4px; }
+.btn.edit-btn svg.i { color: var(--accent-text); }
+.btn.edit-btn:disabled svg.i { color: inherit; }
+.btn.edit-btn.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); background: var(--accent-soft); color: var(--accent-text); }
+
+/* 문서가 열려 있을 때 기본 창 너비(1440)에서도 문서 이름이 보이게: 엔진 표시(상태 막대에도 있음)와 '새 문서' 글자를 접는다 */
+@media (max-width: 1500px) {
+  .topbar:has(#docinfo:not([hidden])) .engine-badge { display: none; }
+  .topbar:has(#docinfo:not([hidden])) #btn-new .lbl { display: none; }
+  .topbar:has(#docinfo:not([hidden])) #btn-new { padding: 0; width: 34px; justify-content: center; }
+}
 @media (max-width: 1380px) {
   .actions .lbl { display: none; }
   .actions .btn.ghost { padding: 0; width: 32px; }
+  .actions .edit-btn .lbl { display: inline; }
 }
 @media (max-width: 1120px) {
   .brand-name { display: none; }
   .engine-badge { display: none; }
+  .actions .edit-btn .lbl { display: none; }
+  .actions .btn.edit-btn { padding: 0; width: 34px; }
 }
 
 /* ── 작업 영역 ─────────────────────────────────────── */
@@ -274,9 +289,11 @@ kbd {
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 75%, transparent);
   text-align: center;
+  cursor: pointer;
   transition: border-color 0.15s, background-color 0.15s, transform 0.15s;
 }
 .dropzone:hover { border-color: var(--accent); background: var(--surface); }
+.dz-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .dz-icon {
   width: 56px; height: 56px; border-radius: 16px;
   display: grid; place-items: center;
@@ -286,7 +303,8 @@ kbd {
 .dz-icon svg.i { width: 28px; height: 28px; stroke-width: 1.7; }
 .dz-title { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
 .dz-sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
-.dz-kbd { color: var(--faint); font-size: 11.5px; margin-top: 10px; display: flex; gap: 4px; align-items: center; }
+.dz-kbd { color: var(--faint); font-size: 11.5px; margin-top: 12px; display: flex; gap: 4px; align-items: center; cursor: default; }
+.dz-dot { margin: 0 6px; }
 
 .recent-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 4px 8px; }
 .recent-head h2 { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
@@ -615,6 +633,15 @@ body.resizing { cursor: col-resize; }
 .chat-card .btn { align-self: flex-start; margin-top: 6px; }
 
 .composer { flex: none; padding: 10px 14px 10px; border-top: 1px solid var(--border); background: var(--surface); }
+/* 편집 창에 저장 안 한 내용이 있을 때 */
+.editor-warn {
+  display: flex; gap: 7px; align-items: flex-start; flex-wrap: wrap; margin: 0 0 8px;
+  padding: 8px 10px; border-radius: var(--radius);
+  background: var(--warn-soft); color: var(--warn); font-size: 12px; line-height: 1.5;
+}
+.editor-warn svg.i { width: 15px; height: 15px; margin-top: 1px; flex: none; }
+.editor-warn .ew-text { flex: 1; min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+.editor-warn .link-btn { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; padding: 0 2px; }
 .composer-box {
   display: flex; align-items: flex-end; gap: 8px;
   padding: 8px 8px 8px 12px;
@@ -659,6 +686,11 @@ body.resizing { cursor: col-resize; }
 .st.busy { color: var(--accent-text); }
 .st.busy .spinner { width: 11px; height: 11px; border-width: 1.6px; }
 .st.ready .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+/* 편집 창 열림 (누르면 그 창으로) */
+button.st { border: 0; background: none; font: inherit; color: inherit; cursor: pointer; }
+.st-editor { color: var(--accent-text); font-weight: 600; }
+.st-editor.dirty { color: var(--warn); }
+.st-editor:hover { background: var(--hover); }
 
 /* ── 끌어놓기 ──────────────────────────────────────── */
 
@@ -735,6 +767,7 @@ body.resizing { cursor: col-resize; }
 .confirm-icon { width: 38px; height: 38px; flex: none; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
 .confirm-icon.danger { background: var(--danger-soft); color: var(--danger); }
 .confirm-icon.shield { background: var(--success-soft); color: var(--success); }
+.confirm-icon.warn { background: var(--warn-soft); color: var(--warn); }
 .confirm-main { min-width: 0; }
 .confirm-main h2 { margin: 6px 0 8px; font-size: 16px; letter-spacing: -0.02em; }
 .confirm-body { color: var(--text-2); line-height: 1.65; word-break: keep-all; user-select: text; }
@@ -743,6 +776,118 @@ body.resizing { cursor: col-resize; }
 .confirm-body li { margin: 3px 0; }
 .confirm-body code { font: 12px var(--mono); background: var(--code-bg); padding: 1px 4px; border-radius: 4px; border: 1px solid var(--border); overflow-wrap: anywhere; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 22px 20px; }
+
+/* 새 문서 */
+.dialog.newdoc { width: 620px; }
+.nd-head { position: relative; display: flex; align-items: flex-start; gap: 14px; padding: 22px 56px 4px 22px; }
+.nd-icon { width: 40px; height: 40px; flex: none; border-radius: 11px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
+.nd-icon svg.i { width: 22px; height: 22px; }
+.nd-head-text { min-width: 0; }
+.nd-head h2 { margin: 1px 0 2px; font-size: 16px; letter-spacing: -0.02em; }
+.nd-head p { margin: 0; color: var(--muted); font-size: 12.5px; }
+.nd-body { display: flex; flex-direction: column; gap: 16px; padding: 14px 22px 2px; max-height: calc(100vh - 200px); overflow: auto; }
+.nd-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.nd-label { font-weight: 600; font-size: 12.5px; color: var(--text-2); }
+.nd-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
+.nd-hint { margin: 0; font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.format-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.format-tile {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 12px 6px 9px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); cursor: pointer; text-align: center;
+  transition: border-color 0.12s, background-color 0.12s, box-shadow 0.12s;
+}
+.format-tile input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.format-tile .file-tile { margin-bottom: 6px; }
+.ft-name { font-weight: 600; font-size: 12.5px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ft-ext { font: 11px var(--mono); color: var(--muted); }
+.format-tile:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.format-tile:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.format-tile:has(input:checked) .ft-ext { color: var(--accent-text); }
+.format-tile:has(input:checked)::after {
+  content: ""; position: absolute; top: 7px; right: 7px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent) no-repeat center / 10px 10px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 5.2 4.1 7.3 8 3' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.format-tile:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.format-tile:has(input:disabled) { cursor: default; }
+
+.name-box {
+  display: flex; align-items: center; height: 38px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.name-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.name-box.invalid { border-color: var(--danger); }
+.name-box.invalid:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent); }
+.name-box input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; padding: 0 2px 0 12px; font-size: 14px; user-select: text; }
+.name-box input:focus-visible { outline: none; }
+.name-box input:disabled { opacity: 0.6; }
+.name-ext { flex: none; padding: 0 12px 0 2px; font: 12.5px var(--mono); color: var(--muted); }
+
+.nd-msg { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.nd-msg:empty { display: none; }
+.nd-msg.error { color: var(--danger); }
+.nd-msg svg.i { width: 14px; height: 14px; }
+.nd-msg .link-btn { color: inherit; font-size: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.nd-msg .link-btn:hover { color: var(--accent-text); }
+
+.folder-row { display: flex; gap: 8px; }
+.folder-box {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); color: var(--text-2);
+}
+.folder-box svg.i { width: 16px; height: 16px; color: var(--muted); }
+/* 긴 경로는 앞을 줄이고 끝(폴더 이름)을 보인다 */
+.folder-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; user-select: text; }
+.folder-row .btn { height: 36px; }
+
+.start-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.start-choices .choice { padding: 11px 12px; }
+.start-choices .choice-title svg.i { width: 15px; height: 15px; color: var(--muted); }
+.start-choices .choice:has(input:checked) .choice-title svg.i { color: var(--accent-text); }
+.ai-request { display: flex; flex-direction: column; gap: 8px; }
+/* 만든 뒤 바로 편집 창 열기 (한글만) */
+.check-row {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+.check-row:hover { border-color: var(--border-strong); }
+.check-row:has(input:checked) { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--accent-soft); }
+.check-row.disabled { cursor: default; opacity: 0.75; }
+.check-row input { margin: 2px 0 0; accent-color: var(--accent); flex: none; width: 15px; height: 15px; }
+.check-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.check-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
+.check-title svg.i { width: 15px; height: 15px; color: var(--muted); }
+.check-row:has(input:checked) .check-title svg.i { color: var(--accent-text); }
+.check-desc { color: var(--muted); font-size: 12px; line-height: 1.5; word-break: keep-all; }
+.ai-request textarea {
+  width: 100%; min-height: 68px; max-height: 200px; resize: vertical; padding: 9px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface);
+  font-size: 13.5px; line-height: 1.55; user-select: text;
+}
+.ai-request textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.ai-request textarea::placeholder { color: var(--faint); }
+.request-suggests { display: flex; flex-wrap: wrap; gap: 6px; }
+.suggest-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+  color: var(--text-2); font-size: 12px; transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+}
+.suggest-chip svg.i { width: 12px; height: 12px; color: var(--faint); }
+.suggest-chip:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--accent-soft); color: var(--accent-text); }
+.suggest-chip:hover:not(:disabled) svg.i { color: currentColor; }
+
+.nd-error {
+  display: flex; gap: 8px; align-items: flex-start; margin: 14px 22px 0; padding: 9px 12px;
+  border-radius: var(--radius); background: var(--danger-soft); color: var(--danger); font-size: 12.5px; overflow-wrap: anywhere;
+}
+.nd-error svg.i { width: 16px; height: 16px; margin-top: 1px; }
+.nd-actions { align-items: center; padding-top: 18px; }
+.nd-keys { margin-right: auto; display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 11.5px; }
+.nd-keys kbd + kbd { margin-left: 8px; }
 
 .dialog.settings { width: 780px; height: min(600px, calc(100vh - 48px)); }
 .settings-shell { display: grid; grid-template-columns: 200px 1fr; height: 100%; }

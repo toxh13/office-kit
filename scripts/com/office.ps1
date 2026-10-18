@@ -511,8 +511,12 @@ function Invoke-Excel($req) {
         else { $ws = $wb.Worksheets.Item(1) }
         $n = 0
         foreach ($p in $req.cells.PSObject.Properties) {
-          $v = [string]$p.Value
-          if ($v.StartsWith('=')) { $ws.Range($p.Name).Formula = $v } else { $ws.Range($p.Name).Value2 = $p.Value }
+          # PowerShell's COM adapter remembers the type of the first value set on Value2 ('text' then 100 fails):
+          # set through reflection so text, numbers and booleans can be mixed in one request
+          $val = $p.Value
+          if ($val -is [System.Management.Automation.PSObject]) { $val = $val.PSObject.BaseObject }
+          $prop = if ($val -is [string] -and $val.StartsWith('=')) { 'Formula' } else { 'Value2' }
+          [void][System.__ComObject].InvokeMember($prop, [System.Reflection.BindingFlags]::SetProperty, $null, $ws.Range($p.Name), [object[]]@(, $val))
           $n++
         }
         $res.updated = $n

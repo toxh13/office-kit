@@ -205,3 +205,24 @@ test('설정: 옛 model 하나는 주인 AI의 모델로 옮기고, 모르면 �
   assert.equal(guessModelProvider('llama'), null);
   assert.deepEqual(DEFAULT_SETTINGS.models, {});
 });
+
+test('백업: maxPerSource — 편집 창에서 자주 저장해도 그 문서 몫만 최근 n개, 다른 문서·원래대로 기준은 남는다', () => {
+  const dir = tmp();
+  const b = createBackups(join(dir, 'backups'), { keep: 50 });
+  let t = Date.UTC(2026, 9, 1);
+  const others = ['a', 'b', 'c'].map((n) => { const p = join(dir, `${n}.hwp`); writeFileSync(p, n); return b.backup(p, new Date(t += 1000)); });
+  const doc = join(dir, '편집.hwp'); writeFileSync(doc, 'ORIGINAL');
+  const opened = b.backup(doc, new Date(t += 1000)); // 열 때 만든 '원래대로' 기준
+  for (let i = 1; i <= 10; i++) {
+    b.backup(doc, new Date(t += 1000), { protect: [opened.file], maxPerSource: 3 });
+    writeFileSync(doc, `저장 ${i}`);
+  }
+  const mine = b.list(doc);
+  assert.equal(mine.length, 4);                               // 최근 3개 + 보호된 기준
+  assert.ok(mine.some((e) => e.file === opened.file));
+  assert.equal(read(mine[0].path), '저장 9');                  // 가장 최근 = 마지막 저장 직전 내용
+  for (const o of others) assert.equal(existsSync(o.path), true);
+  // maxPerSource를 안 주면 예전처럼 따로 세지 않는다
+  b.backup(doc, new Date(t += 1000));
+  assert.equal(b.list(doc).length, 5);
+});

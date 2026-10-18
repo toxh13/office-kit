@@ -12,6 +12,11 @@ const INDEX_HTML = join(here, 'renderer', 'index.html');
 const SMOKE = process.env.OFFICEKIT_SMOKE ? resolve(process.env.OFFICEKIT_SMOKE) : '';
 const SMOKE_CHAT = process.env.OFFICEKIT_SMOKE_CHAT === '1';
 const SMOKE_SETTINGS = ['ai', 'view', 'connect', 'hancom'].includes(process.env.OFFICEKIT_SMOKE_SETTINGS) ? process.env.OFFICEKIT_SMOKE_SETTINGS : null;
+// 새 문서 창을 연 채로 찍기: '1' = 빈 문서, 'ai' = AI에게 부탁하기를 고른 모양
+const SMOKE_NEWDOC = ['1', 'ai'].includes(process.env.OFFICEKIT_SMOKE_NEWDOC) ? process.env.OFFICEKIT_SMOKE_NEWDOC : null;
+// 한글 편집 창도 열어 두 창을 함께 찍기 (편집 창은 <png>-editor.png)
+const SMOKE_EDITOR = process.env.OFFICEKIT_SMOKE_EDITOR === '1';
+const APP_ICON = [join(APP_ROOT, 'build', 'icon.ico'), join(APP_ROOT, 'build', 'icon.png')].find((f) => existsSync(f));
 
 // 테스트용으로 설정 폴더를 바꿀 수 있게 (단일 인스턴스 잠금도 폴더별로 걸린다)
 if (process.env.OFFICEKIT_USER_DATA) app.setPath('userData', resolve(process.env.OFFICEKIT_USER_DATA));
@@ -31,6 +36,7 @@ async function start() {
   // 문서 엔진은 잠금을 얻은 뒤에 불러온다 (WASM 초기화가 있어서)
   const core = await import('../core/index.mjs');
   const com = await import('../core/com.mjs');
+  const create = await import('../core/create.mjs');
   const { OPENABLE_EXTS, extOf, kindOf } = core;
 
   const userData = app.getPath('userData');
@@ -135,6 +141,7 @@ async function start() {
       backup: current.backup ? { time: current.backup.time, file: current.backup.file } : null,
       backupError: current.backupError ?? null,
       hasSession: sessions.has(key(current.path)),
+      editor: editorState(current.path),
     };
   }
 
@@ -202,7 +209,11 @@ async function start() {
       const st = statOf(p);
       if (!st) {
         // 없어진 순간에만 알리고, 크기·시각을 잊어 두어 같은 파일이 돌아와도 알린다
-        if (!current.missing) { current.missing = true; current.stat = null; send('doc:changed', { path: p, missing: true }); }
+        if (!current.missing) {
+          current.missing = true; current.stat = null;
+          send('doc:changed', { path: p, missing: true });
+          editors?.notifyExternalChange(p);
+        }
         return;
       }
       const back = current.missing;
@@ -211,6 +222,8 @@ async function start() {
       if (!back && last && last.mtimeMs === st.mtimeMs && last.size === st.size) return;
       current.stat = st;
       send('doc:changed', { path: p, missing: false, mtime: st.mtimeMs, size: st.size });
+      // 편집 창이 열려 있으면 알린다 (고친 것 없으면 다시 불러오고, 있으면 편집 창이 물어본다. 내용이 같으면 무시)
+      editors?.notifyExternalChange(p);
     };
     try {
       watcher = watch(dirname(p), { persistent: false }, (_ev, file) => {
@@ -277,12 +290,20 @@ async function start() {
     const ext = extOf(doc.path);
     if (m === 'text' && ['docx', 'pptx', 'xlsx'].includes(ext)) res = { ...(await core.readDocument(doc.path, { engine: 'file' })), kind: 'text' };
     else res = await core.renderPreview(doc.path, previewDir, { mode: m === 'exact' ? 'exact' : 'auto' });
+    if (res.kind === 'pdf') {
+      // 빈 시트처럼 쪽이 하나도 없는 PDF는 PDF 뷰어가 빈 화면에서 멈춘다 → 글자 미리보기로
+      const pages = pdfPageCount(res.file);
+      if (pages === 0) {
+        try { rmSync(res.file, { force: true }); } catch {}
+        res = { ...(await core.readDocument(doc.path, { engine: 'file' })), kind: 'text', note: '내용이 없어 미리 볼 쪽이 없어요' };
+      } else res = { ...res, pages };
+    }
     if (current === doc) { doc.renderedStat = st; doc.stat = st; }
     const base = { mode: m, ms: Date.now() - started, doc: current === doc ? docInfo() : null };
     if (res.kind === 'pdf') {
       const pdf = tidyPdf(res.file, doc.path);
       cleanPreviews(pdf.dir ?? pdf.file);
-      return { ...base, kind: 'pdf', engine: res.engine, url: `${pathToFileURL(pdf.file).href}#view=FitH&navpanes=0`, pages: pdfPageCount(pdf.file) };
+      return { ...base, kind: 'pdf', engine: res.engine, url: `${pathToFileURL(pdf.file).href}#view=FitH&navpanes=0`, pages: res.pages };
     }
     if (res.kind === 'svg') {
       return { ...base, kind: 'svg', engine: res.engine, total: res.total,
@@ -296,6 +317,7 @@ async function start() {
       slides: (res.slides ?? []).slice(0, 200).map((s) => String(s ?? '')),
       sheets: (res.sheets ?? []).slice(0, 30).map((s) => ({ name: String(s.name ?? ''), rows: clip(s.rows) })),
       pages: res.pages ?? null,
+      note: res.note ? String(res.note) : null,
     };
   }
 
@@ -338,9 +360,12 @@ async function start() {
       }
       doc.stat = statOf(doc.path);
       doc.missing = false;
+      // 편집 창이 열려 있으면 되돌린 내용으로 다시 불러오게 한다 (저장 안 한 편집이 있으면 편집 창이 물어본다).
+      // 파일이 이미 원본과 같아도(열고 고치기만 하고 저장 안 함) 저장 안 한 편집이 있으면 알린다 → 버릴지 고르게
+      const editorNotified = !!editors?.notifyExternalChange(doc.path, { force: !!editors?.isDirty(doc.path), reason: 'restore' });
       // AI가 기억하는 문서 내용은 이제 틀리므로 다음 메시지부터 새 대화로 시작한다
       const newChat = sessions.delete(k);
-      return { time: entry.time, stoppedAi, newChat, doc: current === doc ? docInfo() : null };
+      return { time: entry.time, stoppedAi, newChat, editorNotified, doc: current === doc ? docInfo() : null };
     } finally {
       restoring.delete(k);
     }
@@ -393,6 +418,201 @@ async function start() {
     return { output: res.output, engine: res.engine };
   }
 
+  // ── 새 문서 ──────────────────────────────────────────
+
+  const NEW_DOC_TOOLS = { 한글: 'hwp', Word: 'word', PowerPoint: 'ppt', Excel: 'excel' };
+  const NEW_DOC_REQUEST_MAX = 10_000;
+  const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
+
+  /** 새 문서 기본 폴더: 열린 문서의 폴더, 없으면 문서 폴더 */
+  function newDocFolder() {
+    const dir = current ? dirname(current.path) : null;
+    return dir && isDir(dir) ? dir : app.getPath('documents');
+  }
+
+  function blankFormat(format) {
+    const f = typeof format === 'string' ? format.toLowerCase() : '';
+    if (!create.BLANK_FORMATS.includes(f)) throw fail('지원하지 않는 형식입니다', 'BAD_FORMAT');
+    return f;
+  }
+
+  /** 새 문서 창 기본값 → { folder, name, documents, formats }. folder를 주면 그 폴더에서 겹치지 않는 이름 */
+  function newDocInfo({ format = create.BLANK_FORMATS[0], folder } = {}) {
+    const ext = blankFormat(format);
+    const dir = typeof folder === 'string' && folder.length <= 4096 && isAbsolute(folder) ? resolve(folder) : newDocFolder();
+    return { folder: dir, name: create.freeDocName(dir, ext), documents: app.getPath('documents'), formats: [...create.BLANK_FORMATS] };
+  }
+
+  /** 입력하는 동안 이름 확인 → { ok, path, name, code, error, suggestion } (오류를 던지지 않고 돌려준다) */
+  function newDocCheck({ folder, name, format } = {}) {
+    try {
+      const plan = create.planBlankDocument({ folder, name, format });
+      return { ok: true, path: plan.path, name: plan.name, code: null, error: null, suggestion: null };
+    } catch (err) {
+      if (!err?.code) throw err;
+      const suggestion = err.code === 'EXISTS' ? create.freeDocName(resolve(folder), format, create.cleanDocName(name, format)) : null;
+      return { ok: false, path: null, name: null, code: err.code, error: err.message, suggestion };
+    }
+  }
+
+  async function pickFolder(start) {
+    const r = await dialog.showOpenDialog(win, {
+      title: '새 문서를 저장할 폴더', properties: ['openDirectory'],
+      defaultPath: typeof start === 'string' && isAbsolute(start) && isDir(start) ? start : newDocFolder(),
+    });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return resolve(r.filePaths[0]);
+  }
+
+  /** AI에게 줄 첫 메시지: 방금 만든 빈 문서를 요청대로 처음부터 채우게 */
+  function newDocPrompt(path, request) {
+    const kind = kindOf(path);
+    const p = NEW_DOC_TOOLS[kind];
+    return [
+      `[새 문서] 이 ${kind} 문서(${basename(path)})는 방금 Office Kit에서 빈 문서로 만들었고 아직 내용이 없다. 아래 요청대로 내용을 처음부터 채운다.`,
+      `- ${p}_inspect로 빈 문서 구조를 확인하고 ${p}_edit로 내용을 넣는다. 원고 하나로 한 번에 쓰는 편이 나으면 office_create로 이 경로(${path})에 overwrite=true로 다시 만들어도 된다.`,
+      '- 다른 파일을 만들거나 이름을 바꾸지 말고 이 문서에 저장한다.',
+      '- 다 채운 뒤 office_page_image로 쪽(슬라이드)을 보고 결과를 확인한다.',
+      ...(p === 'hwp' ? ['- 한글 쪽 이미지는 내장 엔진(rhwp) 그림이라 한컴오피스와 쪽 나눔이 다를 수 있다. 쪽 나눔을 맞추려고 쪽 나누기·빈 문단을 넣지 말고, 필요하면 문단 서식의 keep_with_next(다음 문단과 함께)를 쓴다.'] : []),
+      '',
+      `요청: ${request}`,
+    ].join('\n');
+  }
+
+  /**
+   * 새 문서 만들기: 확인 → 빈 문서 → 열기(백업·감시·최근 목록) → (AI) 대화 시작.
+   * → { doc, chat: { chatId, provider } | null, chatError: { message, code } | null }
+   */
+  async function newDocument(args) {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('잘못된 요청입니다');
+    const start = args.start ?? 'blank';
+    if (!['blank', 'ai'].includes(start)) throw fail('잘못된 시작 방법입니다');
+    let request = '';
+    if (start === 'ai') {
+      request = typeof args.request === 'string' ? args.request.trim() : '';
+      if (!request) throw fail('AI에게 부탁할 내용을 적어 주세요', 'NO_REQUEST');
+      if (request.length > NEW_DOC_REQUEST_MAX) throw fail(`부탁할 내용이 너무 길어요 (${NEW_DOC_REQUEST_MAX.toLocaleString('ko-KR')}자 이하)`, 'NO_REQUEST');
+    }
+    let plan;
+    try { plan = create.planBlankDocument({ folder: args.folder, name: args.name, format: blankFormat(args.format) }); } catch (err) {
+      throw err?.code ? fail(err.message, err.code) : err;
+    }
+    try { await create.createBlankDocument(plan.path); } catch (err) {
+      if (err.code === 'EXISTS') throw fail(`이 폴더에 같은 이름의 파일이 이미 있어요: ${basename(plan.path)}`, 'EXISTS');
+      if (['EACCES', 'EPERM', 'EROFS'].includes(err.code)) throw fail('이 폴더에는 파일을 만들 수 없어요 (권한이 없거나 읽기 전용). 다른 폴더를 골라 주세요.', 'WRITE_FAILED');
+      if (err.code === 'ENOSPC') throw fail('디스크 공간이 부족해 문서를 만들지 못했어요', 'WRITE_FAILED');
+      if (err.code === 'ENOENT') throw fail('저장할 폴더를 찾을 수 없어요', 'NO_FOLDER');
+      throw fail(`문서를 만들지 못했어요: ${err.message}`, 'WRITE_FAILED');
+    }
+    // 같은 경로의 문서를 지웠다가 다시 만든 경우 예전 '원래대로' 기준·AI 대화를 잇지 않는다
+    const k = key(plan.path);
+    restorePoints.delete(k);
+    sessions.delete(k);
+    if (current && samePath(current.path, plan.path)) { stopWatch(); current = null; }
+    const doc = await openDocument(plan.path);
+    let chat = null; let chatError = null;
+    if (start === 'ai') {
+      // 문서는 이미 만들었으므로 AI를 못 띄워도 실패로 돌려주지 않는다 (화면이 대화창에 알린다)
+      try { chat = await sendChat({ prompt: newDocPrompt(plan.path, request) }); } catch (err) {
+        if (!err?.expected && err?.code !== 'MODULE_MISSING') console.error('[doc:new] AI', err);
+        chatError = { message: err?.message ?? String(err), code: err?.code ?? null };
+      }
+    }
+    // 한글 문서는 만든 뒤 바로 편집 창으로 (못 열어도 문서는 만들었으므로 실패로 돌려주지 않는다)
+    let editor = null; let editorError = null;
+    if (args.edit === true && EDITABLE.includes(extOf(plan.path))) {
+      try { editor = await editDocument(); } catch (err) {
+        editorError = { message: err?.message ?? String(err), code: err?.code ?? null };
+      }
+    }
+    return { doc, chat, chatError, editor, editorError };
+  }
+
+  // ── 한글 편집 창 ─────────────────────────────────────
+  // editor-window.mjs가 문서마다 창 하나를 띄운다 (내장 rhwp-studio, 인터넷 없이).
+  // 모듈을 못 불러와도 앱은 뜨고 '직접 편집'만 이유를 알린다
+
+  let EDITABLE = ['hwp', 'hwpx', 'hwt'];
+  const EDITOR_BACKUPS_PER_DOC = 5; // 편집 창 저장 전 백업: 문서마다 최근 몇 개 ('원래대로' 기준은 따로 남는다)
+  let editors = null; let editorLoadError = null;
+  try {
+    const m = await import('./editor-window.mjs');
+    if (Array.isArray(m.EDITABLE_EXTS)) EDITABLE = [...m.EDITABLE_EXTS];
+    // 개발 중 시험용: 편집기 묶음 폴더 바꾸기(없는 폴더 = 묶음 없음), 편집 창 시험 고리(window.__editorTest)
+    const vendor = !app.isPackaged && process.env.OFFICEKIT_EDITOR_VENDOR ? resolve(process.env.OFFICEKIT_EDITOR_VENDOR) : null;
+    editors = m.createEditorManager({
+      app, BrowserWindow, ipcMain, session, dialog, shell, nativeTheme,
+      appRoot: APP_ROOT, userData, icon: APP_ICON,
+      dirs: vendor ? { studio: join(vendor, 'rhwp-studio'), sdk: join(vendor, 'rhwp-editor-sdk') } : undefined,
+      testHooks: !app.isPackaged && process.env.OFFICEKIT_EDITOR_TEST === '1',
+      // 편집 창이 덮어쓰기 전에 백업한다 (열었던 문서들의 '원래대로' 기준은 정리하지 않게).
+      // 자주 저장해도 다른 문서의 백업을 밀어내지 않도록 이 문서 몫은 최근 몇 개만 둔다
+      getBackups: () => ({ backup: (p) => backups.backup(p, new Date(), { protect: protectedBackups(), maxPerSource: EDITOR_BACKUPS_PER_DOC }) }),
+      onSaved: (p) => editorSaved(p),
+      onDirtyChange: () => pushEditorState(),
+    });
+  } catch (err) {
+    editorLoadError = err?.message ?? String(err);
+    console.error('[editor] 편집 창 기능을 불러오지 못했습니다:', err);
+  }
+
+  /** 그 문서의 편집 창 상태 → { open, dirty } */
+  function editorState(p) {
+    if (!editors || !p) return { open: false, dirty: false };
+    return { open: editors.isOpen(p), dirty: editors.isDirty(p) };
+  }
+
+  /** 편집기 묶음이 있는지 → { available, reason, exts } (reason은 한국어) */
+  function editorInfo() {
+    if (!editors) return { available: false, reason: `한글 편집 기능을 불러오지 못했습니다: ${editorLoadError}`, exts: EDITABLE };
+    const a = editors.available();
+    return { available: !!a.available, reason: a.reason ?? null, exts: EDITABLE };
+  }
+
+  // 편집 창이 열리고 닫히고 고쳐질 때 화면(상태 막대·대화창 경고)에 알린다.
+  // 창이 닫힌 뒤 정리·'다른 이름으로 저장' 뒤 경로 바뀜이 끝난 다음에 보도록 조금 늦춘다
+  let editorPushTimer = 0;
+  function pushEditorState() {
+    clearTimeout(editorPushTimer);
+    editorPushTimer = setTimeout(() => {
+      if (current) send('doc:editor', { path: current.path, ...editorState(current.path) });
+    }, 40);
+  }
+
+  /** 편집 창이 저장함 → 바깥 변경과 같은 길로 미리보기를 새로 고치고 최근 목록에 올린다 (감시보다 먼저) */
+  function editorSaved(p) {
+    if (!SMOKE) {
+      try { settings.addRecent(p); } catch {}
+      try { app.addRecentDocument(p); } catch {}
+    }
+    if (current && samePath(current.path, p)) {
+      const st = statOf(p);
+      current.stat = st;
+      current.missing = !st;
+      if (st) send('doc:changed', { path: current.path, missing: false, mtime: st.mtimeMs, size: st.size, by: 'editor' });
+    }
+    pushEditorState();
+  }
+
+  /** 열린 한글 문서를 편집 창으로 연다 (이미 열려 있으면 그 창을 앞으로) → { path, reused } */
+  async function editDocument() {
+    const doc = needDoc();
+    if (!EDITABLE.includes(extOf(doc.path))) {
+      throw fail('한글(HWP·HWPX) 문서만 앱 안에서 직접 편집할 수 있어요. Word·PowerPoint·Excel 문서는 ‘프로그램에서 열기’로 고쳐 주세요.', 'UNSUPPORTED');
+    }
+    if (!editors) throw fail(`한글 편집 기능을 불러오지 못했습니다: ${editorLoadError}`, 'EDITOR_MISSING');
+    const a = editors.available();
+    if (!a.available) throw fail(a.reason || '한글 편집기 파일이 없습니다.', 'EDITOR_MISSING');
+    let r;
+    try { r = await editors.openEditor(doc.path); } catch (err) {
+      if (err?.expected) throw err;
+      console.error('[doc:edit]', err);
+      throw fail(err?.message ?? String(err), err?.code ?? 'EDITOR_FAILED');
+    }
+    pushEditorState();
+    return { path: r.path, reused: !!r.reused };
+  }
+
   // ── AI 대화 ──────────────────────────────────────────
 
   const key = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
@@ -416,13 +636,18 @@ async function start() {
     return { providers: list, selected, preferred: want };
   }
 
-  async function sendChat({ prompt } = {}) {
+  async function sendChat({ prompt, editorOk } = {}) {
     if (typeof prompt !== 'string' || !prompt.trim()) throw fail('보낼 내용을 입력하세요');
     if (prompt.length > 20_000) throw fail('메시지가 너무 깁니다 (2만 자 이하)');
     const doc = needDoc();
     const path = doc.path;
     const k = key(path);
     if (restoring.has(k)) throw fail('문서를 원래대로 되돌리는 중입니다. 끝난 뒤 다시 보내 주세요.');
+    // 편집 창에 저장 안 한 내용이 있으면 먼저 묻는다: AI는 저장된 파일을 고치므로 편집 창 내용과 엇갈린다
+    // (화면이 '그대로 보내기'를 고르면 editorOk:true로 다시 보낸다)
+    if (editorOk !== true && editors?.isDirty(path)) {
+      throw fail('편집 창에 저장하지 않은 내용이 있어요. 편집 창에서 먼저 저장하거나, 그대로 보내기를 골라 주세요.', 'EDITOR_DIRTY');
+    }
     const gen = restoreGen.get(k) ?? 0;
     const ai = await loadAi();
     const { providers: list, selected } = await providers();
@@ -607,7 +832,8 @@ async function start() {
     return {
       version: app.getVersion(), packaged: app.isPackaged, platform: process.platform,
       exts: OPENABLE_EXTS, settings: publicSettings(), recent: settings.recent(), doc: docInfo(),
-      smoke: SMOKE ? { chat: SMOKE_CHAT, settings: SMOKE_SETTINGS } : null, opening,
+      editor: editorInfo(),
+      smoke: SMOKE ? { chat: SMOKE_CHAT, settings: SMOKE_SETTINGS, newdoc: SMOKE_NEWDOC, editor: SMOKE_EDITOR } : null, opening,
     };
   });
 
@@ -628,12 +854,17 @@ async function start() {
     return openDocument(r.filePaths[0]);
   });
   handle('doc:open', (p) => openDocument(p));
+  handle('doc:newInfo', (opts) => newDocInfo(opts && typeof opts === 'object' ? opts : {}));
+  handle('doc:newCheck', (args) => newDocCheck(args && typeof args === 'object' ? args : {}));
+  handle('doc:pickFolder', (start) => pickFolder(start));
+  handle('doc:new', (args) => newDocument(args));
   handle('doc:close', () => { closeDocument(); return null; });
   handle('doc:preview', (opts = {}) => preview({
     mode: ['auto', 'exact', 'text'].includes(opts?.mode) ? opts.mode : undefined, ifChanged: opts?.ifChanged === true,
   }));
   handle('doc:restore', () => restore());
   handle('doc:openInApp', () => openInProgram());
+  handle('doc:edit', () => editDocument());
   handle('doc:savePdf', () => savePdf());
   handle('doc:showInFolder', () => { shell.showItemInFolder(needDoc().path); return null; });
   handle('shell:showItem', (p) => { shell.showItemInFolder(existingFile(p)); return null; });
@@ -680,22 +911,61 @@ async function start() {
 
   if (SMOKE) {
     const bail = setTimeout(() => { console.error('[smoke] 시간 초과'); app.exit(1); }, 240_000);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function capture(w) {
+      let img;
+      for (let i = 0; i < 8 && !img; i++) {
+        try { img = await w.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); } catch (err) {
+          if (i === 7) throw err;
+          await sleep(700);
+        }
+      }
+      return img;
+    }
+
+    /** 열린 문서를 편집 창으로 열고, 다 뜨면(또는 실패 카드가 뜨면) 그 창을 <png>-editor.png로 찍는다 */
+    async function smokeEditor() {
+      const png = `${SMOKE.replace(/\.png$/i, '')}-editor.png`;
+      if (!editors) return { ok: false, error: `편집 창 기능 없음: ${editorLoadError}` };
+      if (!current) return { ok: false, error: '열린 문서가 없습니다' };
+      const before = new Set(BrowserWindow.getAllWindows());
+      // 묶음이 없어도 창을 연다 (편집 창의 실패 안내를 찍으려고)
+      try { await editors.openEditor(current.path); } catch (err) { return { ok: false, error: err.message }; }
+      pushEditorState();
+      let ew = null;
+      for (let i = 0; i < 100 && !ew; i++) {
+        ew = BrowserWindow.getAllWindows().find((w) => !before.has(w) && !w.isDestroyed()) ?? null;
+        if (!ew) await sleep(100);
+      }
+      if (!ew) return { ok: false, error: '편집 창이 뜨지 않았습니다' };
+      const ask = (code) => ew.webContents.executeJavaScript(code).catch(() => null);
+      let state = null;
+      for (const end = Date.now() + 90_000; Date.now() < end;) {
+        state = await ask("document.getElementById('doc-state')?.dataset.state ?? null");
+        if (state === 'saved' || state === 'error') break;
+        await sleep(250);
+      }
+      const reason = state === 'error' ? await ask("document.getElementById('failure-reason')?.textContent ?? ''") : '';
+      await sleep(1500); // 쪽이 다 그려지게
+      const img = await capture(ew);
+      mkdirSync(dirname(png), { recursive: true });
+      writeFileSync(png, img.toPNG());
+      // 주 창을 앞으로 (상태 막대의 '편집 창 열림'이 보이게)
+      if (win && !win.isDestroyed()) { win.moveTop(); win.focus(); }
+      return { ok: state === 'saved', state, reason: reason || null, title: ew.getTitle(), png, size: img.getSize() };
+    }
+
     ipcMain.on('smoke:ready', async (e, info = {}) => {
       if (!win || e.sender !== win.webContents) return;
       try {
-        await new Promise((r) => setTimeout(r, info.kind === 'pdf' ? 3000 : 900));
-        let img;
-        for (let i = 0; i < 8 && !img; i++) {
-          try { img = await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); } catch (err) {
-            if (i === 7) throw err;
-            await new Promise((r) => setTimeout(r, 700));
-          }
-        }
+        const editor = SMOKE_EDITOR && info.ok !== false ? await smokeEditor() : null;
+        await sleep(info.kind === 'pdf' ? 3000 : 900);
+        const img = await capture(win);
         mkdirSync(dirname(SMOKE), { recursive: true });
         writeFileSync(SMOKE, img.toPNG());
-        console.log('[smoke]', JSON.stringify({ ...info, png: SMOKE, size: img.getSize() }));
+        console.log('[smoke]', JSON.stringify({ ...info, ...(editor ? { editor } : {}), png: SMOKE, size: img.getSize() }));
         clearTimeout(bail);
-        app.exit(info.ok === false ? 1 : 0);
+        app.exit(info.ok === false || editor?.ok === false ? 1 : 0);
       } catch (err) {
         console.error('[smoke] 캡처 실패:', err);
         app.exit(1);
@@ -731,7 +1001,7 @@ async function start() {
       ...initialBounds(), minWidth: 1000, minHeight: 680, title: 'Office Kit', show: false,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#16181d' : '#f4f5f7',
       autoHideMenuBar: true,
-      icon: [join(APP_ROOT, 'build', 'icon.ico'), join(APP_ROOT, 'build', 'icon.png')].find((f) => existsSync(f)),
+      icon: APP_ICON,
       webPreferences: {
         preload: join(here, 'preload.cjs'),
         contextIsolation: true, nodeIntegration: false, sandbox: true,
@@ -768,7 +1038,17 @@ async function start() {
     wc.on('render-process-gone', (_e, d) => console.error('[renderer] 종료:', d.reason));
     if (SMOKE) wc.on('console-message', (e) => { if (e.level === 'error' || e.level === 'warning') console.log('[renderer]', e.message); });
 
-    win.on('close', () => {
+    // 주 창을 닫으면 편집 창도 닫는다. 저장 안 한 편집 창은 저장 / 저장 안 함 / 취소를 묻고, 취소하면 주 창도 그대로 둔다
+    let editorsClosed = false; let closingEditors = null;
+    win.on('close', (e) => {
+      if (!editorsClosed && editors?.list().length) {
+        e.preventDefault();
+        closingEditors ??= editors.closeAll()
+          .then((ok) => { if (ok && win && !win.isDestroyed()) { editorsClosed = true; win.close(); } })
+          .catch((err) => console.error('[editor] 편집 창을 닫지 못했습니다:', err))
+          .finally(() => { closingEditors = null; });
+        return;
+      }
       if (SMOKE || !win) return;
       try { settings.set({ window: { ...win.getNormalBounds(), maximized: win.isMaximized() } }); } catch {}
     });
@@ -780,7 +1060,9 @@ async function start() {
   function buildMenu() {
     const template = [
       { label: '파일', submenu: [
+        { label: '새 문서…', accelerator: 'CmdOrCtrl+N', click: () => send('menu', 'new') },
         { label: '파일 열기…', accelerator: 'CmdOrCtrl+O', click: () => send('menu', 'open') },
+        { label: '직접 편집 (한글)', accelerator: 'CmdOrCtrl+E', click: () => send('menu', 'edit') },
         { label: '새로고침', accelerator: 'F5', click: () => send('menu', 'refresh') },
         { type: 'separator' },
         { label: '설정', accelerator: 'CmdOrCtrl+,', click: () => send('menu', 'settings') },
@@ -810,15 +1092,20 @@ async function start() {
   });
 
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => {
+  // 편집 창이 열려 있으면 '끝내기'가 취소될 수 있으므로(저장 확인 → 취소) 정리는 정말 끝날 때(will-quit) 한다
+  app.on('will-quit', () => {
     stopWatch();
     for (const c of chats.values()) { try { c.handle.cancel(); } catch {} }
+    // 창이 다 닫힌 뒤 미리보기 PDF(문서 사본)를 지운다. 못 지운 것은 다음 시작 때 지운다
+    cleanPreviews(null);
   });
-  // 창이 다 닫힌 뒤 미리보기 PDF(문서 사본)를 지운다. 못 지운 것은 다음 시작 때 지운다
-  app.on('will-quit', () => cleanPreviews(null));
+  // 편집 창이 닫히면 상태 막대를 맞춘다
+  app.on('browser-window-created', (_e, w) => { w.once('closed', () => pushEditorState()); });
 
   await app.whenReady();
   nativeTheme.themeSource = ['light', 'dark'].includes(settings.get('theme')) ? settings.get('theme') : 'system';
+  // 맞춤법 검사는 쓰지 않는다. 창을 만들기만 해도 Chromium이 인터넷에서 사전(ko-3-0.bdic, 11MB)을 받으므로 받을 곳을 막는다
+  try { session.defaultSession.setSpellCheckerDictionaryDownloadURL('http://127.0.0.1:9/'); } catch {}
 
   // 권한 요청은 PDF 뷰어에 필요한 것만
   const allowed = new Set(['fullscreen', 'clipboard-sanitized-write']);

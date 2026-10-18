@@ -3,6 +3,9 @@ node_modules/
 dist/
 out/
 
+# 빌드해서 만드는 외부 코드 (npm run editor:build → vendor/rhwp-studio, vendor/rhwp-editor-sdk)
+/vendor/
+
 # 작업용 임시 파일
 tmp/
 *.log

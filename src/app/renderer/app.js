@@ -153,11 +153,14 @@
     zoom: 'auto',
     providers: null,        // { providers, selected } 또는 null
     providerError: null,
+    providersReady: null,   // 처음 AI 확인이 끝나면 풀리는 Promise
     chats: new Map(),       // 문서 경로 → { items, busy, chatId }
     busy: new Map(),
     smoke: null,
     smokeSent: false,
     demo: false,
+    packaged: true,
+    editor: { available: false, reason: null, exts: ['hwp', 'hwpx', 'hwt'] }, // 한글 편집기 묶음 (init에서 받음)
   };
 
   const el = {
@@ -168,8 +171,9 @@
     chat: $('#chat'), chatBody: $('#chat-body'), chatLog: $('#chat-log'), provider: $('#provider'),
     composer: $('#composer'), prompt: $('#prompt'), send: $('#btn-send'), composerHint: $('#composer-hint'),
     splitter: $('#splitter'), toggleChat: $('#btn-toggle-chat'),
-    stEngine: $('#st-engine'), stPages: $('#st-pages'), stSaved: $('#st-saved'),
+    stEngine: $('#st-engine'), stPages: $('#st-pages'), stSaved: $('#st-saved'), stEditor: $('#st-editor'),
     stBusy: $('#st-busy'), stBusyText: $('#st-busy-text'), stReady: $('#st-ready'),
+    btnEdit: $('#btn-edit'), editorWarn: $('#editor-warn'),
     overlay: $('#drop-overlay'), toasts: $('#toasts'),
     settings: $('#dlg-settings'), confirm: $('#dlg-confirm'),
   };
@@ -210,35 +214,45 @@
 
   // ── 확인 창 ──────────────────────────────────────────
 
-  /** body: 문자열 | 노드 배열. → Promise<boolean> */
-  function confirmDialog({ title, body, ok = '확인', cancel = '취소', tone = 'info' }) {
+  /**
+   * body: 문자열 | 노드 배열. alt: 세 번째 단추 이름 (누르면 'alt'), cancel: null이면 취소 단추 없음
+   * → Promise<true | false | 'alt'>
+   */
+  function confirmDialog({ title, body, ok = '확인', cancel = '취소', alt = null, tone = 'info' }) {
     const dlg = el.confirm;
     $('#confirm-title').textContent = title;
     const bodyEl = $('#confirm-body');
-    bodyEl.replaceChildren(...[].concat(body).map((b) => (typeof b === 'string' ? h('p', { text: b }) : b)));
+    bodyEl.replaceChildren(...[].concat(body).filter(Boolean).map((b) => (typeof b === 'string' ? h('p', { text: b }) : b)));
     const ic = $('#confirm-icon');
     ic.className = `confirm-icon ${tone}`;
-    ic.replaceChildren(icon(tone === 'danger' ? 'restore' : tone === 'shield' ? 'shield' : 'info'));
+    ic.replaceChildren(icon({ danger: 'restore', shield: 'shield', warn: 'alert' }[tone] ?? 'info'));
     const okBtn = $('#confirm-ok');
     const cancelBtn = $('#confirm-cancel');
+    const altBtn = $('#confirm-alt');
     okBtn.textContent = ok;
     okBtn.className = `btn ${tone === 'danger' ? 'danger' : 'primary'}`;
-    cancelBtn.textContent = cancel;
+    cancelBtn.textContent = cancel ?? '';
+    cancelBtn.hidden = cancel === null;
+    altBtn.textContent = alt ?? '';
+    altBtn.hidden = !alt;
     return new Promise((resolve) => {
       const done = (v) => {
         okBtn.removeEventListener('click', yes);
         cancelBtn.removeEventListener('click', no);
+        altBtn.removeEventListener('click', other);
         dlg.removeEventListener('close', no);
         if (dlg.open) dlg.close();
         resolve(v);
       };
       const yes = () => done(true);
       const no = () => done(false);
+      const other = () => done('alt');
       okBtn.addEventListener('click', yes);
       cancelBtn.addEventListener('click', no);
+      altBtn.addEventListener('click', other);
       dlg.addEventListener('close', no);
       dlg.showModal();
-      cancelBtn.focus();
+      (cancel === null ? okBtn : cancelBtn).focus();
     });
   }
 
@@ -341,6 +355,7 @@
     const restore = $('#btn-restore');
     restore.disabled = !d || !d.backup || !!state.restoring;
     restore.title = d?.backup ? `${whenText(d.backup.time)}에 만든 백업으로 되돌리기` : '이 문서의 백업이 없어요';
+    renderEditButton();
     if (!d) return;
     const ks = kindStyle(d.kind);
     el.docKind.className = `kind-badge ${ks.cls}`;
@@ -373,6 +388,81 @@
     set(el.stPages, pages);
     set(el.stSaved, d?.mtime ? `마지막 저장 ${whenText(d.mtime)}` : '', d?.path);
     if (d?.missing) set(el.stSaved, '파일을 찾을 수 없음');
+    // 이 문서의 편집 창이 열려 있으면 (누르면 그 창으로)
+    const ed = d?.editor;
+    set(el.stEditor, ed?.open ? (ed.dirty ? '편집 창 열림 · 저장 안 됨' : '편집 창 열림') : '',
+      ed?.open ? (ed.dirty ? '편집 창에 저장하지 않은 내용이 있어요. 눌러서 편집 창 보기' : '눌러서 편집 창 보기') : '');
+    el.stEditor.classList.toggle('dirty', !!ed?.dirty);
+    renderEditorWarn();
+  }
+
+  // ── 한글 편집 창 ─────────────────────────────────────
+  // main: doc:edit(열기·앞으로), doc:editor 이벤트({ path, open, dirty }). 편집 창 자체는 editor-window.mjs
+
+  const isEditable = (doc) => !!doc && state.editor.exts.includes(extOf(doc.path));
+
+  function renderEditButton() {
+    const d = state.doc;
+    const b = el.btnEdit;
+    const ok = isEditable(d);
+    b.disabled = !ok;
+    // Word·PowerPoint·Excel 문서에서는 쓸 일이 없으므로 숨겨 문서 이름 자리를 넓힌다 (문서가 없을 때는 안내용으로 보인다)
+    b.hidden = !!d && !ok;
+    b.classList.toggle('active', !!d?.editor?.open);
+    if (!d) b.title = '한글 문서를 열면 앱 안에서 직접 편집할 수 있어요';
+    else if (!ok) b.title = `${d.kind} 문서는 앱 안에서 직접 편집할 수 없어요. ‘프로그램에서 열기’로 ${d.kind}에서 고쳐 주세요. (직접 편집은 한글 HWP·HWPX 문서만)`;
+    else if (!state.editor.available) b.title = '한글 편집기가 설치돼 있지 않아요. 눌러서 이유를 확인하세요.';
+    else if (d.editor?.open) b.title = '열려 있는 편집 창으로 가기';
+    else b.title = '한글 편집 창에서 직접 고치기 (Ctrl+E, 인터넷 없이 동작)';
+  }
+
+  /** 대화창 위 경고: 편집 창에 저장 안 한 내용이 있을 때 */
+  function renderEditorWarn() {
+    el.editorWarn.hidden = !(state.doc?.editor?.open && state.doc.editor.dirty);
+  }
+
+  /** 편집기를 쓸 수 없을 때 이유를 보여 준다 */
+  function showEditorMissing(reason) {
+    // 이유 끝의 '(개발 중이면 …)'은 아래에 자세히 적으므로 뺀다
+    const why = String(reason || '한글 편집기 파일이 없습니다.').replace(/\s*\(개발 중이면.*\)\s*$/, '');
+    return confirmDialog({
+      title: '한글 편집기를 열 수 없어요',
+      tone: 'warn', cancel: null,
+      body: [
+        why,
+        state.packaged ? '문서 보기와 AI 대화는 그대로 쓸 수 있어요. 직접 고치려면 ‘프로그램에서 열기’를 써 주세요.'
+          : h('p', {}, '개발 중이면 저장소 폴더에서 ', h('code', { text: 'npm run editor:build' }), '를 한 번 실행한 뒤 다시 눌러 주세요. 편집기 묶음(vendor/rhwp-studio)을 인터넷 없이 쓸 수 있게 만듭니다.'),
+      ],
+    });
+  }
+
+  function editorError(err) {
+    if (err.code === 'EDITOR_MISSING') { state.editor = { ...state.editor, available: false, reason: err.message }; renderEditButton(); return showEditorMissing(err.message); }
+    if (err.code === 'UNSUPPORTED') {
+      toast(err.message, { type: 'info', action: { label: '프로그램에서 열기', run: actOpenInApp } });
+      return null;
+    }
+    showError(err, '편집 창을 열지 못했어요');
+    return null;
+  }
+
+  async function actEdit() {
+    if (!state.doc) return;
+    setBusy('edit', state.doc.editor?.open ? '편집 창 여는 중…' : '한글 편집기 여는 중…');
+    let error = null;
+    try {
+      await call(K.doc.edit());
+      // 열렸으면 편집기 묶음이 있는 것
+      if (!state.editor.available) { state.editor = { ...state.editor, available: true, reason: null }; renderEditButton(); }
+    } catch (err) { error = err; } finally { clearBusy('edit'); }
+    if (error) await editorError(error);
+  }
+
+  function onDocEditor(ev) {
+    if (!ev || !state.doc || pathKey(ev.path) !== pathKey(state.doc.path)) return;
+    state.doc = { ...state.doc, editor: { open: !!ev.open, dirty: !!ev.dirty } };
+    renderTopbar();
+    renderStatus();
   }
 
   // ── 미리보기 ─────────────────────────────────────────
@@ -456,6 +546,16 @@
 
   function renderPdf(res) {
     el.zoombar.hidden = true;
+    // 쪽이 없는 PDF(빈 시트 등)는 PDF 뷰어가 빈 화면에서 멈추므로 안내만
+    if (res.pages === 0) {
+      el.preview.className = 'preview';
+      const card = h('div', { class: 'error-card' },
+        h('div', { class: 'err-icon' }, icon('info')),
+        h('h3', { text: '미리 볼 쪽이 없어요' }),
+        h('p', { text: '문서에 내용이 없어 프로그램이 그릴 쪽이 없어요. 내용을 넣으면 여기에 보여요.' }));
+      el.preview.replaceChildren(h('div', { class: 'preview-error' }, card));
+      return Promise.resolve();
+    }
     el.preview.className = 'preview pdf';
     const frame = h('iframe', { class: 'pdf-frame', title: `${state.doc?.name ?? '문서'} 미리보기` });
     const loaded = new Promise((resolve) => {
@@ -535,6 +635,7 @@
     el.zoombar.hidden = true;
     el.preview.className = 'preview';
     const wrap = h('div', { class: 'text-wrap' });
+    if (res.note) wrap.append(h('div', { class: 'pages-note', text: res.note }));
     if (res.sheets?.length) wrap.append(sheetView(res.sheets));
     else if (res.slides?.length) wrap.append(slideView(res.slides));
     else wrap.append(paperView(res.text ?? '', res.tables ?? []));
@@ -614,6 +715,9 @@
         aiBusy ? '진행 중인 AI 작업을 멈추고 되돌립니다.' : null,
         `${whenText(d.backup.time)}에 문서를 열면서 만든 백업으로 되돌립니다.`,
         '그 뒤에 바뀐 내용은 문서에서 사라지지만, 지금 상태도 백업 폴더에 따로 남겨 둡니다.',
+        !d.editor?.open ? null : d.editor.dirty
+          ? '편집 창에 저장하지 않은 내용이 있어요. 되돌린 뒤 편집 창에서 다시 불러올지, 내 편집을 유지할지 고를 수 있어요.'
+          : '열려 있는 편집 창도 되돌린 내용으로 다시 불러와요.',
       ].filter(Boolean),
       ok: aiBusy ? '멈추고 되돌리기' : '원래대로', tone: 'danger',
     });
@@ -626,7 +730,8 @@
     try {
       const r = await call(K.doc.restore());
       if (r.doc) updateDoc(r.doc);
-      toast(r.stoppedAi > 0 ? 'AI 작업을 멈추고 원래대로 되돌렸어요' : '원래대로 되돌렸어요', { type: 'success' });
+      const editorNote = !r.editorNotified ? '' : state.doc?.editor?.dirty ? '. 편집 창에서 다시 불러올지 골라 주세요' : '. 편집 창도 다시 불러와요';
+      toast(`${r.stoppedAi > 0 ? 'AI 작업을 멈추고 원래대로 되돌렸어요' : '원래대로 되돌렸어요'}${editorNote}`, { type: 'success' });
       // main이 이 문서의 AI 대화를 끝냈다 → 대화창에 알린다 (AI가 되돌리기 전 내용을 기억하지 않게)
       if (r.newChat && chat.items.length) {
         chat.items.push({ role: 'note', text: '문서를 원래대로 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
@@ -686,6 +791,7 @@
     }
     renderProviderSelect();
     renderChat();
+    if (ne.dlg.open) renderNewDoc();
   }
 
   function renderProviderSelect() {
@@ -714,7 +820,10 @@
         h('div', { class: 'c-icon' }, icon('file')),
         h('h3', { text: '문서를 먼저 열어 주세요' }),
         h('p', { text: '문서를 열면 AI가 내용을 읽고 요약하거나, 글자를 바꾸고, 빈칸을 채워 드려요. 고친 결과는 왼쪽 미리보기에 바로 보여요.' }),
-        h('button', { class: 'btn sm', onclick: pickFile }, icon('file-open'), '파일 열기'));
+        h('p', { text: '새 문서를 만들면서 AI에게 내용을 부탁할 수도 있어요.' }),
+        h('div', { class: 'btn-row' },
+          h('button', { class: 'btn sm', onclick: pickFile }, icon('file-open'), '파일 열기'),
+          h('button', { class: 'btn sm', id: 'chat-new-doc', onclick: () => openNewDoc({ start: 'ai' }) }, icon('file-new'), '새 문서')));
     }
     if (state.providerError) {
       return h('div', { class: 'chat-card' },
@@ -850,37 +959,83 @@
     if (force || isNearBottom()) el.chatBody.scrollTop = el.chatBody.scrollHeight;
   }
 
-  async function sendPrompt(text) {
-    text = String(text ?? '').trim();
-    if (!text || !state.doc || chatBlocker()) return;
-    const chat = chatFor(state.doc.path);
-    if (chat.busy) return;
+  /**
+   * 대화 한 번 준비: 사용자 말풍선과 답 자리를 넣고 '작업 중'으로 둔다 → { chat, msg }.
+   * 대화 번호를 받으면 chatStarted, 못 받으면 chatFailed (번호보다 먼저 온 이벤트는 chat.pending이 받는다)
+   */
+  function queueChat(path, text) {
+    const chat = chatFor(path);
     const msg = { role: 'assistant', parts: [], done: false, status: '생각하는 중…', chatId: null };
     chat.items.push({ role: 'user', text }, msg);
     chat.busy = true;
     chat.pending = msg;
     chat.stopRequested = false;
     chat.cancelSent = null;
+    setBusy(`ai:${pathKey(path)}`, 'AI가 작업 중…');
+    if (chatCurrent() === chat) renderChat();
+    return { chat, msg };
+  }
+
+  function chatStarted(chat, msg, chatId) {
+    msg.chatId = chatId;
+    if (chat.pending === msg) chat.pending = null;
+    // 이미 끝났으면('end'가 먼저 옴) 대화 번호를 남기지 않는다
+    if (!msg.done) chat.chatId = chatId;
+    // 보내는 동안 멈추기를 눌렀으면 지금 멈춘다
+    if (chat.stopRequested && !msg.done) cancelChatId(chat, chatId);
+  }
+
+  function chatFailed(chat, msg, path, err) {
+    if (chat.pending === msg) chat.pending = null;
+    msg.done = true;
+    msg.error = err?.message || 'AI 대화를 시작하지 못했어요';
+    chat.busy = false;
+    clearBusy(`ai:${pathKey(path)}`);
+    if (err?.code === 'NO_PROVIDER' || err?.code === 'MODULE_MISSING') loadProviders(true);
+    if (chatCurrent() === chat) renderChat();
+  }
+
+  /** 편집 창에 저장 안 한 내용이 있을 때 보내기 전에 묻는다 → 'send' | 'editor' | 'cancel' */
+  async function askEditorDirty() {
+    const r = await confirmDialog({
+      title: '편집 창에 저장하지 않은 내용이 있어요',
+      tone: 'warn',
+      body: [
+        'AI는 저장된 파일을 고칩니다. 지금 보내면 편집 창에서 고친 내용은 AI가 보지 못하고, 나중에 편집 창에서 저장하면 AI가 고친 내용을 덮어쓸 수 있어요.',
+        '편집 창에서 먼저 저장(Ctrl+S)한 뒤 보내 주세요.',
+      ],
+      ok: '편집 창 보기', alt: '그대로 보내기', cancel: '취소',
+    });
+    return r === true ? 'editor' : r === 'alt' ? 'send' : 'cancel';
+  }
+
+  async function sendPrompt(text, { editorOk = false } = {}) {
+    text = String(text ?? '').trim();
+    if (!text || !state.doc || chatBlocker()) return;
+    const path = state.doc.path;
+    if (chatFor(path).busy) return;
+    // 편집 창에 저장 안 한 내용이 있으면 먼저 묻는다 (입력한 글은 그대로 둔다)
+    if (!editorOk && state.doc.editor?.dirty) {
+      const choice = await askEditorDirty();
+      if (choice === 'editor') { actEdit(); return; }
+      if (choice !== 'send' || !state.doc || pathKey(state.doc.path) !== pathKey(path) || chatFor(path).busy) return;
+      editorOk = true;
+    }
     el.prompt.value = '';
     autoGrow();
-    renderChat();
-    setBusy(`ai:${pathKey(state.doc.path)}`, 'AI가 작업 중…');
+    const { chat, msg } = queueChat(path, text);
     try {
-      const r = await call(K.ai.send({ prompt: text }));
-      msg.chatId = r.chatId;
-      if (chat.pending === msg) chat.pending = null;
-      // 이미 끝났으면('end'가 먼저 옴) 대화 번호를 남기지 않는다
-      if (!msg.done) chat.chatId = r.chatId;
-      // 보내는 동안 멈추기를 눌렀으면 지금 멈춘다
-      if (chat.stopRequested && !msg.done) cancelChatId(chat, r.chatId);
+      chatStarted(chat, msg, (await call(K.ai.send({ prompt: text, editorOk }))).chatId);
     } catch (err) {
-      chat.pending = null;
-      msg.done = true;
-      msg.error = err.message;
-      chat.busy = false;
-      clearBusy(`ai:${pathKey(state.doc?.path)}`);
-      if (err.code === 'NO_PROVIDER' || err.code === 'MODULE_MISSING') loadProviders(true);
+      if (err.code !== 'EDITOR_DIRTY') { chatFailed(chat, msg, path, err); return; }
+      // 화면이 편집 창 상태를 아직 몰랐던 경우: 대화를 빼고 글을 되돌린 뒤 묻는다
+      dropQueuedChat(path, { chat, msg });
       renderChat();
+      if (!el.prompt.value.trim()) { el.prompt.value = text; autoGrow(); }
+      if (state.doc && pathKey(state.doc.path) === pathKey(path)) onDocEditor({ path, open: true, dirty: true });
+      const choice = await askEditorDirty();
+      if (choice === 'editor') actEdit();
+      else if (choice === 'send') sendPrompt(text, { editorOk: true });
     }
   }
 
@@ -1041,6 +1196,279 @@
     chat.busy = true;
     renderChat();
     renderProviderSelect();
+  }
+
+  // ── 새 문서 ──────────────────────────────────────────
+  // 창은 index.html #dlg-new. main 쪽: doc:newInfo(기본 폴더·이름) · doc:newCheck(이름 확인) · doc:pickFolder · doc:new(만들고 열기 + AI 시작)
+
+  const NEW_FORMATS = {
+    hwpx: { kind: '한글', hint: '개방형 표준(OWPML) 한글 문서예요.' },
+    hwp: { kind: '한글', hint: '예전 한글 버전과도 주고받기 좋은 기존 한글 형식이에요.' },
+    docx: { kind: 'Word', hint: 'Microsoft Word 문서예요.' },
+    pptx: { kind: 'PowerPoint', hint: '빈 제목 슬라이드 하나로 시작해요.' },
+    xlsx: { kind: 'Excel', hint: '빈 시트 하나로 시작해요.' },
+  };
+  const NEW_SUGGESTS = {
+    한글: ['주간 회의록 양식 만들어줘', '공문 초안 써줘', '보고서 목차 잡아줘'],
+    Word: ['주간 회의록 양식 만들어줘', '보도자료 초안 써줘', '보고서 목차 잡아줘'],
+    PowerPoint: ['회사 소개 발표 5장 만들어줘', '프로젝트 시작 회의 발표 만들어줘'],
+    Excel: ['월별 가계부 표 만들어줘', '업무 일정표 만들어줘', '재고 관리 표 만들어줘'],
+  };
+  // 이름 칸 아래에 보여 줄 오류 (나머지는 창 아래쪽)
+  const NAME_CODES = new Set(['EMPTY', 'BAD_CHARS', 'SPACES', 'RESERVED', 'TOO_LONG', 'PATH_TOO_LONG', 'EXISTS']);
+
+  // format은 창을 닫아도 기억한다 (이번 실행 동안). start는 열 때마다 '빈 문서'부터
+  // edit: 한글 문서를 만든 뒤 바로 편집 창 열기 (이번 실행 동안 기억)
+  const nd ={ format: 'hwpx', start: 'blank', edit: true, folder: '', autoName: '', busy: false, opening: false, seq: 0, timer: 0 };
+  const ne = {
+    dlg: $('#dlg-new'), name: $('#new-name'), nameBox: $('#new-name-box'), nameMsg: $('#new-name-msg'), ext: $('#new-ext'),
+    folder: $('#new-folder'), folderText: $('#new-folder-text'), change: $('#new-folder-change'), formatHint: $('#new-format-hint'),
+    aiChoice: $('#new-start-ai'), aiHint: $('#new-ai-hint'), aiBox: $('#new-ai-box'), request: $('#new-request'),
+    requestMsg: $('#new-request-msg'), suggests: $('#new-suggests'), error: $('#new-error'),
+    create: $('#new-create'), cancel: $('#new-cancel'), close: $('#new-close'),
+    editField: $('#new-edit-field'), edit: $('#new-edit'), editRow: $('#new-edit-row'), editDesc: $('#new-edit-desc'),
+  };
+  /** 이 형식으로 만들면 편집 창을 열 수 있는지 (한글이고 편집기 묶음이 있음) */
+  const newDocEditable = (format) => NEW_FORMATS[format]?.kind === '한글' && state.editor.available;
+
+  /** 새 문서 창 열기. format: 미리 고를 형식, start: 'blank' | 'ai' (AI를 못 쓰면 빈 문서) */
+  async function openNewDoc({ format, start } = {}) {
+    if (ne.dlg.open) { ne.name.focus(); return; }
+    if (nd.opening || el.confirm.open) return;
+    if (el.settings.open) el.settings.close();
+    if (NEW_FORMATS[format]) nd.format = format;
+    nd.start = start === 'ai' ? 'ai' : 'blank';
+    nd.opening = true;
+    try {
+      const info = await call(K.doc.newInfo({ format: nd.format }));
+      nd.folder = info.folder;
+      nd.autoName = info.name;
+    } catch (err) { showError(err); return; } finally { nd.opening = false; }
+    ne.name.value = nd.autoName;
+    ne.request.value = '';
+    setNameMsg(null);
+    setRequestMsg('');
+    setNewError('');
+    renderNewDoc();
+    ne.dlg.showModal();
+    (nd.start === 'ai' && newDocAi().ok ? ne.request : ne.name).focus();
+    if (document.activeElement === ne.name) ne.name.select();
+  }
+
+  /** AI로 시작할 수 있는지 → { ok, wait?, reason? } */
+  function newDocAi() {
+    if (state.providerError) return { ok: false, reason: `AI 기능을 쓸 수 없어요: ${state.providerError}` };
+    if (!state.providers) return { ok: false, wait: true, reason: 'AI 프로그램을 확인하는 중이에요…' };
+    if (!state.providers.selected) return { ok: false, reason: 'AI 프로그램(Claude Code 또는 Codex)을 찾지 못해 쓸 수 없어요.' };
+    return { ok: true };
+  }
+
+  function renderNewDoc() {
+    const busy = nd.busy;
+    const ai = newDocAi();
+    if (!ai.ok && nd.start === 'ai') nd.start = 'blank';
+    const f = NEW_FORMATS[nd.format];
+    for (const r of $$('input[name="new-format"]', ne.dlg)) { r.checked = r.value === nd.format; r.disabled = busy; }
+    for (const r of $$('input[name="new-start"]', ne.dlg)) { r.checked = r.value === nd.start; r.disabled = busy || (r.value === 'ai' && !ai.ok); }
+    ne.ext.textContent = `.${nd.format}`;
+    ne.formatHint.textContent = f.hint;
+    ne.folderText.textContent = nd.folder;
+    ne.folder.title = nd.folder;
+    ne.aiChoice.classList.toggle('disabled', !ai.ok);
+    ne.aiHint.hidden = ai.ok;
+    ne.aiHint.replaceChildren(...[icon(ai.wait ? 'clock' : 'info'), h('span', { text: ai.reason ?? '' }),
+      ai.ok || ai.wait ? null : h('button', { class: 'link-btn', type: 'button', onclick: () => { ne.dlg.close(); openSettings('ai'); } }, '설정 열기')].filter(Boolean));
+    ne.aiBox.hidden = nd.start !== 'ai';
+    // 한글 형식만: 만든 뒤 바로 편집 창 열기
+    const hangul = f.kind === '한글';
+    const editOk = newDocEditable(nd.format);
+    ne.editField.hidden = !hangul;
+    ne.edit.checked = editOk && nd.edit;
+    ne.edit.disabled = busy || !editOk;
+    ne.editRow.classList.toggle('disabled', hangul && !editOk);
+    ne.editDesc.textContent = !editOk
+      ? (state.packaged ? '한글 편집기가 설치돼 있지 않아 쓸 수 없어요.' : '한글 편집기 묶음이 없어요. npm run editor:build로 먼저 만들어 주세요.')
+      : nd.start === 'ai' ? 'AI가 채우는 내용이 편집 창에도 바로 보여요.' : '한글 편집 창에서 바로 글을 써요. 인터넷 없이 동작해요.';
+    ne.request.placeholder = `예: ${NEW_SUGGESTS[f.kind][0]}`;
+    ne.suggests.replaceChildren(...NEW_SUGGESTS[f.kind].map((s) => h('button', {
+      class: 'suggest-chip', type: 'button', disabled: busy,
+      onclick: () => { ne.request.value = s; setRequestMsg(''); ne.request.focus(); },
+    }, icon('sparkle'), s)));
+    ne.name.disabled = busy;
+    ne.request.disabled = busy;
+    ne.change.disabled = busy;
+    ne.cancel.disabled = busy;
+    ne.close.disabled = busy;
+    ne.create.disabled = busy;
+    ne.create.replaceChildren(...(busy ? [spinner(), '만드는 중…'] : nd.start === 'ai' ? [icon('sparkle'), '만들고 AI에게 부탁하기'] : ['만들기']));
+    ne.dlg.classList.toggle('busy', busy);
+  }
+
+  function setNameMsg(r) {
+    const bad = !!r && !r.ok;
+    ne.nameBox.classList.toggle('invalid', bad);
+    ne.name.setAttribute('aria-invalid', String(bad));
+    ne.nameMsg.className = `nd-msg${bad ? ' error' : ''}`;
+    if (!bad) { ne.nameMsg.replaceChildren(); return; }
+    ne.nameMsg.replaceChildren(...[icon('alert'), h('span', { text: r.error }),
+      r.suggestion ? h('button', {
+        class: 'link-btn', type: 'button',
+        onclick: () => { ne.name.value = r.suggestion; checkNewName(); ne.name.focus(); },
+      }, `‘${r.suggestion}’(으)로 바꾸기`) : null].filter(Boolean));
+  }
+  function setRequestMsg(text) {
+    ne.requestMsg.className = `nd-msg${text ? ' error' : ''}`;
+    ne.requestMsg.replaceChildren(...(text ? [icon('alert'), h('span', { text })] : []));
+  }
+  function setNewError(text) {
+    ne.error.hidden = !text;
+    ne.error.replaceChildren(...(text ? [icon('alert'), h('span', { text })] : []));
+  }
+
+  /** 이름 확인 (main이 폴더·형식·이미 있는 파일까지 본다) → 결과, 그 사이 다시 확인했으면 null */
+  async function checkNewName() {
+    clearTimeout(nd.timer);
+    const seq = ++nd.seq;
+    let r;
+    try { r = await call(K.doc.newCheck({ folder: nd.folder, name: ne.name.value, format: nd.format })); } catch (err) {
+      r = { ok: false, code: err.code, error: err.message, suggestion: null };
+    }
+    if (seq !== nd.seq) return null;
+    // 이름 칸과 상관없는 오류(폴더 등)는 창 아래쪽에
+    if (r.ok || NAME_CODES.has(r.code)) { setNameMsg(r); if (r.ok) setNewError(''); } else { setNameMsg(null); setNewError(r.error); }
+    return r;
+  }
+
+  /** 기본 이름('새 문서', '새 문서 (2)' …)을 지금 형식·폴더에 맞춘다 (사용자가 고친 이름은 두고) */
+  async function refreshAutoName() {
+    try {
+      const info = await call(K.doc.newInfo({ format: nd.format, folder: nd.folder }));
+      if (ne.name.value === nd.autoName) ne.name.value = info.name;
+      nd.autoName = info.name;
+    } catch {}
+  }
+
+  async function setNewFormat(format) {
+    if (!NEW_FORMATS[format] || format === nd.format) return;
+    nd.format = format;
+    renderNewDoc();
+    await refreshAutoName();
+    checkNewName();
+  }
+
+  async function changeNewFolder() {
+    let folder;
+    try { folder = await call(K.doc.pickFolder(nd.folder)); } catch (err) { setNewError(err.message); return; }
+    if (!folder || !ne.dlg.open) return;
+    nd.folder = folder;
+    renderNewDoc();
+    await refreshAutoName();
+    checkNewName();
+  }
+
+  async function createNewDoc() {
+    if (nd.busy || !ne.dlg.open) return;
+    setNewError('');
+    const ai = nd.start === 'ai';
+    const request = ne.request.value.trim();
+    if (ai && !newDocAi().ok) { renderNewDoc(); return; }
+    if (ai && !request) { setRequestMsg('AI에게 부탁할 내용을 적어 주세요'); ne.request.focus(); return; }
+    const check = await checkNewName();
+    if (!check) return;
+    if (!check.ok) { (NAME_CODES.has(check.code) ? ne.name : ne.change).focus(); return; }
+    nd.busy = true;
+    renderNewDoc();
+    setBusy('newdoc', '새 문서 만드는 중…');
+    // 같은 경로의 문서를 지웠다가 다시 만드는 경우 예전 대화를 잇지 않는다 (main도 AI 대화·원래대로 기준을 새로 시작)
+    const old = state.chats.get(pathKey(check.path));
+    if (old && !old.busy) state.chats.delete(pathKey(check.path));
+    // AI로 시작하면 대화를 미리 준비해 둔다 (main이 문서를 열자마자 대화를 시작하므로 먼저 오는 이벤트도 받게)
+    const queued = ai && !chatFor(check.path).busy ? queueChat(check.path, request) : null;
+    try {
+      const edit = newDocEditable(nd.format) && nd.edit;
+      const res = await call(K.doc.create({ format: nd.format, folder: nd.folder, name: ne.name.value, start: nd.start, request: ai ? request : undefined, edit }));
+      nd.busy = false;
+      ne.dlg.close();
+      const path = res.doc?.path ?? check.path;
+      if (queued) {
+        if (pathKey(path) !== pathKey(check.path)) moveChat(check.path, path);
+        if (res.chat?.chatId) chatStarted(queued.chat, queued.msg, res.chat.chatId);
+        else chatFailed(queued.chat, queued.msg, path, res.chatError);
+        if (state.settings.chatCollapsed) toggleChat(false);
+      }
+      if (ai && !res.chat?.chatId) toast(`${baseName(path)}을(를) 만들었지만 AI를 시작하지 못했어요`, { type: 'warn' });
+      else toast(ai ? `${baseName(path)}을(를) 만들고 AI에게 부탁했어요` : `새 문서를 만들었어요: ${baseName(path)}`, { type: 'success' });
+      // 편집 창은 main이 열었다 (못 열었으면 이유만 알린다. 문서는 만들어졌음)
+      if (res.editorError) editorError(res.editorError);
+    } catch (err) {
+      if (queued) dropQueuedChat(check.path, queued);
+      nd.busy = false;
+      renderNewDoc();
+      if (NAME_CODES.has(err.code)) {
+        setNameMsg({ ok: false, error: err.message });
+        if (err.code === 'EXISTS') checkNewName(); // 바꿀 이름 제안을 받는다
+        ne.name.focus();
+      } else if (err.code === 'NO_REQUEST') {
+        setRequestMsg(err.message);
+        ne.request.focus();
+      } else setNewError(err.message);
+    } finally { clearBusy('newdoc'); }
+  }
+
+  /** 문서를 만들지 못했을 때 미리 넣은 대화를 뺀다 */
+  function dropQueuedChat(path, { chat, msg }) {
+    const i = chat.items.indexOf(msg);
+    if (i > 0) chat.items.splice(i - 1, 2);
+    if (chat.pending === msg) chat.pending = null;
+    chat.busy = false;
+    clearBusy(`ai:${pathKey(path)}`);
+    if (!chat.items.length) state.chats.delete(pathKey(path));
+    if (chatCurrent() === chat) renderChat();
+  }
+
+  /** 미리 짐작한 경로와 실제 경로가 다를 때 대화를 옮긴다 */
+  function moveChat(from, to) {
+    const c = state.chats.get(pathKey(from));
+    if (!c) return;
+    state.chats.delete(pathKey(from));
+    state.chats.set(pathKey(to), c);
+    if (state.busy.has(`ai:${pathKey(from)}`)) { clearBusy(`ai:${pathKey(from)}`); setBusy(`ai:${pathKey(to)}`, 'AI가 작업 중…'); }
+    if (chatCurrent() === c) renderChat();
+  }
+
+  function bindNewDoc() {
+    for (const r of $$('input[name="new-format"]', ne.dlg)) r.addEventListener('change', () => { if (r.checked) setNewFormat(r.value); });
+    for (const r of $$('input[name="new-start"]', ne.dlg)) {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        nd.start = r.value;
+        setRequestMsg('');
+        renderNewDoc();
+        if (nd.start === 'ai') ne.request.focus();
+      });
+    }
+    ne.name.addEventListener('input', () => {
+      setNewError('');
+      clearTimeout(nd.timer);
+      nd.timer = setTimeout(checkNewName, 150);
+    });
+    ne.request.addEventListener('input', () => setRequestMsg(''));
+    ne.edit.addEventListener('change', () => { nd.edit = ne.edit.checked; });
+    ne.change.addEventListener('click', changeNewFolder);
+    ne.folder.addEventListener('dblclick', changeNewFolder);
+    ne.create.addEventListener('click', createNewDoc);
+    ne.cancel.addEventListener('click', () => ne.dlg.close());
+    ne.close.addEventListener('click', () => ne.dlg.close());
+    // 만드는 중에는 Esc로 닫지 않는다
+    ne.dlg.addEventListener('cancel', (e) => { if (nd.busy) e.preventDefault(); });
+    ne.dlg.addEventListener('close', () => { clearTimeout(nd.timer); nd.seq++; });
+    // Enter = 만들기 (글 상자에서는 Shift+Enter가 줄바꿈). 단추 위의 Enter는 그 단추를 누른다
+    ne.dlg.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.isComposing || e.keyCode === 229) return;
+      if (e.target.tagName === 'BUTTON') return;
+      e.preventDefault();
+      createNewDoc();
+    });
   }
 
   // ── 설정 창 ──────────────────────────────────────────
@@ -1393,6 +1821,13 @@
     if (!state.smoke || state.smokeSent) return;
     state.smokeSent = true;
     if (state.smoke.chat) injectDemoChat();
+    if (state.smoke.newdoc) {
+      // AI 선택지가 제 모양으로 보이게 AI 확인을 기다린다
+      await Promise.race([state.providersReady, sleep(8000)]);
+      await openNewDoc({ start: state.smoke.newdoc === 'ai' ? 'ai' : 'blank' });
+      if (state.smoke.newdoc === 'ai') ne.request.value = '주간 회의록 양식 만들어줘';
+      await sleep(300);
+    }
     if (state.smoke.settings) {
       try { await openSettings(state.smoke.settings); } catch {}
       await sleep(300);
@@ -1404,9 +1839,16 @@
 
   function bindUi() {
     $('#btn-open').addEventListener('click', pickFile);
-    $('#dropzone').addEventListener('click', pickFile);
+    $('#btn-new').addEventListener('click', () => openNewDoc());
+    $('#dz-open').addEventListener('click', pickFile);
+    $('#dz-new').addEventListener('click', () => openNewDoc());
+    // 끌어놓기 칸의 빈 곳을 눌러도 파일 열기
+    $('#dropzone').addEventListener('click', (e) => { if (!e.target.closest('button')) pickFile(); });
     $('#btn-refresh').addEventListener('click', () => refreshPreview({ reason: 'manual' }));
     $('#btn-restore').addEventListener('click', actRestore);
+    el.btnEdit.addEventListener('click', actEdit);
+    el.stEditor.addEventListener('click', actEdit);
+    $('#editor-warn-show').addEventListener('click', actEdit);
     $('#btn-openapp').addEventListener('click', actOpenInApp);
     $('#btn-pdf').addEventListener('click', actSavePdf);
     $('#btn-folder').addEventListener('click', actShowFolder);
@@ -1470,14 +1912,16 @@
     $('#btn-hancom-dll').addEventListener('click', () => hancomSetup('pick'));
     $('#btn-hancom-remove').addEventListener('click', hancomRemove);
 
-    // 단축키 (메뉴에 없는 것)
+    // 단축키 (메뉴에 없는 것. Ctrl+N은 메뉴에도 있지만 화면이 먼저 받으면 여기서 연다)
     window.addEventListener('keydown', (e) => {
       if (!e.ctrlKey || e.altKey) return;
+      if (e.code === 'KeyN' && !e.shiftKey) { e.preventDefault(); openNewDoc(); return; }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); stepZoom(1); }
       else if (e.key === '-') { e.preventDefault(); stepZoom(-1); }
       else if (e.key === '0') { e.preventDefault(); state.zoom = 'auto'; applyZoom(); }
     });
 
+    bindNewDoc();
     setupSplitter();
     setupDragDrop();
   }
@@ -1492,12 +1936,15 @@
         return;
       }
       updateDoc({ path: ev.path, missing: false, mtime: ev.mtime, size: ev.size });
-      // AI가 고치는 중이면 대화창이 이미 알려 주므로 알림 없이 새로 고친다
-      refreshPreview({ ifChanged: true, reason: chatCurrent()?.busy ? 'ai' : 'watch' });
+      // 편집 창이 저장했거나 AI가 고치는 중이면 (거기서 이미 알리므로) 알림 없이 새로 고친다
+      refreshPreview({ ifChanged: true, reason: ev.by === 'editor' ? 'editor' : chatCurrent()?.busy ? 'ai' : 'watch' });
     });
+    K.on.docEditor(onDocEditor);
     K.on.aiEvent(onAiEvent);
     K.on.menu((cmd) => {
       if (cmd === 'open') pickFile();
+      else if (cmd === 'new') openNewDoc();
+      else if (cmd === 'edit') { if (state.doc) actEdit(); }
       else if (cmd === 'refresh') { if (state.doc) refreshPreview({ reason: 'manual' }); }
       else if (cmd === 'settings') openSettings('ai');
     });
@@ -1520,11 +1967,13 @@
     state.settings = init.settings ?? {};
     state.version = init.version ?? '';
     state.smoke = init.smoke;
+    state.packaged = init.packaged !== false;
+    if (init.editor) state.editor = { ...state.editor, ...init.editor };
     applyChatLayout();
     renderRecent(init.recent);
     if (init.doc) onDocOpened(init.doc);
     else { renderTopbar(); renderStatus(); renderChat(); }
-    loadProviders(false);
+    state.providersReady = loadProviders(false);
     // 열 파일 없이 시작한 확인용 캡처는 빈 화면을 찍는다
     if (state.smoke && !init.doc && !init.opening) setTimeout(() => smokeSignal({ ok: true, kind: 'empty' }), 600);
   }

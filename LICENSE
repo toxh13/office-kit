@@ -33,6 +33,27 @@ node_modules/ of this repository after `npm install`).
 - rhwp (@rhwp/core) — HWP/HWPX engine (Rust/WebAssembly)
   Copyright (c) 2025-2026 Edward Kim — MIT License
   https://github.com/edwardkim/rhwp
+  The Rust crates compiled into the WebAssembly module are listed, with their
+  licenses (MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode, CC0 ...), in
+  rhwp's THIRD_PARTY_LICENSES.md (shipped in resources/app/vendor/rhwp-studio/).
+
+- rhwp-studio and @rhwp/editor — the in-app HWP/HWPX editor (web app built
+  from rhwp tag v0.8.7, commit 1a76570e8339, by scripts/build-editor.mjs)
+  Copyright (c) 2025-2026 Edward Kim — MIT License
+  https://github.com/edwardkim/rhwp
+  Shipped in resources/app/vendor/rhwp-studio/ and vendor/rhwp-editor-sdk/
+  together with rhwp's LICENSE, THIRD_PARTY_LICENSES.md and VERSION.json.
+  The bundled web app also contains:
+  - CanvasKit (canvaskit-wasm, part of Skia) — BSD-3-Clause,
+    Copyright (c) 2011 Google Inc.; full text in vendor/rhwp-studio/licenses/
+  - @noble/hashes — MIT License, Paul Miller; full text in
+    vendor/rhwp-studio/licenses/
+  - small runtime helpers emitted by Vite — MIT License
+  The rhwp-studio build tools (Vite, vite-plugin-pwa, Workbox — MIT) are used
+  only at build time; the generated service worker and Workbox runtime are
+  removed and are not shipped. Sample documents and web fonts are not shipped
+  (if the editor is built with --with-fonts, only SIL OFL 1.1 / GUST licensed
+  fonts are added, with their license files, under vendor/rhwp-studio/fonts/).
 
 - Electron — MIT License, Copyright (c) Electron contributors / GitHub Inc.
   https://github.com/electron/electron

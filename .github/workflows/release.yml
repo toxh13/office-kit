@@ -1,6 +1,6 @@
 # CI · 배포
-#  - main push / PR: npm test
-#  - v* 태그 push: 시험 → NSIS 설치 파일을 만들어 GitHub Release에 올림
+#  - main push / PR: npm test (+ main push: 한글 편집기 빌드 확인)
+#  - v* 태그 push: 시험 → 한글 편집기(rhwp-studio) 빌드 → NSIS 설치 파일을 만들어 GitHub Release에 올림
 #  - 수동 실행(workflow_dispatch): 같은 빌드를 초안(draft) Release로 올림
 name: CI · Release
 
@@ -35,6 +35,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # 한글 편집기 빌드 스크립트: 문법·옵션은 늘, 실제 빌드는 main push에서 (태그 전에 깨진 것을 알게)
+      - name: 한글 편집기 빌드 스크립트 확인
+        shell: bash
+        run: |
+          node --check scripts/build-editor.mjs
+          node scripts/build-editor.mjs --help
+      - name: 한글 편집기 빌드 (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npm run editor:build
 
   release:
     name: 설치 파일 만들기 · Release 업로드
@@ -58,6 +67,11 @@ jobs:
             echo "::error::태그($GITHUB_REF_NAME)와 package.json 버전(v$version)이 다릅니다. package.json의 version을 먼저 올리세요."
             exit 1
           fi
+
+      # 앱 안 한글 편집기: rhwp-studio를 고정 태그(커밋 확인)에서 빌드해 vendor/에 넣는다 (새로 받아 30초 안팎).
+      # 묶음이 없으면 electron-builder의 beforePack(scripts/check-editor-bundle.cjs)이 빌드를 멈춘다.
+      - name: 한글 편집기 빌드 (rhwp-studio → vendor/)
+        run: npm run editor:build
 
       # electron-builder는 파일마다 따로 Release를 찾다가 동시에 "없음"을 보고 Release를 두 개 만든다
       # (v0.1.0·v0.1.1에서 설치 파일과 .blockmap이 서로 다른 Release로 갈라짐).

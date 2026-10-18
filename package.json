@@ -1,6 +1,6 @@
 {
   "name": "office-kit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "한글(HWP/HWPX)·Word·PowerPoint·Excel 문서를 열고, 확인하고, AI 대화로 수정하는 데스크톱 도구",
   "type": "module",
   "main": "src/app/main.mjs",
@@ -12,9 +12,10 @@
     "cli": "node src/cli.mjs",
     "mcp": "node src/mcp/server.mjs",
     "test": "node --test test/*.test.mjs",
-    "dist": "electron-builder --win nsis --x64 --publish never",
-    "dist:dir": "electron-builder --win dir --x64 --publish never",
-    "release": "electron-builder --win nsis --x64 --publish always",
+    "editor:build": "node scripts/build-editor.mjs",
+    "dist": "npm run editor:build && electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "npm run editor:build && electron-builder --win dir --x64 --publish never",
+    "release": "npm run editor:build && electron-builder --win nsis --x64 --publish always",
     "icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/make-icon.ps1"
   },
   "author": "toxh13",
@@ -22,7 +23,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@resvg/resvg-js": "^2.6.2",
-    "@rhwp/core": "^0.8.7",
+    "@rhwp/core": "0.8.7",
     "docx": "^9.12.0",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.2",
@@ -30,6 +31,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@rhwp/editor": "0.8.7",
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3"
   },
@@ -43,6 +45,7 @@
     "productName": "Office Kit",
     "copyright": "Copyright © 2026 toxh13",
     "asar": false,
+    "beforePack": "scripts/check-editor-bundle.cjs",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -50,6 +53,9 @@
     "files": [
       "package.json",
       "src/**/*",
+      "src/app/editor/**/*",
+      "vendor/rhwp-studio/**/*",
+      "vendor/rhwp-editor-sdk/**/*",
       "scripts/com/**/*",
       "docs/**/*",
       "examples/**/*",

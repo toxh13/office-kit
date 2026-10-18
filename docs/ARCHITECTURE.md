@@ -10,7 +10,10 @@ src/mcp/       MCP 서버 — Claude/Codex가 문서 도구를 쓰게 함 (stdio
 src/cli.mjs    명령줄 도구 office-kit
 src/setup/     외부 연결: Claude Desktop/Claude Code/Codex 등록, 명령줄 등록, 한글 보안 모듈
 src/app/       Electron 앱 (main.mjs, preload.cjs, renderer/, ai.mjs)
+               한글 편집 창: editor-window.mjs(창·저장·감시), editor-server.mjs(127.0.0.1·127.0.0.2 정적 서버), editor/(host 페이지·preload)
 scripts/com/   office.ps1 — 설치된 프로그램을 COM으로 조작. 형식별 작업은 word-ops.ps1, ppt-ops.ps1, excel-ops.ps1
+scripts/build-editor.mjs  한글 편집기 묶음 만들기 (rhwp-studio v0.8.7 → vendor/)
+vendor/        만들어지는 폴더 (git 밖): rhwp-studio/ 편집기, rhwp-editor-sdk/ 연결 SDK
 build/         아이콘, NSIS 추가 설정
 ```
 
@@ -45,7 +48,11 @@ MCP 도구  src/mcp/tools/<형식>.mjs ─┐
 |---|---|---|
 | `OFFICEKIT_WRITE_ROOTS` | MCP 서버 | 저장을 허락할 폴더들 (`;` 구분). 앱 안 AI 대화는 열린 문서의 폴더만 넘긴다 |
 | `OFFICEKIT_POWERSHELL` | core/com | 시험용 PowerShell 경로 바꿔 끼우기 |
-| `OFFICEKIT_SMOKE`, `_CHAT`, `_SETTINGS` | 앱 | 화면 캡처 확인 모드 |
+| `OFFICEKIT_SMOKE`, `_CHAT`, `_SETTINGS`, `_NEWDOC`, `_EDITOR` | 앱 | 화면 캡처 확인 모드 (`_EDITOR=1`: 편집 창도 열어 `<png>-editor.png`로 찍음) |
+| `OFFICEKIT_EDITOR_VENDOR` | 앱(개발용) | 편집기 묶음 폴더 바꾸기 (`<폴더>/rhwp-studio`, `rhwp-editor-sdk`). 없는 폴더 = 묶음 없음 시험 |
+| `OFFICEKIT_EDITOR_TEST=1` | 앱(개발용) | 편집 창 host 페이지에 시험 고리 `window.__editorTest` (`?test=1`) |
+| `OFFICEKIT_EDITOR_CACHE` | build-editor | rhwp 소스·의존성 캐시 폴더 (기본 `tmp/editor-build`) |
+| `OFFICEKIT_EDITOR_SMOKE=1` | 테스트 | `test/editor-integration.test.mjs`의 실제 Electron 캡처 시험 켜기 (창이 잠깐 뜸) |
 | `OFFICEKIT_USER_DATA` | 앱 | 설정·백업 폴더 바꾸기 (시험용) |
 | `OFFICEKIT_AI_MODULE` | 앱(개발용) | 가짜 AI 모듈로 바꿔 끼우기 |
 | `OFFICEKIT_COM_TESTS=1` | 테스트 | Word/PowerPoint/Excel COM 시험 켜기 (한컴 제외) |
@@ -203,7 +210,7 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
 
 ### src/app (Electron)
 - `main.mjs`: 창, 단일 인스턴스(두 번째 실행·"연결 프로그램"의 파일 경로를 기존 창에서 연다), IPC, 원본 백업,
-  파일 변경 감시 → 미리보기 자동 새로고침, AI 대화 중계.
+  파일 변경 감시 → 미리보기 자동 새로고침, AI 대화 중계, 새 문서(`doc:newInfo`·`doc:newCheck`·`doc:new`), 한글 편집 창 잇기(아래).
 - `preload.cjs`: `window.officeKit` API만 노출 (contextIsolation, `webUtils.getPathForFile`로 끌어놓기 경로).
 - `renderer/`: 왼쪽 문서 미리보기 + 오른쪽 AI 대화창. 바닐라 JS, 번들러 없음.
 - `store.mjs`: 설정(JSON, 원자적 쓰기, AI마다 모델 따로 `models: {claude, codex}`), 최근 파일, 백업
@@ -211,7 +218,61 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
 - '원래대로'는 그 문서의 AI 대화를 멈춘 뒤 마지막 백업으로 되돌리고, 다음 메시지부터 새 대화로 시작한다.
 - AI 대화 세션은 문서마다 메모리에만 둔다 (앱을 다시 켜면 새 대화).
 - 확인용: `OFFICEKIT_SMOKE=<png경로>` 환경 변수로 실행하면 인수로 받은 파일을 열고 화면을 캡처한 뒤 종료 (못 열면 알림을 찍고 실패로 끝남). 최근 파일 목록·Windows 최근 항목은 건드리지 않는다.
+  `OFFICEKIT_SMOKE_EDITOR=1`이면 그 문서를 편집 창으로도 열어, 다 뜨면(또는 실패 안내가 뜨면) `<png>-editor.png`로 찍고 주 창을 찍는다 (편집기가 못 뜨면 종료 코드 1).
 - ESM 진입 파일에서 `await app.whenReady()`를 최상위에서 기다리면 멈춘다 → `start()`를 기다리지 않고 부른다.
+- 정리(감시 끄기·AI 대화 멈춤·미리보기 PDF 지우기)는 `will-quit`에서 한다. '끝내기'가 편집 창의 저장 확인에서 **취소**될 수 있어서 `before-quit`에서는 하지 않는다.
+
+### 한글 편집 창 (src/app/editor-window.mjs · editor-server.mjs · editor/)
+
+앱 안에서 한글 문서(hwp·hwpx·hwt)를 직접 고치는 창. 편집기는 rhwp-studio(웹 앱)를 묶어 넣은 것(`vendor/`)이고, 인터넷 없이 동작한다.
+
+```
+주 창(renderer) ─ doc:edit ─→ main.mjs editDocument() ─→ createEditorManager().openEditor(path)
+                                                          │  문서마다 BrowserWindow 하나 (partition 'officekit-editor', 디스크에 안 남음)
+                                                          ▼
+  http://127.0.0.1:<A>/host/host.html  (src/app/editor/host.*, preload editor-preload.cjs → window.officeKitEditor)
+        └ iframe  http://127.0.0.2:<B>/studio/index.html?chrome=embed  (vendor/rhwp-studio, 따로 렌더러 프로세스)
+          ↑ SDK(vendor/rhwp-editor-sdk) createEditor → MessageChannel로 loadFile · exportHwp/exportHwpx · notifySaved · commands.context · getDocumentState
+```
+
+- **두 사이트**: host(`127.0.0.1:A`, `/host/*`·`/sdk/*`)와 studio(`127.0.0.2:B`, `/studio/*`)를 다른 사이트로 띄운다 → studio 스크립트가 host의 preload API에 손대지 못하고,
+  Chromium 사이트 격리로 렌더러 프로세스도 나뉜다 (믿을 수 없는 문서를 푸는 WASM이 host의 저장 IPC와 한 프로세스에 있지 않게). 127.0.0.2를 못 쓰는 PC면 `127.0.0.1`의 다른 포트로 (출처만 분리).
+  SDK는 http(s) 출처만 받으므로 `file:`이 아니라 로컬 서버를 쓴다 (`editor-server.mjs`: GET/HEAD만, Host 머리글 확인, 경로 탈출·점 이름·`sw.js`류·`*.cjs` 404 — 8.3 짧은 이름으로 와도 실제 긴 이름으로 다시 확인,
+  host HTML에 CSP `frame-src <studio 출처>`, studio HTML에 `studioCsp`: 자기 출처만(`connect-src 'self' data: blob:`, `script-src 'self' 'wasm-unsafe-eval'`), `frame-ancestors <host 출처>`).
+- **네트워크 차단** (인터넷 없이, 문서 내용이 밖으로 나가지 않게):
+  - 편집 창 세션의 `webRequest`가 두 로컬 출처(와 blob:/data:) 밖의 요청을 모두 취소한다 (빌드에 남은 jsdelivr 글꼴 주소 포함).
+  - `webRequest`에 안 잡히는 연결(WebRTC STUN·TURN, WebTransport): 세션 프록시를 죽은 주소(`socks5://127.0.0.1:9`, 이 PC 주소만 바로)로, 창마다 `setWebRTCIPHandlingPolicy('disable_non_proxied_udp')`, studio CSP `connect-src 'self'`.
+  - 맞춤법 사전: Chromium이 사전(ko-3-0.bdic, 11MB)을 인터넷에서 받지 않게 편집 창 세션과 주 창(기본 세션) 모두 `setSpellCheckerDictionaryDownloadURL('http://127.0.0.1:9/')`.
+  - 권한은 `clipboard-sanitized-write`·`local-fonts`만, 내려받기·다른 곳으로 이동은 막는다.
+- **새 창·링크**: `window.open`은 늘 거절하고 주소만 본다. 이 PC·사설망 주소(편집기 서버 포함)는 열지 않고, 바깥 http(s)·mailto는 "기본 브라우저로 열까요?"를 물은 뒤 `shell.openExternal`.
+  studio의 문서 링크는 `window.open('about:blank')` 뒤 주소를 바꾸므로, `about:blank`만 숨긴 창(스크립트 끔, 같은 세션)으로 열어 주소를 바꾸려는 순간(`will-navigate`) 가로채 같은 확인을 거친 뒤 창을 없앤다.
+- **IPC** (편집 창 host의 최상위 틀에서만, 경로를 받지 않음 — 그 창이 연 파일에만 작용):
+  `editor:get-document`, `editor:save`, `editor:save-as`(main의 저장 대화상자) / `editor:dirty`, `editor:log`, `editor:close`, `editor:reply` / main → host `editor:external-change`, `editor:request-close`, `editor:command`.
+- **저장**: host가 원래 형식으로 내보냄(hwp·hwt → `exportHwp`, hwpx → `exportHwpx`) → main이 형식 서명(OLE/ZIP)·512MB·읽기 전용을 확인 → 덮어쓰기 전 백업(`getBackups`, 문서마다 최근 5개) →
+  같은 폴더 임시 파일에 쓰고 fsync → 있는 파일이면 내용만 덮어 복사(파일의 ACL·하드 링크가 그대로), 새 파일이면 이름 바꾸기 (`atomicWrite`) → `onSaved(path)`.
+  단축키는 `before-input-event`로 받는다 (Ctrl+S, Ctrl+Shift+S, Ctrl+W). 다른 이름으로 저장에서 확장자를 붙인 이름이 이미 있으면 다시 묻는다.
+- **저장하는 동안 고친 것**: `notifySaved`는 studio를 무조건 '저장됨'으로 만든다. 그래서 그 뒤 `getDocumentState().documentSha256`(형식이 다르면 다시 내보내 비교)을 저장한 바이트와 견주고,
+  다르면(내보낸 뒤 ~ notifySaved 사이에 친 글) host가 '저장 안 됨'(`lateEdits`)으로 둔다 → 닫을 때 묻고, 주 창의 AI 보내기 경고도 그대로. notifySaved 뒤에 고친 것은 studio가 스스로 '바뀜'으로 표시한다.
+- **바깥 변경**: 창마다 그 파일의 폴더를 감시하고 내용(sha1)이 같으면 무시한다. 고친 것이 없으면 host가 다시 불러오고, 있으면 알림 띠(다시 불러오기 / 내 편집 유지).
+- **닫기**: host에 '저장 안 한 내용이 있는지' 묻고(3초) 있으면 저장 / 저장 안 함 / 취소. host의 `beforeunload`는 무시한다.
+
+main.mjs가 잇는 것:
+
+| 언제 | 무엇을 |
+|---|---|
+| 시작 | `createEditorManager({ getBackups, onSaved, onDirtyChange, icon, dirs?, testHooks? })` 한 번. 모듈을 못 불러와도 앱은 뜨고 `직접 편집`만 이유를 알린다 |
+| `app:init` | `editor: { available, reason, exts }` (묶음이 있는지, 한국어 이유) |
+| `doc:edit` | 열린 문서가 한글이 아니면 `UNSUPPORTED`(프로그램에서 열기 안내), 묶음이 없으면 `EDITOR_MISSING`(한국어 이유), 아니면 `openEditor` → `{ path, reused }` |
+| 문서 정보·`doc:editor` 이벤트 | `editor: { open, dirty }` — 창이 열리고 닫히고 고쳐질 때(`onDirtyChange`, 창 `closed`, 저장 뒤) 주 창에 보낸다 (상태 막대 '편집 창 열림', 대화창 경고 띠) |
+| `onSaved` | 최근 목록 맨 위로, 열린 문서면 `doc:changed { by:'editor' }` → 미리보기 새로 고침 (감시보다 먼저, 알림 없이). 백업은 편집 창이 저장 전에 만든다 |
+| 파일 감시(주 창) | 바뀌거나 없어지면 `notifyExternalChange(path)` (내용이 같으면 편집 창은 무시) |
+| 원래대로 | 되돌린 뒤 `notifyExternalChange(path, { force: 편집 창에 저장 안 한 내용 })` → 결과의 `editorNotified`. 파일이 이미 원본과 같아도 저장 안 한 편집이 있으면 알려 편집 창이 다시 불러오기 / 내 편집 유지를 묻는다 |
+| `ai:send` | 그 문서 편집 창에 저장 안 한 내용이 있으면 `EDITOR_DIRTY`로 거절. 화면이 묻고(편집 창 보기 / 그대로 보내기 / 취소) 그대로 보내면 `editorOk:true` |
+| `doc:new` | `edit:true`이고 한글 형식이면 만든 뒤 `doc:edit`와 같은 길로 연다 → `editor` 또는 `editorError` (문서는 만들어졌으므로 실패로 돌려주지 않음). 같은 경로의 문서를 지웠다가 다시 만든 경우 예전 '원래대로' 기준·AI 대화는 버린다 |
+| 주 창 닫기 | 편집 창이 있으면 `closeAll()` (저장 안 한 창마다 묻기) → 모두 닫혔을 때만 주 창도 닫는다. 취소하면 둘 다 그대로 |
+
+- 시험: `test/editor-server.test.mjs`(서버·저장 도우미), `test/editor-integration.test.mjs`(가짜 electron으로 main.mjs의 위 흐름, `OFFICEKIT_EDITOR_SMOKE=1`이면 실제 앱 캡처),
+  끝까지 시험 `tmp/editor-int/e2e.mjs`(CDP로 두 창 조작 — 개발용, 저장소에 넣지 않음).
 
 ## 편집 원자성
 
@@ -260,5 +321,12 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
 ## 배포
 - `electron-builder` NSIS 설치 파일 (사용자별 설치, asar 끔 — PowerShell 스크립트와 MCP 서버를 그대로 실행하기 위해).
   `docs/`도 함께 들어간다 (`office-kit help edit`이 `docs/FEATURES.md` 경로를 알려 줌).
+- 한글 편집기 묶음 `vendor/rhwp-studio`·`vendor/rhwp-editor-sdk`도 들어간다. `npm run dist`/`release`와 CI 배포 작업이 먼저 `npm run editor:build`를 돈다.
+  electron-builder를 바로 실행해도 `beforePack`(`scripts/check-editor-bundle.cjs`)이 묶음이 없으면 멈춘다. CI 시험 작업은 빌드 스크립트 문법·`--help`를 늘 확인하고, main push에서는 실제 빌드도 한다.
+  - 버전 고정: `@rhwp/core`(정확히 0.8.7, `^` 없이)·`@rhwp/editor`·`build-editor.mjs`의 `TAG`·`COMMIT`·`CORE_VERSION`·`EDITOR_VERSION`은 함께 올린다.
+  - `scripts/build-editor.mjs`: rhwp 태그 `v0.8.7`을 성긴 복제(커밋 `1a76570e…` 확인) → `@rhwp/core` 0.8.7 파일을 `pkg/`에 넣고 Rust 없이 vite 빌드
+    (`RHWP_WITHOUT_HWPCTRL=1`, `RHWP_DISABLE_EXTERNAL_WEBFONTS=1`, `--base=./`) → 샘플·서비스 워커(PWA)·manifest를 빼고 index.html에서 등록 코드를 지운다
+    (남아 있으면 빌드 실패) → 라이선스 파일과 `VERSION.json`(파일마다 크기·sha256)을 넣어 `vendor/`로 바꿔 놓는다. 같은 것이 있으면 건너뛴다.
+  - `@rhwp/editor`(SDK)는 devDependency로 받아 필요한 세 파일만 `vendor/rhwp-editor-sdk`에 복사한다 (`node_modules`로는 배포하지 않음).
 - 탐색기 오른쪽 클릭 "Office Kit로 열기" (기본 연결 프로그램은 바꾸지 않음).
 - GitHub Actions: `v*` 태그를 올리면 Release에 설치 파일 업로드.

@@ -9,7 +9,9 @@
 | 무엇을 | 어떻게 |
 |---|---|
 | 문서 보기 | 창에 끌어다 놓기 → 왼쪽에 미리보기 |
+| 새 문서 | `새 문서` (Ctrl+N) → 한글·Word·PowerPoint·Excel 빈 문서, 또는 AI에게 내용 부탁 |
 | 문서 고치기 | 오른쪽 AI 창에 "담당자 칸에 홍길동 넣어줘"처럼 말하기 |
+| 한글 직접 편집 | `직접 편집` (Ctrl+E) → 앱 안 한글 편집 창 (인터넷 없이, 한컴오피스 없이) |
 | AI | 내 PC에 로그인해 둔 **Claude Code** 또는 **Codex**를 그대로 씀 (앱은 로그인 정보를 안 만짐) |
 | 다른 AI 앱에서 | Claude Desktop·Claude Code·Codex에 문서 도구(MCP) 연결 |
 | 명령줄 | `office-kit text 보고서.hwp` |
@@ -45,12 +47,33 @@
 
 ### 문서 열기
 - 창에 **끌어다 놓기**, 또는 `파일 열기`, 또는 탐색기에서 오른쪽 클릭 → **Office Kit로 열기**.
-- 열 때마다 원본을 자동 백업한다 (최근 50개). 상단 **원래대로** 로 되돌린다.
+- 열 때마다 원본을 자동 백업한다 (최근 50개, 편집 창 저장 전 백업은 문서마다 최근 5개). 상단 **원래대로** 로 되돌린다.
+
+### 새 문서
+- 상단 **새 문서** (Ctrl+N) → 형식(한글 .hwpx · 한글 호환 .hwp · Word · PowerPoint · Excel), 파일 이름, 저장 위치를 고른다.
+  저장 위치 기본값은 열린 문서의 폴더(없으면 문서 폴더). 같은 이름이 있으면 바꿀 이름을 알려 준다.
+- 시작 방법: **빈 문서** 또는 **AI에게 내용 부탁하기** ("주간 회의록 양식 만들어줘"). 만든 문서는 바로 열리고 원본 백업도 만든다.
+- 한글 형식은 **만든 뒤 바로 편집 창 열기**를 고를 수 있다 (기본 켜짐).
+
+### 직접 편집 (한글)
+- 한글 문서(hwp·hwpx·hwt)를 연 뒤 상단 **직접 편집** (Ctrl+E) → 문서마다 편집 창이 하나 열린다 (다시 누르면 그 창으로).
+- 편집기는 앱에 들어 있는 rhwp-studio다. **인터넷 없이** 동작하고 한컴오피스가 필요 없다. 앱 밖으로 나가는 요청은 모두 막는다
+  (웹 요청뿐 아니라 WebRTC·WebTransport 같은 다른 연결과 맞춤법 사전 내려받기도). 편집기는 주 창과 다른 프로세스에서 돈다.
+- 문서 안 링크(http·https·mailto)는 "기본 브라우저로 열까요?"를 물은 뒤 연다. 이 PC·사설망 주소는 열지 않는다.
+- 저장 `Ctrl+S`: 원래 형식 그대로 (hwp·hwt → HWP, hwpx → HWPX). 덮어쓰기 전 내용은 백업 폴더에 남고, 왼쪽 미리보기도 바로 바뀐다.
+  다른 이름으로 저장 `Ctrl+Shift+S` (.hwpx / .hwp). 닫기 `Ctrl+W` — 저장 안 한 내용이 있으면 저장 / 저장 안 함 / 취소를 묻는다.
+  저장하는 동안 친 글은 **저장 안 됨**으로 남는다 (다시 저장하거나 닫을 때 묻는다). 파일의 보안 설정(나만 읽기 등)은 저장해도 바뀌지 않는다.
+- 다른 곳(AI·다른 프로그램)에서 파일이 바뀌면: 편집 창에서 고친 것이 없으면 저절로 다시 불러오고, 있으면 **다시 불러오기 / 내 편집 유지**를 묻는다.
+  **원래대로**도 열려 있는 편집 창에 똑같이 알린다 (편집 창에 저장 안 한 내용이 있으면 파일이 이미 원본과 같아도 묻는다).
+- 편집 창이 열려 있으면 상태 막대에 **편집 창 열림** (저장 안 한 내용이 있으면 **· 저장 안 됨**)이 보이고, 누르면 그 창으로 간다.
+- 메인 창을 닫으면 편집 창도 닫는다 (저장 안 한 창은 먼저 묻고, 취소하면 둘 다 그대로).
+- Word·PowerPoint·Excel 문서는 앱 안에서 직접 편집하지 않는다 → **프로그램에서 열기**로 고친다 (저장하면 미리보기가 따라 바뀐다).
 
 ### AI 대화
 - 오른쪽 **AI 도우미** 창에 할 일을 쓴다. `Enter` 보내기, `Shift+Enter` 줄바꿈.
 - 예: "표 2행 금액 합계 넣어줘", "{{담당자}}를 김선호로 채워줘", "이 문서 PDF로 저장해줘".
 - AI는 Office Kit 문서 도구만 쓴다. 고친 결과는 미리보기에 바로 반영된다.
+- AI는 **저장된 파일**을 고친다. 편집 창에 저장 안 한 내용이 있으면 보내기 전에 묻는다 (**편집 창 보기** / **그대로 보내기** / 취소).
 
 ### 형식별 전용 기능
 찾아 바꾸기·칸 채우기 말고도 형식마다 고유한 기능을 AI와 명령줄에서 쓴다.
@@ -213,11 +236,20 @@ office-kit setup codex --remove     # 연결 해제 (다른 대상도 같음)
 git clone https://github.com/toxh13/office-kit.git
 cd office-kit
 npm install
+npm run editor:build   # 앱 안 한글 편집기 묶음 만들기 (처음 한 번, 아래 참고)
 npm start          # 앱 실행 (Electron)
 npm test           # 시험 (node --test)
-npm run dist       # 설치 파일 → dist/OfficeKit-Setup-<버전>.exe
+npm run dist       # 설치 파일 → dist/OfficeKit-Setup-<버전>.exe (편집기 묶음도 먼저 만든다. 묶음 없이 electron-builder를 바로 돌리면 멈춘다)
 npm run icon       # build/icon.ico · icon.png 다시 그리기
 ```
+
+**오프라인 한글 편집기 묶음** (`npm run editor:build` = `node scripts/build-editor.mjs`)
+- rhwp 저장소의 고정 태그 `v0.8.7`(커밋까지 확인)에서 rhwp-studio를 받아 Rust 없이 빌드한다. `@rhwp/core` 0.8.7의 WASM을 그대로 쓴다.
+- 결과: `vendor/rhwp-studio/`(편집기, 약 22MB) · `vendor/rhwp-editor-sdk/`(연결 SDK). `vendor/`는 만들어지는 폴더라 git에 넣지 않는다.
+- 서비스 워커·샘플 문서는 빼고, 바깥 글꼴 주소는 끈 채로 빌드한다. 받은 소스·의존성 캐시는 `tmp/editor-build` (`OFFICEKIT_EDITOR_CACHE`로 바꿈).
+- 이미 같은 것이 있으면 건너뛴다. `--force` 다시 빌드, `--with-fonts` 오픈 라이선스 웹 글꼴(약 19MB)을 함께 넣음 (기본은 시스템 글꼴).
+- 묶음 없이 `npm start`하면 앱은 그대로 쓰고, **직접 편집**만 "한글 편집기를 열 수 없어요" 안내를 띄운다.
+- rhwp 버전은 함께 올린다: `package.json`의 `@rhwp/core`(정확한 버전)·`@rhwp/editor`, `scripts/build-editor.mjs`의 `TAG`·`COMMIT`·`CORE_VERSION`·`EDITOR_VERSION`.
 
 | 폴더 | 내용 |
 |---|---|
@@ -247,9 +279,10 @@ git tag v0.1.0
 git push origin main v0.1.0
 ```
 
-- 워크플로: [`.github/workflows/release.yml`](.github/workflows/release.yml) — 시험 → `electron-builder --publish always` (`GH_TOKEN` = 기본 `GITHUB_TOKEN`).
+- 워크플로: [`.github/workflows/release.yml`](.github/workflows/release.yml) — 시험 → `npm run editor:build` → `electron-builder --publish always` (`GH_TOKEN` = 기본 `GITHUB_TOKEN`).
+  설치 파일에는 `vendor/rhwp-studio`·`vendor/rhwp-editor-sdk`가 들어간다 (설치 파일은 약 7MB, 설치된 폴더는 약 23MB 늘어남).
 - 수동 실행(Actions → CI · Release → Run workflow)은 초안(draft) Release로 올린다.
-- main push / PR 마다 `npm test` 가 돈다.
+- main push / PR 마다 `npm test` 와 편집기 빌드 스크립트 확인이 돌고, main push에서는 편집기 묶음도 실제로 빌드해 본다 (태그 전에 깨진 것을 알게).
 
 ---
 
@@ -259,6 +292,11 @@ git push origin main v0.1.0
 - **코드 서명 없음.** 처음 실행할 때 SmartScreen 경고가 뜬다.
 - **한컴 보안 모듈이 없으면** 한글 문서의 PDF 변환·정확한 미리보기가 안 된다 (읽기·쓰기는 내장 엔진으로 됨).
 - 내장 엔진(rhwp) 미리보기는 한컴오피스와 글꼴·줄바꿈이 조금 다를 수 있다.
+- 앱 안 한글 편집기(rhwp-studio)는 한컴오피스와 같지 않다: 기본 설치에는 웹 글꼴이 없어 PC에 있는 글꼴로 보이고, 복잡한 개체·서식은 다르게 보이거나 저장될 수 있다.
+  중요한 문서는 저장한 뒤 미리보기(또는 한컴오피스)로 확인한다. `.hwt`(서식 파일)는 저장할 때 HWP 내용으로 쓴다.
+  병합된 칸이 많은 표에 줄·칸을 넣으면 표 모양이 흐트러질 수 있어요 (Ctrl+Z로 되돌리기). 복잡한 서식 문서는 **프로그램에서 열기**로 고치세요.
+  일부 문서는 편집 창에서 표 바로 다음 문단이 표 마지막 줄에 겹쳐 보인다 (rhwp-studio 0.8.7 화면 그리기 문제 — 저장한 파일과 미리보기는 그대로).
+- Word·PowerPoint·Excel은 앱 안에서 직접 편집하지 않는다 (AI 대화 또는 프로그램에서 열기).
 - doc · ppt · xls · rtf · odt · odp · ods 는 해당 프로그램이 있어야 열고 고칠 수 있다 (csv는 읽기와 `excel_edit`의 값 작업을 내장 엔진으로도 한다).
 - Word·PowerPoint 전용 기능(`word_*`·`ppt_*`)은 해당 프로그램이 있어야 한다. PowerPoint 차트 넣기는 작업 동안 최소화된 PowerPoint 창이 잠깐 열린다.
 - 형식별 기능의 작업마다 한계는 [`docs/FEATURES.md`](docs/FEATURES.md) 각 절 끝에 적었다.
@@ -279,8 +317,10 @@ git push origin main v0.1.0
 - [ ] 설치/제거 시험 자동화 (설치 파일을 CI에서 조용히 설치 → 오른쪽 클릭 메뉴 확인 → 제거)
 - [ ] 제거할 때 Claude Desktop·Codex 연결도 함께 정리
 - [ ] 미리보기 글꼴 차이 줄이기 (함초롬 계열 글꼴 안내)
+- [ ] 편집기 웹 글꼴을 설치 파일에 넣을지 결정 (`npm run editor:build -- --with-fonts`, 설치 파일 약 19MB 더 큼)
 - [ ] 영어 README
 
 ## 라이선스
 
-[MIT](LICENSE) © toxh13. 함께 배포하는 오픈소스(rhwp — MIT, Edward Kim 외)는 [LICENSE](LICENSE)의 THIRD-PARTY 항목 참고.
+[MIT](LICENSE) © toxh13. 함께 배포하는 오픈소스(rhwp·rhwp-studio·@rhwp/editor — MIT, Edward Kim 외 / CanvasKit — BSD-3-Clause / @noble/hashes — MIT)는
+[LICENSE](LICENSE)의 THIRD-PARTY 항목과 `vendor/rhwp-studio/THIRD_PARTY_LICENSES.md` 참고.

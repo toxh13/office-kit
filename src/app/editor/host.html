@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <title>한글 편집</title>
+  <link rel="stylesheet" href="host.css">
+  <script type="module" src="host.js"></script>
+</head>
+<body>
+  <!-- 아이콘 모음 -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4.5h11.2L19.5 7.8V18a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5z"/><path d="M8 4.5v4.2h7V4.5"/><rect x="7.5" y="13" width="9" height="6.5" rx="1"/></symbol>
+    <symbol id="i-save-as" viewBox="0 0 24 24"><path d="M12 19.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5h10.2L19.5 7.8v3.7"/><path d="M8 4.5v4.2h7V4.5"/><path d="M17.6 13.6a1.6 1.6 0 0 1 2.3 2.3l-4.6 4.6-3 .7.7-3z"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5"/><path d="M12 16.3v.2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.5 4 4L18.5 7.5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.7v.2"/></symbol>
+  </svg>
+
+  <div class="frame">
+    <header class="bar" id="bar">
+      <span class="kind-badge" id="doc-kind">한글</span>
+      <span class="doc-name" id="doc-name">문서</span>
+      <span class="state-badge" id="doc-state" data-state="loading">불러오는 중</span>
+      <span class="state-badge" id="doc-readonly" data-state="readonly" hidden>읽기 전용</span>
+      <span class="spacer"></span>
+      <button class="btn primary" id="btn-save" type="button" title="저장 (Ctrl+S)" disabled><svg class="i"><use href="#i-save"/></svg><span>저장</span></button>
+      <div class="menu-wrap">
+        <button class="btn ghost" id="btn-save-as" type="button" title="다른 이름으로 저장 (Ctrl+Shift+S)" aria-haspopup="menu" aria-expanded="false" aria-controls="save-as-menu" disabled><svg class="i"><use href="#i-save-as"/></svg><span>다른 이름으로 저장</span><svg class="i caret"><use href="#i-chevron-down"/></svg></button>
+        <div class="menu" id="save-as-menu" role="menu" hidden>
+          <button class="menu-item" type="button" role="menuitem" data-ext="hwpx"><span>한글 문서 (.hwpx)</span><small>최신 형식</small></button>
+          <button class="menu-item" type="button" role="menuitem" data-ext="hwp"><span>한글 문서 (.hwp)</span><small>예전 형식</small></button>
+        </div>
+      </div>
+      <span class="vsep" aria-hidden="true"></span>
+      <button class="btn ghost" id="btn-close" type="button" title="닫기 (Ctrl+W)"><svg class="i"><use href="#i-x"/></svg><span>닫기</span></button>
+    </header>
+
+    <div class="banner" id="banner" role="alert" hidden>
+      <svg class="i"><use href="#i-alert"/></svg>
+      <span class="banner-text" id="banner-text"></span>
+      <span class="banner-actions" id="banner-actions"></span>
+    </div>
+
+    <main class="stage" id="stage">
+      <div class="editor" id="editor"></div>
+      <div class="overlay" id="loading">
+        <div class="loading-card"><span class="spinner" aria-hidden="true"></span><span id="loading-text">편집기를 준비하는 중…</span></div>
+      </div>
+      <div class="overlay" id="failure" hidden>
+        <div class="failure-card" role="alert">
+          <svg class="i big"><use href="#i-alert"/></svg>
+          <h1 id="failure-title">편집기를 열 수 없습니다</h1>
+          <p id="failure-reason"></p>
+          <p class="detail" id="failure-detail" hidden></p>
+          <button class="btn" id="btn-failure-close" type="button">닫기</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld('officeKit', {
     openInApp: invoke('doc:openInApp'),
     savePdf: invoke('doc:savePdf'),
     showInFolder: invoke('doc:showInFolder'),
+    // 한글 편집 창 열기 (이미 열려 있으면 앞으로)
+    edit: invoke('doc:edit'),
+    // 새 문서
+    newInfo: invoke('doc:newInfo'),
+    newCheck: invoke('doc:newCheck'),
+    pickFolder: invoke('doc:pickFolder'),
+    create: invoke('doc:new'),
   },
 
   recent: {
@@ -69,6 +76,8 @@ contextBridge.exposeInMainWorld('officeKit', {
   on: {
     docOpened: subscribe('doc:opened'),
     docChanged: subscribe('doc:changed'),
+    /** 편집 창 상태 { path, open, dirty } */
+    docEditor: subscribe('doc:editor'),
     aiEvent: subscribe('ai:event'),
     menu: subscribe('menu'),
     toast: subscribe('toast'),

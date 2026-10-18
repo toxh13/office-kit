@@ -121,8 +121,9 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
     /**
      * 원본 복사. 같은 내용의 백업이 이미 있으면 새로 만들지 않고 그것을 돌려준다 → { file, path, time, source, reused }
      * protect: 정리할 때 지우면 안 되는 백업(파일 이름 또는 항목) — 열린 문서의 '원래대로' 기준 등
+     * maxPerSource: 이 문서의 백업은 최근 n개만 (protect·방금 것은 남기고 개수에 센다). 0이면 따로 세지 않음
      */
-    backup(source, now = new Date(), { protect = [] } = {}) {
+    backup(source, now = new Date(), { protect = [], maxPerSource = 0 } = {}) {
       source = resolve(source);
       const list = load();
       const hash = hashFile(source);
@@ -140,6 +141,15 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
       }
       // 오래 안 쓴 것부터 지워 keep개만 남긴다. 방금 것과 protect는 남긴다
       const keepSet = new Set([entry.file, ...[].concat(protect).map(nameOf).filter(Boolean)]);
+      // 이 문서 몫: 자주 저장해도 다른 문서의 백업을 밀어내지 않게 최근 maxPerSource개만
+      if (maxPerSource > 0) {
+        let kept = 0;
+        for (const e of forSource(list, source)) {
+          if (keepSet.has(e.file) || kept < maxPerSource) { kept++; continue; }
+          try { rmSync(join(dir, e.file), { force: true }); } catch { continue; }
+          list.splice(list.indexOf(e), 1);
+        }
+      }
       list.sort((a, b) => lastUse(a) - lastUse(b));
       for (let i = 0; list.length > keep && i < list.length;) {
         if (keepSet.has(list[i].file)) { i++; continue; }
