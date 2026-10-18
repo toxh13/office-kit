@@ -1,0 +1,4 @@
+# 바이트가 그대로여야 하는 파일 (SHA-256으로 확인하거나 그대로 배포) — 줄 끝을 바꾸지 않는다
+LICENSES/** -text
+patches/** -text
+test/fixtures/** -text
