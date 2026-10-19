@@ -1,6 +1,6 @@
 # CI · 배포
-#  - main push / PR: npm test (+ main push: 한글·Office 편집기 묶음 빌드 확인)
-#  - v* 태그 push: 시험 → 한글 편집기(rhwp-studio)·Office 편집기(vendor/office-editor) 묶음 → NSIS 설치 파일을 만들어
+#  - main push / PR: 한글→PDF 변환 프로그램(rhwp 명령줄) 받기 → npm test (+ main push: 한글·Office 편집기 묶음 빌드 확인)
+#  - v* 태그 push: 시험 → 한글 편집기(rhwp-studio)·Office 편집기(vendor/office-editor)·rhwp 명령줄(vendor/rhwp-cli) 묶음 → NSIS 설치 파일을 만들어
 #    GitHub Release에 올림 → Office 편집기 소스 꾸러미(AGPL 6조)를 같은 Release에 붙임 → 둘 다 있으면 공개
 #  - 수동 실행(workflow_dispatch): 같은 빌드를 초안(draft) Release로 올림
 name: CI · Release
@@ -35,6 +35,20 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # 한글→PDF 시험(test/hwp-pdf.test.mjs)에 rhwp.exe가 필요하다: 고정 크기·SHA-256으로 받아 vendor/rhwp-cli에 넣는다.
+      # 받은 zip은 고정 값 파일(빌드 스크립트)의 해시를 키로 캐시 — 고정 값을 올리면 새로 받는다
+      - name: rhwp 명령줄 받은 파일 캐시
+        uses: actions/cache@v4
+        with:
+          path: tmp/rhwp-cli-build/download
+          key: rhwp-cli-${{ hashFiles('scripts/build-rhwp-cli.mjs') }}
+      - name: 한글→PDF 변환 프로그램 (rhwp v0.8.7 → vendor/rhwp-cli)
+        shell: bash
+        run: |
+          node --check scripts/build-rhwp-cli.mjs
+          node scripts/build-rhwp-cli.mjs --help
+          npm run rhwp-cli:build
+          node scripts/build-rhwp-cli.mjs --verify
       - run: npm test
       # 한글 편집기 빌드 스크립트: 문법·옵션은 늘, 실제 빌드는 main push에서 (태그 전에 깨진 것을 알게)
       - name: 한글 편집기 빌드 스크립트 확인
@@ -129,6 +143,19 @@ jobs:
         run: |
           npm run office-editor:build
           node scripts/build-office-editor.mjs --verify
+
+      # 한글→PDF 변환 프로그램(rhwp 명령줄): Release zip을 고정 크기·SHA-256으로 받아 rhwp.exe·LICENSE·THIRD_PARTY_LICENSES.md를 vendor/rhwp-cli에.
+      # 없거나 크기가 다르면 beforePack(scripts/check-editor-bundle.cjs)이 빌드를 멈춘다.
+      - name: rhwp 명령줄 받은 파일 캐시
+        uses: actions/cache@v4
+        with:
+          path: tmp/rhwp-cli-build/download
+          key: rhwp-cli-${{ hashFiles('scripts/build-rhwp-cli.mjs') }}
+      - name: 한글→PDF 변환 프로그램 (rhwp v0.8.7 → vendor/rhwp-cli)
+        shell: bash
+        run: |
+          npm run rhwp-cli:build
+          node scripts/build-rhwp-cli.mjs --verify
 
       # electron-builder는 파일마다 따로 Release를 찾다가 동시에 "없음"을 보고 Release를 두 개 만든다
       # (v0.1.0·v0.1.1에서 설치 파일과 .blockmap이 서로 다른 Release로 갈라짐).

@@ -20,6 +20,7 @@
 
 - 한컴오피스·MS Office가 **없어도** 한글/Word/PowerPoint/Excel 파일을 읽고 고칠 수 있다 (내장 엔진).
 - 프로그램이 **있으면** 그 프로그램으로 원본 그대로 처리하고 PDF도 만든다.
+- 한글 문서는 한컴오피스가 **없어도 PDF로 저장**된다 (내장 엔진, 미리보기와 같은 모양).
 
 ---
 
@@ -125,6 +126,22 @@ AI는 먼저 구조를 살펴보고(`…_inspect`) 번호를 확인한 뒤 고�
 - 프로그램으로 만든 PDF는 기억해 두고 파일(크기·수정 시각)이 그대로면 다시 쓴다 → 다시 열 때 바로 보인다. 처음 만들 때는 걸린 시간을 상태 막대에 보여 준다.
 - Excel은 미리보기·AI 쪽 그림(`office_page_image`)에서 **시트마다 한 쪽 너비**에 맞춘다 (넓은 표·차트가 여러 쪽으로 잘리지 않게). 임시 사본에서만 바꾸고 파일의 인쇄 설정은 그대로다 — **PDF로 저장**은 문서의 인쇄 설정대로.
 - 미리보기(내장 엔진)는 표 다음 문단을 표의 바깥 아래 여백만큼 띄운다 (한글과 같게, 파일은 그대로).
+
+### PDF로 저장
+상단 **PDF로 저장**, AI에게 "PDF로 저장해줘", MCP `office_convert`, 명령줄 `office-kit convert 보고서.hwp 보고서.pdf` 모두 같은 규칙이다.
+
+| 형식 | 프로그램이 있으면 | 없으면 |
+|---|---|---|
+| 한글 (hwp·hwpx·hwt) | 한컴오피스 + 자동화 보안 모듈로 (원본 그대로) | **내장 엔진(rhwp)으로** — 결과에 "엔진: 내장(rhwp)" 표시 |
+| Word·PowerPoint·Excel | 그 프로그램으로 | 만들 수 없음 |
+
+내장 엔진 PDF (`vendor/rhwp-cli/rhwp.exe`, rhwp v0.8.7 명령줄 프로그램, MIT):
+- **인터넷 없이**, 한컴오피스·Chromium 없이 만든다. 앱 미리보기와 같은 rhwp 조판 엔진(같은 판)으로 그려 **미리보기와 같은 모양**이다.
+- 글자는 PDF 글꼴로 들어간다 (이 PC 글꼴에서 쓴 글자만, 예: 함초롬바탕·맑은 고딕) → **글자 선택·검색이 된다**. 쪽 크기·가로 방향·머리말·꼬리말·쪽 번호·표·그림 그대로.
+- 한컴오피스 PDF와 다른 점: 글꼴이 PC에 없으면 비슷한 글꼴(바탕·맑은 고딕)로 바뀌고, 줄바꿈·쪽 나눔이 조금 다를 수 있다.
+  글자를 한 자씩 놓아서 PDF 뷰어에 따라 복사한 글에 띄어쓰기가 빠질 수 있다. 큰 문서는 느리다 (약 0.5초/쪽, 77쪽 문서 약 40초).
+- 빈 누름틀의 안내문(미리보기의 빨간 글)은 PDF에 나오지 않는다 (한컴오피스 인쇄와 같음). 채운 값은 나온다.
+- 원본 파일은 건드리지 않는다 (미리보기용 사본을 임시 폴더에서 PDF로 만든 뒤 고른 자리에 옮긴다).
 
 ---
 
@@ -232,8 +249,8 @@ office-kit setup codex --remove     # 연결 해제 (다른 대상도 같음)
 
 | 상태 | 한글 문서 처리 |
 |---|---|
-| 모듈 없음 (기본) | 내장 엔진(rhwp)으로 읽기·쓰기. PDF 변환·정확한 미리보기는 불가 |
-| 모듈 등록됨 | 한컴오피스로 처리. PDF 변환·정확한 미리보기 가능 |
+| 모듈 없음 (기본) | 내장 엔진(rhwp)으로 읽기·쓰기·**PDF 저장**. 정확한 미리보기(한컴 PDF)는 불가 |
+| 모듈 등록됨 | 한컴오피스로 처리. PDF도 한컴으로 (원본 그대로), 정확한 미리보기 가능 |
 
 등록하기:
 - 앱: 설정 → **한글 자동화** → **한글 자동화 연결** (한컴 공식 배포본을 받아 등록) 또는 **직접 DLL 선택…**
@@ -257,6 +274,7 @@ cd office-kit
 npm install
 npm run editor:build   # 앱 안 한글 편집기 묶음 만들기 (처음 한 번, 아래 참고)
 npm run office-editor:build   # 앱 안 문서·표·슬라이드 편집기 묶음 만들기 (처음 한 번, 약 100MB 받음)
+npm run rhwp-cli:build   # 한글→PDF 변환 프로그램 받기 (처음 한 번, 약 19MB 받음)
 npm start          # 앱 실행 (Electron)
 npm test           # 시험 (node --test)
 npm run dist       # 설치 파일 → dist/OfficeKit-Setup-<버전>.exe (편집기 묶음도 먼저 만든다. 묶음 없이 electron-builder를 바로 돌리면 멈춘다)
@@ -270,6 +288,14 @@ npm run icon       # build/icon.ico · icon.png 다시 그리기
 - 이미 같은 것이 있으면 건너뛴다. `--force` 다시 빌드, `--with-fonts` 오픈 라이선스 웹 글꼴(약 19MB)을 함께 넣음 (기본은 시스템 글꼴).
 - 묶음 없이 `npm start`하면 앱은 그대로 쓰고, **직접 편집**만 "한글 편집기를 열 수 없어요" 안내를 띄운다.
 - rhwp 버전은 함께 올린다: `package.json`의 `@rhwp/core`(정확한 버전)·`@rhwp/editor`, `scripts/build-editor.mjs`의 `TAG`·`COMMIT`·`CORE_VERSION`·`EDITOR_VERSION`.
+
+**한글→PDF 변환 프로그램** (`npm run rhwp-cli:build` = `node scripts/build-rhwp-cli.mjs`)
+- rhwp v0.8.7 GitHub Release의 `rhwp-v0.8.7-windows-x86_64.zip`을 받아 크기·SHA-256을 확인하고, `rhwp.exe`·`LICENSE`(역시 고정 SHA-256)와
+  같은 태그 커밋의 `THIRD_PARTY_LICENSES.md`를 `vendor/rhwp-cli/`에 넣는다 (약 47MB). `rhwp.exe --version`도 확인한다.
+- `node_modules/@rhwp/core`가 정확히 0.8.7이 아니면 멈춘다 (PDF와 미리보기가 같은 엔진 판이어야 같은 모양).
+- `--verify` 고정 값 그대로인지 확인만, `--force` 다시 만듦, `--offline` 캐시만. 받은 파일 캐시: `tmp/rhwp-cli-build/download` (`OFFICEKIT_RHWP_CLI_CACHE`로 바꿈).
+- 없이 `npm start`하면 한컴오피스(+보안 모듈)가 없는 PC에서 한글 PDF 저장만 "내장 PDF 변환 프로그램이 없습니다"를 알린다.
+  다른 위치의 rhwp를 쓰려면 `OFFICEKIT_RHWP_CLI`, 시간 제한(기본 60초 + 쪽당 5초, 최대 20분)은 `OFFICEKIT_RHWP_TIMEOUT_MS`.
 
 **오프라인 문서·표·슬라이드 편집기 묶음** (`npm run office-editor:build` = `node scripts/build-office-editor.mjs`)
 - filex-office-editor v0.3.1 릴리스의 `ui.zip`(ONLYOFFICE Docs CE 9.4.0.129 편집기 + x2t 변환기)을 받아 크기·SHA-256과 파일마다의 SHA-256을 확인한다.
@@ -308,10 +334,10 @@ git tag v0.1.0
 git push origin main v0.1.0
 ```
 
-- 워크플로: [`.github/workflows/release.yml`](.github/workflows/release.yml) — 시험 → `npm run editor:build` → `npm run office-editor:build` → `electron-builder --publish always` (`GH_TOKEN` = 기본 `GITHUB_TOKEN`)
+- 워크플로: [`.github/workflows/release.yml`](.github/workflows/release.yml) — 시험(먼저 `npm run rhwp-cli:build`) → `npm run editor:build` → `npm run office-editor:build` → `npm run rhwp-cli:build` → `electron-builder --publish always` (`GH_TOKEN` = 기본 `GITHUB_TOKEN`)
   → Office 편집기 소스 꾸러미 `office-editor-source-<버전>.zip`을 같은 Release에 붙인다.
   설치 파일에는 `vendor/rhwp-studio`·`vendor/rhwp-editor-sdk`(설치 파일 약 7MB, 설치 폴더 약 23MB 늘어남)와
-  `vendor/office-editor`(설치 파일 약 50~65MB, 설치 폴더 약 213MB 늘어남)가 들어간다.
+  `vendor/office-editor`(설치 파일 약 50~65MB, 설치 폴더 약 213MB 늘어남), `vendor/rhwp-cli`(설치 파일 약 14MB, 설치 폴더 약 47MB 늘어남)가 들어간다.
 - **남에게 배포하기 전에** [`docs/LICENSES-OFFICE-EDITOR.md`](docs/LICENSES-OFFICE-EDITOR.md)의 체크리스트 (법률 검토, 거울 저장소, 소스 꾸러미 확인).
 - 수동 실행(Actions → CI · Release → Run workflow)은 초안(draft) Release로 올린다.
 - main push / PR 마다 `npm test` 와 편집기 빌드 스크립트 확인이 돌고, main push에서는 편집기 묶음도 실제로 빌드해 본다 (태그 전에 깨진 것을 알게).
@@ -322,7 +348,9 @@ git push origin main v0.1.0
 
 - **Windows 전용.** COM 자동화와 설치 파일이 Windows 기준이다.
 - **코드 서명 없음.** 처음 실행할 때 SmartScreen 경고가 뜬다.
-- **한컴 보안 모듈이 없으면** 한글 문서의 PDF 변환·정확한 미리보기가 안 된다 (읽기·쓰기는 내장 엔진으로 됨).
+- **한컴 보안 모듈이 없으면** 한글 문서의 정확한 미리보기(한컴 PDF)가 안 된다. 읽기·쓰기·PDF 저장은 내장 엔진으로 된다 —
+  내장 엔진 PDF는 한컴오피스 PDF와 글꼴·줄바꿈·쪽 나눔이 조금 다를 수 있고, 큰 문서는 느리다 (위 'PDF로 저장').
+- 한글 이외의 PDF 변환(docx·pptx·xlsx → pdf)과 한글 → docx·odt·txt·html 변환은 해당 프로그램이 있어야 한다.
 - 내장 엔진(rhwp) 미리보기는 한컴오피스와 글꼴·줄바꿈이 조금 다를 수 있다.
 - 앱 안 한글 편집기(rhwp-studio)는 한컴오피스와 같지 않다: 기본 설치에는 웹 글꼴이 없어 PC에 있는 글꼴로 보이고, 복잡한 개체·서식은 다르게 보이거나 저장될 수 있다.
   중요한 문서는 저장한 뒤 미리보기(또는 한컴오피스)로 확인한다. `.hwt`(서식 파일)는 저장할 때 HWP 내용으로 쓴다.
@@ -364,6 +392,7 @@ git push origin main v0.1.0
 
 [MIT](LICENSE) © toxh13. 함께 배포하는 오픈소스(rhwp·rhwp-studio·@rhwp/editor — MIT, Edward Kim 외 / CanvasKit — BSD-3-Clause / @noble/hashes — MIT)는
 [LICENSE](LICENSE)의 THIRD-PARTY 항목과 `vendor/rhwp-studio/THIRD_PARTY_LICENSES.md` 참고.
+한글→PDF 변환 프로그램 `vendor/rhwp-cli/rhwp.exe`는 rhwp v0.8.7 Release의 바이너리 그대로다 (MIT, `vendor/rhwp-cli/`에 LICENSE·THIRD_PARTY_LICENSES.md 동봉).
 
 **예외 — AGPL인 것**: 문서·표·슬라이드 편집 창의 편집기 묶음 `vendor/office-editor/`와, 이 저장소에서 머리에
 `SPDX-License-Identifier: AGPL-3.0-or-later`·`AGPL-3.0-only`가 붙은 파일(`patches/office-editor/`의 filex 패치 — AGPL-3.0-or-later, `src/app/office-editor/fonts/`의 글꼴 목록 생성기 — AGPL-3.0-only + ONLYOFFICE 추가 조항)은 MIT가 아니라 **GNU AGPL 3판**이다. 전문: [`LICENSES/AGPL-3.0.txt`](LICENSES/AGPL-3.0.txt), 추가 조항: [`LICENSES/ONLYOFFICE-additional-terms.txt`](LICENSES/ONLYOFFICE-additional-terms.txt).

@@ -910,7 +910,8 @@
       if (pick?.canceled) return;
       setBusy('pdf', 'PDF 만드는 중…');
       const r = await call(K.doc.savePdf({ step: 'make' }));
-      toast(`PDF로 저장했어요: ${baseName(r.output)}`, { type: 'success', action: { label: '폴더에서 보기', run: () => call(K.shell.showItem(r.output)).catch(showError) } });
+      // 한컴오피스 없이 내장 엔진(rhwp)으로 만든 한글 PDF는 그렇다고 알린다 (한컴과 글꼴·줄바꿈이 조금 다를 수 있음)
+      toast(`PDF로 저장했어요${r.note ? ' (내장 엔진)' : ''}: ${baseName(r.output)}`, { type: 'success', action: { label: '폴더에서 보기', run: () => call(K.shell.showItem(r.output)).catch(showError) } });
     } catch (err) { showError(err); } finally { clearBusy('pdf'); }
   }
 
@@ -1846,7 +1847,7 @@
             where ? h('br') : null, where ? h('code', { text: where }) : null, page ? ` (한컴 개발자센터 ${page} 안내)` : null),
           h('li', { text: '받은 파일은 이 PC의 Office Kit 데이터 폴더에 저장합니다.' }),
           h('li', {}, '현재 사용자 레지스트리(', h('code', { text: 'HKCU\\Software\\HNC\\HwpAutomation\\Modules' }), ')에 등록합니다. 관리자 권한은 필요 없어요.')),
-        '등록하면 한글 프로그램으로 PDF 저장과 정확한 미리보기를 할 수 있어요. 문서 내용은 어디로도 보내지 않습니다.',
+        '등록하면 한글 프로그램으로 원본과 똑같은 PDF 저장과 정확한 미리보기를 할 수 있어요. 문서 내용은 어디로도 보내지 않습니다.',
       ] : [
         '가지고 있는 한컴 자동화 보안 승인 모듈(DLL)을 직접 고릅니다.',
         h('p', {}, '고른 파일을 현재 사용자 레지스트리(', h('code', { text: 'HKCU\\Software\\HNC\\HwpAutomation\\Modules' }), ')에 등록합니다. 한컴에서 받은 파일만 선택하세요.'),

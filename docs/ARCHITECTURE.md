@@ -13,13 +13,16 @@ src/app/       Electron 앱 (main.mjs, preload.cjs, renderer/, ai.mjs)
                편집 창 (종류 kind = 'hwp' | 'office'): editor-window.mjs(창·저장·감시), editor-server.mjs(127.0.0.1·.2·.3 정적 서버)
                한글: editor/(host 페이지·preload) / 문서·표·슬라이드: office-editor/(host 페이지·preload, fonts/ 글꼴 목록 생성기 — AGPL)
 src/core/ooxml-fixups.mjs  Office 편집 창이 저장한 docx·xlsx·pptx를 Office가 경고 없이 열게 고치기
+src/core/hwppdf.mjs  한컴오피스 없이 한글 → PDF (vendor/rhwp-cli/rhwp.exe 실행)
 scripts/com/   office.ps1 — 설치된 프로그램을 COM으로 조작. 형식별 작업은 word-ops.ps1, ppt-ops.ps1, excel-ops.ps1
 scripts/build-editor.mjs  한글 편집기 묶음 만들기 (rhwp-studio v0.8.7 → vendor/)
 scripts/build-office-editor.mjs  Office 편집기 묶음 만들기 (filex-office-editor v0.3.1 ui.zip → vendor/office-editor), 고정 값·규칙은 scripts/office-editor/
+scripts/build-rhwp-cli.mjs  한글→PDF 변환 프로그램 받기 (rhwp v0.8.7 Release zip, 고정 SHA-256 → vendor/rhwp-cli)
 scripts/make-office-source.mjs   Office 편집기 AGPL 소스 꾸러미 (office-editor-source-<버전>.zip)
 patches/office-editor/filex/     filex 앱 패치 (AGPL-3.0-or-later)
 LICENSES/                        AGPL 3판 전문·ONLYOFFICE 추가 조항·편집기 기계어 제3자 고지 (third-party.mjs가 만듦)
-vendor/        만들어지는 폴더 (git 밖): rhwp-studio/ 편집기, rhwp-editor-sdk/ 연결 SDK, office-editor/ 문서·표·슬라이드 편집기 (AGPL)
+vendor/        만들어지는 폴더 (git 밖): rhwp-studio/ 편집기, rhwp-editor-sdk/ 연결 SDK, office-editor/ 문서·표·슬라이드 편집기 (AGPL),
+               rhwp-cli/ 한글→PDF 변환 프로그램 (rhwp.exe, MIT)
 build/         아이콘, NSIS 추가 설정
 ```
 
@@ -44,6 +47,7 @@ MCP 도구  src/mcp/tools/<형식>.mjs ─┐
 - 한컴은 **자동화 보안 모듈**(`HKCU\Software\HNC\HwpAutomation\Modules` 의 `FilePathCheckerModule`)이 없으면
   파일마다 "접근 허용" 창이 떠서 멈춘다 → 모듈 없으면 자동 작업은 rhwp로 처리 (`comAvailableFor(ext, {interactive})`).
   형식별 한글 기능(`hwp_inspect`·`hwp_edit`)은 모듈과 상관없이 늘 rhwp다.
+- 한글 → PDF는 한컴(+모듈)이 있으면 app, 없으면 rhwp 명령줄 프로그램(아래 'src/core/hwppdf.mjs'). 한컴 COM은 모듈이 없으면 부르지 않는다.
 - 형식별 Word·PowerPoint 기능은 app 엔진만, Excel은 둘 다 (`excel_inspect` auto = 파일 엔진 우선, `excel_edit` auto = Excel 우선).
 - 자동화로 여는 Office 문서는 매크로를 막는다 (`AutomationSecurity = 3`, 사람이 보는 창은 2).
 - COM 호출의 줄 세우기·시간 초과는 아래 '시간 초과와 잠금'.
@@ -54,7 +58,10 @@ MCP 도구  src/mcp/tools/<형식>.mjs ─┐
 |---|---|---|
 | `OFFICEKIT_WRITE_ROOTS` | MCP 서버 | 저장을 허락할 폴더들 (`;` 구분). 앱 안 AI 대화는 열린 문서의 폴더만 넘긴다 |
 | `OFFICEKIT_POWERSHELL` | core/com | 시험용 PowerShell 경로 바꿔 끼우기 |
-| `OFFICEKIT_SMOKE`, `_CHAT`, `_SETTINGS`, `_NEWDOC`, `_EDITOR` | 앱 | 화면 캡처 확인 모드 (`_EDITOR=1`: 편집 창도 열어 `<png>-editor.png`로 찍음) |
+| `OFFICEKIT_RHWP_CLI` | core/hwppdf | 한글→PDF에 쓸 rhwp 실행 파일 (기본 `vendor/rhwp-cli/rhwp.exe`). 시험·다른 OS용 |
+| `OFFICEKIT_RHWP_TIMEOUT_MS` | core/hwppdf | 한글→PDF 시간 제한 (기본 60초 + 쪽당 5초, 최대 20분) |
+| `OFFICEKIT_RHWP_CLI_CACHE` | build-rhwp-cli | 받은 rhwp zip·THIRD_PARTY_LICENSES.md 캐시 폴더 (기본 `tmp/rhwp-cli-build/download`) |
+| `OFFICEKIT_SMOKE`, `_CHAT`, `_SETTINGS`, `_NEWDOC`, `_EDITOR` | 앱 | 화면 캡처 확인 모드 (`_EDITOR=1`: 편집 창도 열어 `<png>-editor.png`로 찍음, `_PDF=<경로>`: 'PDF로 저장' 단추를 눌러 저장 대화상자 대신 그 경로에 만들고 알림까지 확인 → `[smoke]` 줄의 `pdf`) |
 | `OFFICEKIT_EDITOR_VENDOR` | 앱(개발용) | 편집기 묶음 폴더 바꾸기 (`<폴더>/rhwp-studio`, `rhwp-editor-sdk`). 없는 폴더 = 묶음 없음 시험 |
 | `OFFICEKIT_EDITOR_TEST=1` | 앱(개발용) | 편집 창 host 페이지에 시험 고리 `window.__editorTest` (`?test=1`) |
 | `OFFICEKIT_EDITOR_CACHE` | build-editor | rhwp 소스·의존성 캐시 폴더 (기본 `tmp/editor-build`) |
@@ -74,7 +81,9 @@ MCP 도구  src/mcp/tools/<형식>.mjs ─┐
 `readDocument(path, {engine})`, `documentInfo(path)`, `replaceText(path, pairs, {output, engine})`,
 `listFields(path)`, `fillFields(path, values, {output, engine})`, `setCells(path, cells, {sheet, output, engine})`,
 `convertDocument(path, output)`, `renderPreview(path, outDir, {mode})`, `openInApp(path)`,
-`createDocument(output, markdown)`, `probe()`, `Hwp`, `OPENABLE_EXTS`, `extOf`, `kindOf`.
+`createDocument(output, markdown)`, `probe()`, `Hwp`, `OPENABLE_EXTS`, `extOf`, `kindOf`, `hwpPdfStatus()`, `HWP_PDF_NOTE`.
+- `convertDocument` → `{engine, output, pages?, note?}`. 한글 → pdf: 한컴(+보안 모듈)이 있으면 `engine:'hwp'`, 없으면 `hwpToPdf`로 `engine:'rhwp'` +
+  `pages`·`note`(`HWP_PDF_NOTE`: 한컴 없이 내장 엔진으로 만듦 — 화면·MCP·명령줄이 이 안내를 그대로 보여 준다).
 - `output` 생략 = 원본 덮어쓰기. engine: `'auto' | 'app' | 'file'`.
 - `renderPreview` → `{kind:'pdf', file}` | `{kind:'svg', pages}` | `{kind:'text', docKind, ...readDocument}`.
   프로그램 PDF는 임시 폴더에 받은 뒤 `outDir`로 옮긴다 (MSIX 앱 안에서 실행되면 가상화된 `%APPDATA%`를 Office가 못 본다).
@@ -91,6 +100,18 @@ MCP 도구  src/mcp/tools/<형식>.mjs ─┐
   변환은 `index.mjs`의 `previewPdf`: Excel은 임시 사본을 시트마다 한 쪽 너비로(`fitWidth` → `Set-XlFitWidth`: Zoom 끔, FitToPagesWide 1, FitToPagesTall 끔) 내보낸다 — 넓은 표·차트가 쪽마다 잘리지 않게. 원본은 건드리지 않는다. 앱 미리보기도 같은 함수.
 - 한글 미리보기(`Hwp.openForView`): rhwp가 표의 바깥 아래 여백을 무시하므로 화면용 사본에서만 표 다음 문단의 문단 위 간격에 그 여백을 더한다 (`_gapAfterTables`).
 - `.pdf` 입력도 바로 처리.
+
+### src/core/hwppdf.mjs
+`hwpToPdf(path, output, {timeoutMs}) → {engine:'rhwp', output, pages, bytes, ms}`, `hwpPdfStatus() → {ok, path, reason?}`.
+- 한컴오피스 없이 한글(hwp·hwpx·hwt) → PDF. Node만으로 돈다 (Electron·Chromium 불필요) → 앱·MCP(`ELECTRON_RUN_AS_NODE`)·명령줄이 같은 길.
+- 순서: `Hwp.openForView`(미리보기와 같은 화면용 사본: 표 다음 문단 간격, 줄 정보 없는 hwpx는 hwp로 거침) → `toBytes('hwp')` → 임시 폴더 `doc.hwp`
+  → `rhwp.exe export-pdf doc.hwp -o doc.pdf --backend svg --json --fallback-serif Batang --fallback-sans "Malgun Gothic" --fallback-mono GulimChe`
+  (`execFile`, 셸 없이, 작업 폴더 = 임시 폴더, 시간 제한이 지나면 강제 종료) → `%PDF-` 확인 → 같은 폴더 임시 이름에 복사 후 이름 바꿔 `output`에 → 임시 폴더 지움.
+- 원본은 읽기만 한다. `--json` 결과(stdout 마지막 줄)의 `pageCount`를 쪽 수로 돌려준다.
+- 엔진 고르기(2026-10 시험, `tmp/hwp-pdf`): ① rhwp 명령줄 svg 방식 — 미리보기와 같은 모양, 글자 100% 선택·검색(ToUnicode), 부분 글꼴, Node만으로 됨, 느림(약 0.5초/쪽).
+  ② rhwp `--backend direct` — 빠르지만(77쪽 4초) 굵기가 틀리고 그러데이션이 든 문서는 실패 → 쓰지 않음.
+  ③ rhwp SVG → 숨긴 BrowserWindow → `printToPDF` — 빠르지만(77쪽 10초) 장평(가로 비율)이 든 글자를 Type3 그림 글꼴로 넣어 실제 공문서에서 한글 글자의 절반 가까이가
+  검색되지 않았고, MCP·명령줄에서는 Electron을 따로 띄워야 함 → 쓰지 않음.
 
 ### src/mcp/server.mjs
 stdio MCP 서버 `office-kit`. stdout은 프로토콜 전용, 로그는 stderr.
@@ -399,6 +420,12 @@ docx·xlsx·pptx를 앱 안에서 고치는 창. 한글 편집 창과 같은 틀
     (`RHWP_WITHOUT_HWPCTRL=1`, `RHWP_DISABLE_EXTERNAL_WEBFONTS=1`, `--base=./`) → 샘플·서비스 워커(PWA)·manifest를 빼고 index.html에서 등록 코드를 지운다
     (남아 있으면 빌드 실패) → 라이선스 파일과 `VERSION.json`(파일마다 크기·sha256)을 넣어 `vendor/`로 바꿔 놓는다. 같은 것이 있으면 건너뛴다.
   - `@rhwp/editor`(SDK)는 devDependency로 받아 필요한 세 파일만 `vendor/rhwp-editor-sdk`에 복사한다 (`node_modules`로는 배포하지 않음).
+- 한글→PDF 변환 프로그램 `vendor/rhwp-cli`(rhwp.exe 약 47MB, 설치 파일 약 +14MB)도 들어간다. `npm run dist`/`release`와 CI가 `npm run rhwp-cli:build`를 돈다.
+  - `scripts/build-rhwp-cli.mjs`: rhwp v0.8.7 Release의 `rhwp-v0.8.7-windows-x86_64.zip`(고정 크기·SHA-256) → `rhwp.exe`·`LICENSE`(고정 SHA-256)를 꺼내고
+    같은 태그 커밋의 `THIRD_PARTY_LICENSES.md`(고정 SHA-256)와 `VERSION.json`을 쓴다. `rhwp.exe --version`이 `rhwp v0.8.7`인지, `@rhwp/core`가 정확히 0.8.7인지 확인.
+    `--verify`는 받지 않고 고정 값과 맞춰 보기만. CI는 받은 zip을 캐시하고(키 = 스크립트 해시), 시험 작업도 먼저 받는다(`test/hwp-pdf.test.mjs`).
+  - `beforePack`이 `vendor/rhwp-cli`의 네 파일과 `VERSION.json`에 적힌 크기를 확인한다 (없으면 설치 파일을 만들지 않음).
+  - rhwp를 올릴 때 `@rhwp/core`·`build-editor.mjs`·`build-rhwp-cli.mjs`를 함께 올린다 (미리보기·편집기·PDF가 같은 엔진 판).
 - Office 편집기 묶음 `vendor/office-editor`도 들어간다 (설치 파일 약 +50~65MB, 설치 폴더 약 +213MB). `npm run dist`/`release`와 CI가 `editor:build` 다음에 `office-editor:build`를 돈다.
   - 고정 값(filex 태그·커밋·`ui.zip` SHA-256, x2t SHA-256, ONLYOFFICE 판)은 `scripts/office-editor/pins.mjs` 한 곳. 올릴 때 `make-office-source.mjs`의 소스 주소(같은 태그의 커밋)와
     `docs/office-editor-legal-ko.md`도 함께 바꾼다 (`make-office-source.mjs`가 서로 맞는지 확인하고, 다르면 멈춘다).

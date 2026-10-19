@@ -28,6 +28,7 @@ const HELP = `office-kit ${VERSION} — 한글·Word·PowerPoint·Excel 문서 �
   cells <파일> <셀.json> [--sheet 시트] [-o 출력]
                                       엑셀 셀 쓰기. {"A1":"제목","B2":120,"C2":"=SUM(B2:B9)"}
   convert <입력> <출력>               형식 변환 (pdf, hwp↔hwpx, docx 등 — 출력 확장자로 결정)
+                                      한글→pdf는 한컴오피스(+자동화 연결)가 있으면 한컴으로, 없으면 내장 엔진(rhwp)으로
   new <원고.md> <출력> [--force]      원고로 새 문서 만들기 (.hwp .hwpx .docx .pptx .xlsx)
   image <파일> [쪽] [-o 그림.png] [--dpi 110]
                                       한 쪽을 PNG 그림으로 저장 (PowerPoint는 쪽 = 슬라이드 번호, 숨긴 슬라이드 포함)
@@ -58,6 +59,7 @@ const HELP = `office-kit ${VERSION} — 한글·Word·PowerPoint·Excel 문서 �
   office-kit fill 신청서.hwpx 값.json -o 신청서_채움.hwpx
   office-kit replace 계약서.docx 갑 을
   office-kit convert 보고서.hwp 보고서.hwpx
+  office-kit convert 보고서.hwp 보고서.pdf
   office-kit image 보고서.hwp 2 -o 2쪽.png
   office-kit inspect 발표.pptx --slide 2
   office-kit edit 보고서.docx 작업.json -o 보고서_수정.docx
@@ -412,13 +414,15 @@ const yes = (v) => (v ? '있음' : '없음');
 
 const COMMANDS = {
   async status() {
-    const { probe } = await core();
+    const { probe, hwpPdfStatus } = await core();
     const p = await probe();
     print(`office-kit ${VERSION}`);
     if (p.error) print(`주의: 설치된 프로그램을 확인하지 못했습니다 (${p.error}). 프로그램 없이 되는 작업만 합니다.`);
     print(`설치된 프로그램: 한컴오피스 ${yes(p.hancom)}, Word ${yes(p.word)}, PowerPoint ${yes(p.powerpoint)}, Excel ${yes(p.excel)}`);
     print(`한글 자동화 보안 모듈: ${p.hancomSecurityModule ? '등록됨' : '등록 안 됨'}`
-      + (p.hancom && !p.hancomSecurityModule ? ' (한글 문서는 rhwp로 처리, PDF 변환 불가 — office-kit setup hancom)' : ''));
+      + (p.hancom && !p.hancomSecurityModule ? ' (한글 문서는 rhwp로 처리 — 한컴으로 처리하려면 office-kit setup hancom)' : ''));
+    const pdf = hwpPdfStatus();
+    print(`한글→PDF: ${p.hancom && p.hancomSecurityModule ? '한컴오피스' : pdf.ok ? '내장 엔진(rhwp, 한컴오피스 없이)' : `불가 — ${pdf.reason}`}`);
     try {
       const h = await (await setupModule('hancom.mjs')).hancomSecurityStatus();
       if (h.registered) print(`  보안 모듈 파일: ${h.dllPath}${h.dllExists ? '' : ' (파일 없음)'}`);
@@ -507,7 +511,8 @@ const COMMANDS = {
     if (src.toLowerCase() === out.toLowerCase()) throw new Error('입력과 다른 출력 경로를 지정하세요');
     mkdirSync(dirname(out), { recursive: true });
     const r = await convertDocument(src, out);
-    print(`변환 완료 (${r.engine}): ${r.output}`);
+    print(`변환 완료 (${ENGINE_NAME[r.engine] ?? r.engine}${r.pages ? `, ${r.pages}쪽` : ''}): ${r.output}`);
+    if (r.note) print(`참고: ${r.note}`);
   },
 
   async new([manuscript, output], opt) {

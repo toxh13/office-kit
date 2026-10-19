@@ -16,6 +16,8 @@ const SMOKE_SETTINGS = ['ai', 'view', 'connect', 'hancom'].includes(process.env.
 const SMOKE_NEWDOC = ['1', 'ai'].includes(process.env.OFFICEKIT_SMOKE_NEWDOC) ? process.env.OFFICEKIT_SMOKE_NEWDOC : null;
 // 편집 창(한글·문서·표·슬라이드)도 열어 두 창을 함께 찍기 (편집 창은 <png>-editor.png)
 const SMOKE_EDITOR = process.env.OFFICEKIT_SMOKE_EDITOR === '1';
+// 'PDF로 저장'도 눌러 보기: 저장 대화상자 대신 이 경로에 만든다 (OFFICEKIT_SMOKE와 함께일 때만). 결과는 [smoke] 줄의 pdf
+const SMOKE_PDF = SMOKE && process.env.OFFICEKIT_SMOKE_PDF ? resolve(process.env.OFFICEKIT_SMOKE_PDF) : '';
 const APP_ICON = [join(APP_ROOT, 'build', 'icon.ico'), join(APP_ROOT, 'build', 'icon.png')].find((f) => existsSync(f));
 
 // 테스트용으로 설정 폴더를 바꿀 수 있게 (단일 인스턴스 잠금도 폴더별로 걸린다)
@@ -477,11 +479,11 @@ async function start() {
       pdfTarget = null;
       if (!t || !samePath(t.doc, doc.path)) throw fail('저장할 곳을 다시 골라 주세요');
       const res = await core.convertDocument(doc.path, t.output);
-      return { output: res.output, engine: res.engine };
+      return { output: res.output, engine: res.engine, pages: res.pages ?? null, note: res.note ?? null };
     }
-    await appCheck(doc.path, 'PDF로 저장');
+    await pdfCheck(doc.path);
     const stem = basename(doc.path).replace(/\.[^.]+$/, '');
-    const r = await dialog.showSaveDialog(win, {
+    const r = SMOKE_PDF ? { canceled: false, filePath: SMOKE_PDF } : await dialog.showSaveDialog(win, {
       title: 'PDF로 저장', defaultPath: join(dirname(doc.path), `${stem}.pdf`),
       filters: [{ name: 'PDF 문서', extensions: ['pdf'] }],
     });
@@ -490,7 +492,18 @@ async function start() {
     if (samePath(output, doc.path)) throw fail('원본 문서와 같은 이름으로는 저장할 수 없습니다');
     if (step === 'pick') { pdfTarget = { doc: doc.path, output }; return { output, picked: true }; }
     const res = await core.convertDocument(doc.path, output);
-    return { output: res.output, engine: res.engine };
+    return { output: res.output, engine: res.engine, pages: res.pages ?? null, note: res.note ?? null };
+  }
+
+  /**
+   * PDF로 저장할 수 있는지 저장 대화상자 전에 확인.
+   * 한글: 한컴오피스 + 자동화 보안 모듈이 있으면 한컴으로, 없으면 내장 엔진(rhwp)으로 만든다 (core.convertDocument가 고름)
+   */
+  async function pdfCheck(p) {
+    if (!core.isHwp(extOf(p))) return appCheck(p, 'PDF로 저장');
+    if (await com.comAvailableFor(extOf(p))) return;
+    const st = core.hwpPdfStatus();
+    if (!st.ok) throw fail(`PDF로 저장할 수 없습니다: ${st.reason}`);
   }
 
   // ── 새 문서 ──────────────────────────────────────────
@@ -1098,6 +1111,21 @@ async function start() {
       return img;
     }
 
+    /** 화면의 'PDF로 저장' 단추를 눌러(저장 대화상자 대신 SMOKE_PDF) PDF가 생기고 알림이 뜨는지 → { ok, toast, file, bytes, ms } */
+    async function smokePdf() {
+      const ask = (code) => win.webContents.executeJavaScript(code).catch(() => null);
+      const started = Date.now();
+      try { rmSync(SMOKE_PDF, { force: true }); } catch {}
+      await ask("document.getElementById('btn-pdf')?.click()");
+      let toast = null;
+      for (const end = Date.now() + 180_000; Date.now() < end && !toast;) {
+        toast = await ask("[...document.querySelectorAll('.toast .toast-msg')].map((t) => t.textContent).find((t) => /PDF/.test(t)) ?? null");
+        if (!toast) await sleep(300);
+      }
+      const bytes = existsSync(SMOKE_PDF) ? statSync(SMOKE_PDF).size : 0;
+      return { ok: bytes > 0 && /PDF로 저장했어요/.test(toast ?? ''), toast, file: SMOKE_PDF, bytes, ms: Date.now() - started };
+    }
+
     /** 열린 문서를 편집 창으로 열고, 다 뜨면(또는 실패 카드가 뜨면) 그 창을 <png>-editor.png로 찍는다 */
     async function smokeEditor() {
       const png = `${SMOKE.replace(/\.png$/i, '')}-editor.png`;
@@ -1183,13 +1211,14 @@ async function start() {
       if (!win || e.sender !== win.webContents) return;
       try {
         const editor = SMOKE_EDITOR && info.ok !== false ? await smokeEditor() : null;
+        const pdf = SMOKE_PDF && info.ok !== false ? await smokePdf() : null;
         await sleep(info.kind === 'pdf' ? 3000 : 900);
         const img = await capture(win);
         mkdirSync(dirname(SMOKE), { recursive: true });
         writeFileSync(SMOKE, img.toPNG());
-        console.log('[smoke]', JSON.stringify({ ...info, ...(editor ? { editor } : {}), png: SMOKE, size: img.getSize() }));
+        console.log('[smoke]', JSON.stringify({ ...info, ...(editor ? { editor } : {}), ...(pdf ? { pdf } : {}), png: SMOKE, size: img.getSize() }));
         clearTimeout(bail);
-        app.exit(info.ok === false || editor?.ok === false ? 1 : 0);
+        app.exit(info.ok === false || editor?.ok === false || pdf?.ok === false ? 1 : 0);
       } catch (err) {
         console.error('[smoke] 캡처 실패:', err);
         app.exit(1);

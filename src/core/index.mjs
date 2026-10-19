@@ -1,6 +1,6 @@
 // index.mjs — 형식과 설치된 프로그램을 보고 엔진을 골라 문서 작업을 한다.
 //   app  엔진: 설치된 한컴/Word/PowerPoint/Excel (원본 그대로, PDF 가능, 느림)
-//   file 엔진: rhwp·ZIP/XML·exceljs (프로그램 불필요, 빠름)
+//   file 엔진: rhwp·ZIP/XML·exceljs (프로그램 불필요, 빠름). 한글→PDF는 rhwp 명령줄 프로그램(hwppdf.mjs)
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, basename, join, resolve } from 'node:path';
@@ -8,8 +8,9 @@ import { Hwp } from './hwp.mjs';
 import { readDocx, readPptx, readXlsx, readCsv, replaceInFile, placeholders, setXlsxCells, PLACEHOLDER } from './officefile.mjs';
 import { comCall, comAppFor, comAvailableFor, probe } from './com.mjs';
 import { createDocument, parseMarkdown } from './create.mjs';
+import { hwpToPdf, hwpPdfStatus, HWP_PDF_NOTE } from './hwppdf.mjs';
 
-export { createDocument, parseMarkdown, probe, Hwp };
+export { createDocument, parseMarkdown, probe, Hwp, hwpPdfStatus, HWP_PDF_NOTE };
 
 // 한글 계열 (hwt는 한글 서식 파일, rhwp로 열린다)
 const HWP_EXTS = new Set(['hwp', 'hwpx', 'hwt']);
@@ -269,7 +270,11 @@ export async function setCells(path, cells, { sheet, output, engine } = {}) {
   return { engine: 'file', updated: await setXlsxCells(path, cells, { sheet, output }), output };
 }
 
-/** 다른 형식으로 저장 (pdf 포함). hwp↔hwpx는 프로그램 없이도 된다 */
+/**
+ * 다른 형식으로 저장 (pdf 포함). hwp↔hwpx는 프로그램 없이도 된다.
+ * 한글 → pdf: 한컴오피스 + 자동화 보안 모듈이 있으면 한컴으로(원본 그대로), 없으면 내장 엔진(rhwp, note에 안내)
+ * → { engine, output, pages?, note? }
+ */
 export async function convertDocument(path, output) {
   path = mustExist(path);
   output = resolve(output);
@@ -278,8 +283,9 @@ export async function convertDocument(path, output) {
   const app = comAppFor(from);
   const appTargets = SAVE_TARGETS[app] ?? [];
   const rhwpOk = HWP_EXTS.has(from) && RHWP_TARGETS.includes(to);
+  const rhwpPdf = HWP_EXTS.has(from) && to === 'pdf';
   // 프로그램을 띄우기 전에 형식부터 확인한다
-  if (!rhwpOk && !appTargets.includes(to)) {
+  if (!rhwpOk && !rhwpPdf && !appTargets.includes(to)) {
     const can = [...new Set([...appTargets, ...(HWP_EXTS.has(from) ? RHWP_TARGETS : [])])].filter((t) => t !== from);
     throw new Error(`${kindOf(path)} 문서는 .${to || '(확장자 없음)'} 형식으로 바꿀 수 없습니다${can.length ? ` (가능: ${can.join(', ')})` : ''}`);
   }
@@ -290,6 +296,10 @@ export async function convertDocument(path, output) {
   if (rhwpOk) {
     const h = Hwp.open(path); try { h.save(output); } finally { h.close(); }
     return { engine: 'rhwp', output };
+  }
+  if (rhwpPdf) {
+    const r = await hwpToPdf(path, output);
+    return { engine: 'rhwp', output: r.output, pages: r.pages, note: HWP_PDF_NOTE };
   }
   const apps = await probe();
   if (apps.error) throw new Error(`설치된 프로그램을 확인하지 못해 .${to}로 변환할 수 없습니다: ${apps.error}`);

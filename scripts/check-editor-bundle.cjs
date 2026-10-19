@@ -2,6 +2,7 @@
 //   electron-builder를 바로 실행해도(npm run dist를 거치지 않아도) 편집기 없는 설치 파일이 나가지 않게.
 //   - 한글 편집기: vendor/rhwp-studio, vendor/rhwp-editor-sdk (npm run editor:build)
 //   - Office 편집기: vendor/office-editor (npm run office-editor:build) — 라이선스 파일·수정 고지·VERSION.json까지 (배포 관문)
+//   - 한글→PDF 변환 프로그램: vendor/rhwp-cli (npm run rhwp-cli:build) — rhwp.exe·LICENSE·THIRD_PARTY_LICENSES.md·VERSION.json
 //   설치 파일에는 들어가지 않는다 (build.files에 scripts/com만 있음).
 const { existsSync, readdirSync, readFileSync, statSync } = require('node:fs');
 const { join, resolve } = require('node:path');
@@ -68,6 +69,26 @@ function missingOfficeParts(root) {
   return out;
 }
 
+// 한글→PDF 변환 프로그램(rhwp 명령줄)에 꼭 있어야 하는 파일
+const RHWP_CLI_FILES = ['rhwp.exe', 'LICENSE', 'THIRD_PARTY_LICENSES.md', 'VERSION.json'];
+
+/** rhwp 명령줄 묶음에서 빠지거나 깨진 것 목록 (없으면 빈 배열). 크기는 VERSION.json의 고정 값과 (SHA-256은 build-rhwp-cli.mjs --verify가 봄) */
+function missingRhwpCliParts(root) {
+  const dir = join(root, 'vendor', 'rhwp-cli');
+  const out = [];
+  for (const f of RHWP_CLI_FILES) if (!isFile(join(dir, f))) out.push(`vendor/rhwp-cli/${f}`);
+  if (out.length) return out;
+  let v;
+  try { v = JSON.parse(readFileSync(join(dir, 'VERSION.json'), 'utf8')); } catch { return ['vendor/rhwp-cli/VERSION.json (읽을 수 없음)']; }
+  if (v?.name !== 'rhwp-cli' || !Array.isArray(v.files) || !v.files.length) return ['vendor/rhwp-cli/VERSION.json (모양이 다름)'];
+  for (const f of v.files) {
+    let size = -1;
+    try { size = statSync(join(dir, String(f.path))).size; } catch {}
+    if (size !== f.bytes) out.push(`vendor/rhwp-cli/${f.path}${size < 0 ? '' : ' (크기가 다름)'}`);
+  }
+  return out;
+}
+
 async function checkEditorBundle(context) {
   const root = resolve(context?.packager?.projectDir ?? context?.projectDir ?? join(__dirname, '..'));
   const missing = missingParts(root);
@@ -81,6 +102,10 @@ async function checkEditorBundle(context) {
   if (office.length) {
     throw new Error(`vendor/office-editor Office 편집기 묶음이 없거나 깨졌습니다 — 먼저 npm run office-editor:build (깨졌으면 -- --force) (빠진 것: ${office.join(', ')})`);
   }
+  const cli = missingRhwpCliParts(root);
+  if (cli.length) {
+    throw new Error(`vendor/rhwp-cli 한글→PDF 변환 프로그램이 없거나 깨졌습니다 — 먼저 npm run rhwp-cli:build (깨졌으면 -- --force) (빠진 것: ${cli.join(', ')})`);
+  }
 }
 
 module.exports = checkEditorBundle;
@@ -88,3 +113,5 @@ module.exports.default = checkEditorBundle;
 module.exports.missingParts = missingParts;
 module.exports.missingOfficeParts = missingOfficeParts;
 module.exports.OFFICE_FILES = OFFICE_FILES;
+module.exports.missingRhwpCliParts = missingRhwpCliParts;
+module.exports.RHWP_CLI_FILES = RHWP_CLI_FILES;

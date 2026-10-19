@@ -110,6 +110,18 @@ office editor only through messages (a MessagePort) and a local file server.
   (if the editor is built with --with-fonts, only SIL OFL 1.1 / GUST licensed
   fonts are added, with their license files, under vendor/rhwp-studio/fonts/).
 
+- rhwp command-line program (rhwp.exe) — HWP/HWPX to PDF without Hancom Office
+  (unmodified binary from the rhwp v0.8.7 GitHub Release
+  rhwp-v0.8.7-windows-x86_64.zip, pinned by size and SHA-256 in
+  scripts/build-rhwp-cli.mjs)
+  Copyright (c) 2025-2026 Edward Kim — MIT License
+  https://github.com/edwardkim/rhwp
+  Shipped in resources/app/vendor/rhwp-cli/ together with rhwp's LICENSE,
+  THIRD_PARTY_LICENSES.md (the Rust crates compiled into the program, e.g.
+  svg2pdf, pdf-writer, usvg, resvg, skia-safe/Skia — MIT, Apache-2.0,
+  BSD-3-Clause ...) and VERSION.json. No fonts are shipped; the program reads
+  the fonts installed on the PC and embeds subsets of them into the PDF.
+
 - Electron — MIT License, Copyright (c) Electron contributors / GitHub Inc.
   https://github.com/electron/electron
   (Electron bundles Chromium and Node.js; their licenses are shipped with the

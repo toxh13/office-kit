@@ -9,7 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import {
   readDocument, documentInfo, listFields, fillFields, replaceText, setCells, convertDocument,
-  createDocument, probe, Hwp, extOf, kindOf, isHwp, OPENABLE_EXTS,
+  createDocument, probe, Hwp, extOf, kindOf, isHwp, OPENABLE_EXTS, hwpPdfStatus,
 } from '../core/index.mjs';
 import { PLACEHOLDER } from '../core/officefile.mjs';
 import { pageImage } from '../core/render.mjs';
@@ -198,17 +198,19 @@ export function createServer() {
     try { hancom = await (await import('../setup/hancom.mjs')).hancomSecurityStatus(); } catch {}
     const yes = (v) => (v ? '있음' : '없음');
     const hwpApp = p.hancom && p.hancomSecurityModule;
+    const hwpPdf = hwpPdfStatus();
     const lines = [
       `office-kit ${VERSION} · 작업 폴더: ${process.cwd()}`,
       `설치된 프로그램: 한컴오피스 ${yes(p.hancom)}, Word ${yes(p.word)}, PowerPoint ${yes(p.powerpoint)}, Excel ${yes(p.excel)}`,
       `한글 자동화 보안 모듈: ${p.hancomSecurityModule ? '등록됨' : '등록 안 됨'}`
-        + (p.hancom && !p.hancomSecurityModule ? ' → 한글 문서는 rhwp(파일 엔진)로 처리. 한글→PDF 변환은 Office Kit 설정의 "한글 자동화 연결" 후 가능' : ''),
+        + (p.hancom && !p.hancomSecurityModule ? ' → 한글 문서는 rhwp(파일 엔진)로 처리. 한컴오피스로 처리하려면 Office Kit 설정의 "한글 자동화 연결"' : ''),
       '',
       '엔진 안내:',
       '- 파일 엔진(기본 읽기): hwp/hwpx는 rhwp, docx/pptx는 XML 직접 처리, xlsx는 exceljs. 프로그램 없이 빠르게 동작',
       `- 프로그램 엔진(기본 쓰기): 설치된 프로그램을 COM으로 조작해 원본 서식을 그대로 유지. 한글 ${hwpApp ? '가능' : '불가'}, Word ${p.word ? '가능' : '불가'}, PowerPoint ${p.powerpoint ? '가능' : '불가'}, Excel ${p.excel ? '가능' : '불가'}`,
       '- hwp↔hwpx 변환과 한글 쪽 그림(office_page_image)은 프로그램 없이 가능',
-      '- PDF 변환과 Word/PowerPoint/Excel 쪽 그림은 해당 프로그램이 필요',
+      `- 한글→PDF: ${hwpApp ? '한컴오피스로 (원본 그대로)' : hwpPdf.ok ? '내장 엔진(rhwp)으로, 한컴오피스 없이 — 앱 미리보기와 같은 모양 (글꼴·줄바꿈이 한컴과 조금 다를 수 있음)' : `불가 (${hwpPdf.reason})`}`,
+      '- Word/PowerPoint/Excel의 PDF 변환과 쪽 그림은 해당 프로그램이 필요',
       `- 다루는 형식: ${SUPPORTED}`,
     ];
     if (hancom?.registered) lines.splice(3, 0, `  보안 모듈 파일: ${hancom.dllPath}${hancom.dllExists ? '' : ' (파일 없음)'}`);
@@ -342,7 +344,9 @@ export function createServer() {
   server.registerTool('office_convert', {
     title: '형식 변환',
     description: '문서를 다른 형식으로 저장한다. 출력 형식은 output 확장자로 정한다. 가능한 형식:\n'
-      + '  한글(hwp/hwpx/hwt) → hwp, hwpx, hml (프로그램 없이) / pdf, docx, odt, txt (한컴오피스 + 자동화 연결 필요)\n'
+      + '  한글(hwp/hwpx/hwt) → hwp, hwpx, hml, pdf (프로그램 없이) / docx, odt, txt (한컴오피스 + 자동화 연결 필요)\n'
+      + '    한글→pdf: 한컴오피스 + 자동화 연결이 있으면 한컴으로(원본 그대로), 없으면 내장 엔진(rhwp: 앱 미리보기와 같은 모양, 글자 선택·검색 가능, '
+      + '글꼴·줄바꿈은 한컴과 조금 다를 수 있음)\n'
       + '  Word(docx/doc/rtf/odt) → pdf, docx, doc, rtf, odt, txt\n'
       + '  PowerPoint(pptx/ppt/odp) → pdf, pptx, ppt, odp\n'
       + '  Excel(xlsx/xls/xlsm/csv/ods) → pdf, xlsx, xlsm, xls, csv, ods\n'
@@ -358,7 +362,8 @@ export function createServer() {
     if (samePath(abs(output), full)) throw new Error('원본과 다른 경로를 지정하세요');
     const out = outPath(output, { allow: CONVERT_EXTS, overwrite });
     const r = await convertDocument(full, out);
-    return text(`변환 완료 (${r.engine}): ${r.output}`);
+    const how = r.note ? `엔진: 내장(${r.engine})` : `엔진: ${r.engine}`;
+    return text(`변환 완료 (${how}${r.pages ? `, ${r.pages}쪽` : ''}): ${r.output}${r.note ? `\n참고: ${r.note}` : ''}`);
   }));
 
   server.registerTool('office_create', {

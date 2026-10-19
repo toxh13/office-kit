@@ -77,6 +77,9 @@ Word·PowerPoint·Excel·한글 각각의 고유 기능을 AI(MCP)와 명령줄�
 | Excel | `auto`: xlsx·xlsm·csv는 파일 엔진, xls·ods는 Excel | `auto`: Excel이 있으면 Excel, 없으면 파일 엔진. csv→csv 값 작업(수식 없음)은 Excel이 있어도 파일 엔진 |
 | 한글 | rhwp | rhwp |
 
+한글 → PDF (`office_convert`, 앱 **PDF로 저장**, `office-kit convert`): 한컴오피스 + 자동화 보안 모듈이 있으면 한컴, 없으면 rhwp 명령줄 프로그램
+(`vendor/rhwp-cli/rhwp.exe`, 미리보기와 같은 모양, 글자 선택·검색 가능). 결과 줄에 `엔진: 내장(rhwp)`과 한컴과 다를 수 있다는 안내가 붙는다.
+
 시간 제한 (한 번의 COM 호출, `src/core/*.mjs`):
 
 | 호출 | 한도 |
@@ -87,6 +90,7 @@ Word·PowerPoint·Excel·한글 각각의 고유 기능을 AI(MCP)와 명령줄�
 | Excel 살펴보기·편집 (Excel) | 300초 |
 | 형식 변환·PDF (`office_convert`, Word·Excel `office_page_image`의 PDF 단계) | 180초 |
 | PowerPoint 슬라이드 그림 (`office_page_image`) | 180초 |
+| 한글 → PDF, 한컴오피스 없이 (`office_convert`, rhwp 명령줄 프로그램 — COM 아님) | 60초 + 쪽당 5초 (최대 20분) |
 | 한글·Excel 파일 엔진 | 한도 없음 (Node 안에서 처리) |
 
 - 한도를 넘으면 PowerShell과 그 호출이 띄운 Office 프로세스를 끝낸다. Word 편집은 그때 남은 `~$` 소유자 파일도 지운다.
