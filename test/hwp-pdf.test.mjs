@@ -12,7 +12,7 @@ import { isAbsolute, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { convertDocument, createDocument, Hwp, hwpPdfStatus } from '../src/core/index.mjs';
-import { hwpToPdf, RHWP_CLI_DEFAULT } from '../src/core/hwppdf.mjs';
+import { hwpToPdf, RHWP_CLI_DEFAULT, fallbackFontArgs } from '../src/core/hwppdf.mjs';
 import { comAvailableFor } from '../src/core/com.mjs';
 import { pageImage } from '../src/core/render.mjs';
 import { MANUSCRIPT, ROOT, tempDir, isPng } from './helpers/fixtures.mjs';
@@ -122,7 +122,7 @@ describe('한글 → PDF (core, 한컴오피스 없이)', { skip: SKIP }, () => 
       assert.equal(pdf.pages.length, want, '쪽 수 = rhwp 쪽 수');
       assert.equal(r.pages, want);
       const text = squash(pdf.text);
-      for (const w of words) koOk(text.includes(w), `PDF 글자에 '${w}' 없음: ${text.slice(0, 200)}`);
+      for (const w of words) koOk(text.includes(w), `PDF 글자에 '${w}' 없음: ${text.slice(0, 200)} · 글꼴: ${pdf.fonts.join(',') || '없음'} · 대체: ${fallbackFontArgs().join(' ')}`);
       // 글꼴은 쓴 글자만 넣은 부분 글꼴(이름 앞 'ABCDEF+')로 들어 있다
       assert.ok(pdf.fonts.length > 0 && pdf.fonts.every((f) => /^[A-Z]{6}\+/.test(f)), pdf.fonts.join(','));
       for (const p of pdf.pages) assert.ok(Math.abs(p.width - 595.28) < 1 && Math.abs(p.height - 841.86) < 1, `A4 세로: ${p.width}×${p.height}`);

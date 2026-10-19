@@ -16,8 +16,31 @@ export const RHWP_CLI_DEFAULT = join(ROOT, 'vendor', 'rhwp-cli', 'rhwp.exe');
 /** 결과 안내 (앱·MCP·명령줄 공통) */
 export const HWP_PDF_NOTE = '한컴오피스 없이 내장 엔진(rhwp)으로 만든 PDF입니다. 글꼴·줄바꿈·쪽 나눔이 한컴오피스와 조금 다를 수 있습니다 (앱 미리보기와 같은 모양).';
 
-// PC에 없는 글꼴 대신 쓸 Windows 기본 글꼴 (rhwp 기본값 D2Coding 등은 보통 없다 → 고정폭 글자가 빈칸이 될 수 있음)
-const FALLBACK_FONTS = ['--fallback-serif', 'Batang', '--fallback-sans', 'Malgun Gothic', '--fallback-mono', 'GulimChe'];
+// PC에 없는 글꼴 대신 쓸 글꼴. rhwp는 대체 글꼴도 없으면 그 글자를 PDF에서 빼 버린다
+// (예: 한컴이 없어 함초롬바탕이 없고 바탕도 없는 PC → 본문이 통째로 빈다) → 이 PC에 실제로 있는 것만 고른다.
+// 맑은 고딕은 Windows Vista부터 늘 있으므로 마지막 대비책.
+const FALLBACK_CANDIDATES = {
+  serif: [['batang.ttc', 'Batang'], ['HANBatang.ttf', '함초롬바탕'], ['malgun.ttf', 'Malgun Gothic']],
+  sans: [['malgun.ttf', 'Malgun Gothic'], ['gulim.ttc', 'Gulim']],
+  mono: [['gulim.ttc', 'GulimChe'], ['malgun.ttf', 'Malgun Gothic']],
+};
+
+function fontDirs() {
+  const dirs = [join(process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows', 'Fonts')];
+  if (process.env.LOCALAPPDATA) dirs.push(join(process.env.LOCALAPPDATA, 'Microsoft', 'Windows', 'Fonts'));
+  return dirs;
+}
+
+/** 이 PC에 있는 글꼴로 고른 대체 글꼴 인수 (시험용으로 글꼴 폴더를 바꿀 수 있음) */
+export function fallbackFontArgs(dirs = fontDirs()) {
+  const has = (file) => dirs.some((d) => existsSync(join(d, file)));
+  const args = [];
+  for (const [kind, list] of Object.entries(FALLBACK_CANDIDATES)) {
+    const pick = list.find(([file]) => has(file)) ?? ['', 'Malgun Gothic'];
+    args.push(`--fallback-${kind}`, pick[1]);
+  }
+  return args;
+}
 
 /** rhwp.exe 경로 (OFFICEKIT_RHWP_CLI로 바꿀 수 있음 — 시험·다른 OS용) */
 export function rhwpCliPath() {
@@ -98,7 +121,7 @@ export async function hwpToPdf(path, output, { timeoutMs } = {}) {
     writeFileSync(src, bytes);
     const limit = timeoutMs > 0 ? timeoutMs : timeoutFor(pages);
     // 셸 없이 인수 배열로 (경로에 공백·특수 문자가 있어도 안전), 작업 폴더는 임시 폴더
-    const r = await run(st.path, ['export-pdf', src, '-o', pdf, '--backend', 'svg', '--json', ...FALLBACK_FONTS], { cwd: work, timeoutMs: limit });
+    const r = await run(st.path, ['export-pdf', src, '-o', pdf, '--backend', 'svg', '--json', ...fallbackFontArgs()], { cwd: work, timeoutMs: limit });
     if (r.err) {
       if (r.err.killed || r.err.signal) throw new Error(`한글 문서를 PDF로 바꾸는 데 시간이 너무 오래 걸려 멈췄습니다 (${secs(limit)}초, ${pages}쪽)`);
       if (r.err.code === 'ENOENT' || r.err.code === 'EACCES') throw new Error(`내장 PDF 변환 프로그램을 실행하지 못했습니다: ${st.path} (${r.err.code})`);
