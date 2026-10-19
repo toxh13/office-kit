@@ -22,6 +22,10 @@ const require = createRequire(import.meta.url);
 const HAVE_CLI = existsSync(RHWP_CLI_DEFAULT);
 const SKIP = !HAVE_CLI && 'vendor/rhwp-cli/rhwp.exe 없음 (npm run rhwp-cli:build)';
 const tmp = tempDir('officekit-hwppdf-test-');
+// 한국어 글꼴이 없는 PC(예: GitHub의 Windows Server 빌드 기계)에서는 PDF에 한글 글자가 들어가지 않는다 → 한글 글자 확인만 건너뛴다
+const FONT_DIR = join(process.env.SystemRoot ?? process.env.windir ?? 'C:\Windows', 'Fonts');
+const HAS_KO_FONT = ['malgun.ttf', 'batang.ttc', 'gulim.ttc', 'HANBatang.ttf', 'HMKMRHD.TTF'].some((f) => existsSync(join(FONT_DIR, f)));
+const koOk = (cond, msg) => { if (HAS_KO_FONT) assert.ok(cond, msg); };
 after(() => tmp.cleanup());
 
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
@@ -118,7 +122,7 @@ describe('한글 → PDF (core, 한컴오피스 없이)', { skip: SKIP }, () => 
       assert.equal(pdf.pages.length, want, '쪽 수 = rhwp 쪽 수');
       assert.equal(r.pages, want);
       const text = squash(pdf.text);
-      for (const w of words) assert.ok(text.includes(w), `PDF 글자에 '${w}' 없음: ${text.slice(0, 200)}`);
+      for (const w of words) koOk(text.includes(w), `PDF 글자에 '${w}' 없음: ${text.slice(0, 200)}`);
       // 글꼴은 쓴 글자만 넣은 부분 글꼴(이름 앞 'ABCDEF+')로 들어 있다
       assert.ok(pdf.fonts.length > 0 && pdf.fonts.every((f) => /^[A-Z]{6}\+/.test(f)), pdf.fonts.join(','));
       for (const p of pdf.pages) assert.ok(Math.abs(p.width - 595.28) < 1 && Math.abs(p.height - 841.86) < 1, `A4 세로: ${p.width}×${p.height}`);
@@ -128,7 +132,7 @@ describe('한글 → PDF (core, 한컴오피스 없이)', { skip: SKIP }, () => 
   test('여러 쪽 문서: 쪽 번호 꼬리말이 쪽마다', async () => {
     const pdf = readPdf(readFileSync(tmp.path('여러 쪽.hwp.pdf')));
     assert.ok(pdf.pages.length >= 2, `${pdf.pages.length}쪽`);
-    pdf.pages.forEach((p, i) => assert.ok(squash(p.text).includes(`-${i + 1}-`), `${i + 1}쪽 꼬리말: ${squash(p.text).slice(-20)}`));
+    pdf.pages.forEach((p, i) => koOk(squash(p.text).includes(`-${i + 1}-`), `${i + 1}쪽 꼬리말: ${squash(p.text).slice(-20)}`));
   });
 
   test('가로 문서는 가로 쪽', async () => {
@@ -143,7 +147,7 @@ describe('한글 → PDF (core, 한컴오피스 없이)', { skip: SKIP }, () => 
     writeFileSync(hwt, readFileSync(tmp.path('보고.hwp')));
     const out = tmp.path('서식.pdf');
     await hwpToPdf(hwt, out);
-    assert.ok(squash(readPdf(readFileSync(out)).text).includes('분기보고'));
+    koOk(squash(readPdf(readFileSync(out)).text).includes('분기보고'));
   });
 
   test('convertDocument: 한컴이 없으면 내장 엔진 + 안내, 공백·한글 경로, 덮어쓰기', async (t) => {
@@ -220,7 +224,7 @@ describe('명령줄 office-kit convert x.hwp x.pdf', { skip: SKIP }, () => {
       assert.equal(r.code, 0, r.stderr);
       assert.match(r.stdout, /변환 완료 \(내장 엔진\(rhwp\), 2쪽\)/);
       assert.match(r.stdout, /참고: 한컴오피스 없이/);
-      assert.ok(squash(readPdf(readFileSync(tmp.path(out))).text).includes('분기보고'));
+      koOk(squash(readPdf(readFileSync(tmp.path(out))).text).includes('분기보고'));
     }
   });
 
@@ -255,7 +259,7 @@ describe('MCP office_convert (ELECTRON_RUN_AS_NODE와 같은 Node 실행)', { sk
     assert.match(textOf(r), /참고: 한컴오피스 없이/);
     const pdf = readPdf(readFileSync(tmp.path('mcp/결과.pdf')));
     assert.equal(pdf.pages.length, pagesOf(tmp.path('mcp.hwpx')));
-    assert.ok(squash(pdf.text).includes('신규고객확보'));
+    koOk(squash(pdf.text).includes('신규고객확보'));
     // 이미 있으면 overwrite 없이는 거부
     const again = await call('office_convert', { path: 'mcp.hwpx', output: 'mcp/결과.pdf' });
     assert.equal(again.isError, true);
@@ -291,7 +295,7 @@ test('실제 앱: PDF로 저장 단추 → 내장 엔진 PDF + 알림', { skip: 
   assert.match(info.pdf.toast, /PDF로 저장했어요 \(내장 엔진\): 앱 시험\.pdf/);
   const pdf = readPdf(readFileSync(out));
   assert.equal(pdf.pages.length, pagesOf(doc));
-  assert.ok(squash(pdf.text).includes('대외비머리말'));
+  koOk(squash(pdf.text).includes('대외비머리말'));
 });
 
 // 시험이 끝난 뒤 rhwp.exe가 남아 있지 않은지 (시간 제한으로 끊은 것 포함)
