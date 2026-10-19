@@ -31,6 +31,7 @@
     <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1L5 10.5l5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
     <symbol id="i-new-chat" viewBox="0 0 24 24"><path d="M20 12.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.5"/><path d="M17.6 3.6a1.9 1.9 0 0 1 2.8 2.8L13 13.8l-3.6.8.8-3.6z"/></symbol>
     <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
     <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
     <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5V4.5"/><path d="M7.5 9 12 4.5 16.5 9"/><path d="M4.5 14.5v3.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
@@ -68,7 +69,10 @@
       <div class="actions" id="doc-actions">
         <button class="btn edit-btn" id="btn-edit" title="한글·Word·Excel·PowerPoint 문서를 열면 앱 안에서 직접 편집할 수 있어요" disabled><svg class="i"><use href="#i-edit"/></svg><span class="lbl">직접 편집</span></button>
         <button class="btn ghost" id="btn-refresh" title="미리보기 새로고침 (F5)" disabled><svg class="i"><use href="#i-refresh"/></svg><span class="lbl">새로고침</span></button>
-        <button class="btn ghost" id="btn-restore" title="문서를 열 때 만든 백업으로 되돌리기" disabled><svg class="i"><use href="#i-restore"/></svg><span class="lbl">원래대로</span></button>
+        <span class="split" id="restore-group">
+          <button class="btn ghost" id="btn-restore" title="마지막 변경 전으로 되돌리기" disabled><svg class="i"><use href="#i-restore"/></svg><span class="lbl">원래대로</span></button>
+          <button class="btn ghost split-caret" id="btn-versions" title="버전 목록 (문서를 열 때·편집 창 저장 전·AI 대화 전에 남긴 상태)" aria-label="버전 목록" aria-haspopup="dialog" aria-expanded="false" aria-controls="versions-pop" disabled><svg class="i"><use href="#i-chevron-down"/></svg></button>
+        </span>
         <button class="btn ghost" id="btn-openapp" title="설치된 프로그램에서 열기" disabled><svg class="i"><use href="#i-external"/></svg><span class="lbl">프로그램에서 열기</span></button>
         <button class="btn ghost" id="btn-pdf" title="PDF로 저장" disabled><svg class="i"><use href="#i-pdf"/></svg><span class="lbl">PDF로 저장</span></button>
         <button class="btn ghost" id="btn-folder" title="문서가 있는 폴더 열기" disabled><svg class="i"><use href="#i-folder"/></svg><span class="lbl">폴더 열기</span></button>
@@ -77,6 +81,15 @@
       <button class="icon-btn" id="btn-toggle-chat" title="AI 대화창" aria-label="AI 대화창 열기/닫기" aria-pressed="true"><svg class="i"><use href="#i-panel"/></svg></button>
       <button class="icon-btn" id="btn-settings" title="설정 (Ctrl+,)" aria-label="설정"><svg class="i"><use href="#i-gear"/></svg></button>
     </header>
+
+    <div class="popover" id="versions-pop" role="dialog" aria-labelledby="versions-title" hidden>
+      <div class="pop-head">
+        <strong id="versions-title">문서 버전</strong>
+        <span class="pop-sub">최근 것부터 · 문서마다 30개까지 남겨요</span>
+      </div>
+      <ul class="ver-list" id="ver-list"></ul>
+      <div class="pop-foot"><button class="link-btn" id="ver-open-backups">백업 폴더 열기</button></div>
+    </div>
 
     <main class="workspace" id="workspace">
       <section class="viewer" id="viewer" aria-label="문서 미리보기">
@@ -275,7 +288,7 @@
             <button role="radio" data-theme="dark">어둡게</button>
           </div>
           <h3>원본 백업</h3>
-          <p class="help">문서를 열 때마다 원본을 자동으로 복사해 둡니다 (최근 50개). 상단의 <b>원래대로</b>로 되돌릴 수 있어요.</p>
+          <p class="help">문서를 열 때·편집 창에서 저장하기 전·AI 대화 전·되돌리기 전 상태를 자동으로 복사해 둡니다 (문서마다 최근 30개). 상단의 <b>원래대로</b>(▾ 버전 목록)로 되돌릴 수 있어요.</p>
           <button class="btn sm" id="btn-open-backups"><svg class="i"><use href="#i-folder"/></svg>백업 폴더 열기</button>
         </section>
 

@@ -1,0 +1,49 @@
+SPDX-License-Identifier: AGPL-3.0-or-later
+Subject: [PATCH 4/4] app: no tips about new features in the editor
+From: Office Kit
+Date: 2026-10-19
+Upstream: https://github.com/BRF-Tech/filex-office-editor (AGPL-3.0-or-later, Copyright (C) 2026 BRF Tech)
+Base: v0.3.1 57dda3dae99af78eb26b3c64b69f1e3f711f0757 (the tag commit; the next main commit acc87f88da47 changes only README.md)
+Apply: git -C <filex checkout> apply <this file>   (in order: 0001, 0002, 0003, 0004)
+Modified: this patch changes filex-office-editor; see docs/office-editor-patches.md (Office Kit)
+
+Office Kit: 편집기의 '신규' 기능 풍선(새 버튼 안내)을 끈다 (customization.features.featuresTips = false).
+
+The editor shows a tip balloon about each new feature ("New button:
+Format") the first time it is opened. In the sandboxed editor frame it
+cannot remember that the tip was closed, so it comes back every time,
+and it covers the toolbar. ONLYOFFICE's own setting
+customization.features.featuresTips = false turns the tips off.
+
+ src/app/config.ts        | 5 ++++-
+ tests/app-config.test.ts | 1 +
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/app/config.ts b/src/app/config.ts
+index 1a000c2..ebc46aa 100644
+--- a/src/app/config.ts
++++ b/src/app/config.ts
+@@ -349,7 +349,10 @@ export function editorConfig(o: ConfigInput): Record<string, unknown> {
+         plugins: false,
+         macros: false,
+         mentionShare: false,
+-        features: { spellcheck: { mode: false, change: false } },
++        // No tips about new features: they name buttons of the full editor
++        // and come back every time (the sandboxed editor cannot remember
++        // that they were closed).
++        features: { spellcheck: { mode: false, change: false }, featuresTips: false },
+         ...(phone ? phoneLayout() : o.narrow ? narrowLayout() : {}),
+       },
+     },
+diff --git a/tests/app-config.test.ts b/tests/app-config.test.ts
+index 7b331d6..3596f27 100644
+--- a/tests/app-config.test.ts
++++ b/tests/app-config.test.ts
+@@ -174,6 +174,7 @@ describe('the editor configuration', () => {
+     expect(c.editorConfig.user).toEqual({ id: EDITOR_USER_ID, name: 'Ayşe' });
+     expect(c.editorConfig.customization).toMatchObject({ forcesave: true, plugins: false, macros: false, help: false, feedback: false, goback: false, uiTheme: THEME_LIGHT });
+     expect(c.editorConfig.customization.features.spellcheck).toEqual({ mode: false, change: false });
++    expect(c.editorConfig.customization.features.featuresTips).toBe(false);
+     expect(c.document.permissions).toMatchObject({ edit: true, download: false, print: false, chat: false });
+     expect(c.editorConfig.customization.chat).toBeUndefined();
+     // "Suggest a feature" opens ONLYOFFICE's site, which the sandbox cannot.

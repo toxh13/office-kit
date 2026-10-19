@@ -82,6 +82,14 @@ function Get-SaveFormat([string]$app) {
 $NoPassword = 'officekit-no-password'
 $Missing = [Type]::Missing
 
+# 'open' with visible=true hands the document to the user: it opens read-write like a double click
+# (read-only only when the file has a modify password, or another program holds it)
+function Test-UserOpen { return ([bool]$req.visible -and $req.op -eq 'open' -and -not $req.save) }
+function Set-OpenState($res, [bool]$readOnly, [bool]$writePassword) {
+  $res.readOnly = $readOnly
+  if ($readOnly) { $res.readOnlyReason = $(if ($writePassword) { 'write password' } else { 'in use or read-only file' }) }
+}
+
 # Only an in-place save opens a document read-write (a copy, convert or PDF export opens it read-only).
 function Test-SamePath([string]$a, [string]$b) {
   if (-not $a -or -not $b) { return $false }
@@ -250,7 +258,10 @@ function Invoke-Hwp($req) {
 function Invoke-Word($req) {
   $fmt = Get-SaveFormat 'word'
   $inPlace = Test-SamePath $req.save $req.path
-  if ($inPlace -and (Get-WriteGuard $req.path 'word')) { throw "write protected: $($req.path)" }
+  $userOpen = Test-UserOpen
+  $writeGuard = $null
+  if ($inPlace -or $userOpen) { $writeGuard = Get-WriteGuard $req.path 'word' }
+  if ($inPlace -and $writeGuard) { throw "write protected: $($req.path)" }
   $word = New-OfficeApp 'Word.Application' 'WINWORD'
   $doc = $null; $guard = $null
   try {
@@ -259,20 +270,24 @@ function Invoke-Word($req) {
     if ($req.visible) { $word.Visible = $true }
     # dummy passwords make a protected document fail at once instead of waiting on a hidden prompt
     # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate, Revert, WritePasswordDocument
+    $writePassword = [bool]$writeGuard
     try {
-      if ($inPlace) { $doc = $word.Documents.Open([string]$req.path, $false, $false, $false, $NoPassword, $Missing, $Missing, $NoPassword) }
+      if ($inPlace -or ($userOpen -and -not $writeGuard)) { $doc = $word.Documents.Open([string]$req.path, $false, $false, $false, $NoPassword, $Missing, $Missing, $NoPassword) }
       else { $doc = $word.Documents.Open([string]$req.path, $false, $true, $false, $NoPassword) }
     } catch {
       $why = $_.Exception.Message
       # a modify password (e.g. binary .doc, not seen by Get-WriteGuard) also fails here: if it opens read-only, say so
-      if ($inPlace -and $why -match 'password|command failed') {
+      # (the user's own window then shows it read-only instead)
+      if (($inPlace -or $userOpen) -and $why -match 'password|command failed') {
         $ro = $null
         try { $ro = $word.Documents.Open([string]$req.path, $false, $true, $false, $NoPassword) } catch {}
-        if ($ro) { try { $ro.Close($false) } catch {}; Release $ro; throw "write protected: $($req.path)" }
+        if ($ro -and $userOpen) { $doc = $ro; $writePassword = $true }
+        elseif ($ro) { try { $ro.Close($false) } catch {}; Release $ro; throw "write protected: $($req.path)" }
       }
-      throw "open failed: $($req.path) ($why)"
+      if (-not $doc) { throw "open failed: $($req.path) ($why)" }
     }
     $res = @{ ok = $true; engine = 'word' }
+    if ($userOpen) { Set-OpenState $res ([bool]$doc.ReadOnly) $writePassword }
     switch ($req.op) {
       'inspect' { $res.inspect = Invoke-WordInspect $doc $word $req }
       'edit'    { $res.results = @(Invoke-WordEdit $doc $word $req) }
@@ -345,22 +360,25 @@ function Invoke-Ppt($req) {
   $inPlace = Test-SamePath $req.save $req.path
   [string]$openPath = $req.path
   $lockInfo = $null; $unlocked = $false
-  if ($req.save) { $lockInfo = Get-WriteGuard $req.path 'ppt' }
+  $userOpen = Test-UserOpen
+  if ($req.save -or $userOpen) { $lockInfo = Get-WriteGuard $req.path 'ppt' }
   if ($lockInfo -and $inPlace) { throw "write protected: $($req.path)" }
   # a plain convert (pptx/ppt/odp) works on the read-only original and keeps its password like PowerPoint does;
   # changes and PDF export need the unlocked copy
-  if ($lockInfo -and ($fmt -eq 32 -or $req.op -ne 'convert')) { $openPath = New-PptUnlockedCopy $req.path $lockInfo; $unlocked = $true }
+  # (the user's own window always shows the real file: read-only, PowerPoint asks for the password on its own)
+  if ($lockInfo -and -not $userOpen -and ($fmt -eq 32 -or $req.op -ne 'convert')) { $openPath = New-PptUnlockedCopy $req.path $lockInfo; $unlocked = $true }
   $app = New-OfficeApp 'PowerPoint.Application' 'POWERPNT'
   $pres = $null; $guard = $null
   try {
     $app.DisplayAlerts = 1  # ppAlertsNone
     $guard = Set-MacroGuard $app
-    # only an in-place save opens read-write: a deck with a modify password would wait on a hidden prompt
-    $readOnly = $(if ($inPlace) { 0 } else { -1 })
+    # only an in-place save or the user's own window opens read-write: a deck with a modify password would wait on a hidden prompt
+    $readOnly = $(if ($inPlace -or ($userOpen -and -not $lockInfo)) { 0 } else { -1 })
     $withWindow = $(if ($req.visible) { -1 } else { 0 })
     try { $pres = $app.Presentations.Open($openPath, $readOnly, 0, $withWindow) }
     catch { throw "open failed: $($req.path) ($($_.Exception.Message))" }
     $res = @{ ok = $true; engine = 'powerpoint'; slides = $pres.Slides.Count }
+    if ($userOpen) { Set-OpenState $res ([int]$pres.ReadOnly -ne 0) ([bool]$lockInfo) }
     $frames = New-Object System.Collections.ArrayList
     foreach ($slide in $pres.Slides) {
       foreach ($shape in $slide.Shapes) {
@@ -435,26 +453,47 @@ function Format-Cell($v) {
   return [string]$v
 }
 
+# PageSetup: Zoom off, 1 page wide, as many pages tall as needed (PrintCommunication off: one printer round trip)
+function Set-XlFitWidth($wb, $app) {
+  try { $app.PrintCommunication = $false } catch {}
+  try {
+    foreach ($ws in $wb.Worksheets) {
+      if ($ws.Visible -ne -1) { continue }
+      try {
+        $ps = $ws.PageSetup
+        XlSet $ps 'Zoom' $false
+        XlSet $ps 'FitToPagesWide' 1
+        XlSet $ps 'FitToPagesTall' $false
+      } catch {}
+      Release $ps
+    }
+  } finally { try { $app.PrintCommunication = $true } catch {} }
+}
+
 # Range.Replace treats * ? ~ as wildcards: escape them with ~
 function Escape-ExcelFind([string]$s) { return $s.Replace('~', '~~').Replace('*', '~*').Replace('?', '~?') }
 
 function Invoke-Excel($req) {
   $fmt = Get-SaveFormat 'excel'
   $inPlace = Test-SamePath $req.save $req.path
+  $userOpen = Test-UserOpen
   # Excel rejects a dummy WriteResPassword even on unprotected files, so check the package before opening
-  if ($inPlace -and (Get-WriteGuard $req.path 'excel')) { throw "write protected: $($req.path)" }
+  $writeGuard = $null
+  if ($inPlace -or $userOpen) { $writeGuard = Get-WriteGuard $req.path 'excel' }
+  if ($inPlace -and $writeGuard) { throw "write protected: $($req.path)" }
   $app = New-OfficeApp 'Excel.Application' 'EXCEL'
   $wb = $null; $guard = $null
   try {
     $app.DisplayAlerts = $false
     $guard = Set-MacroGuard $app
     if ($req.visible) { $app.Visible = $true } else { try { $app.EnableEvents = $false } catch {} }
-    # only an in-place save opens read-write: a workbook with a modify password would wait on a hidden prompt
-    $readOnly = -not $inPlace
+    # only an in-place save or the user's own window opens read-write: a workbook with a modify password would wait on a hidden prompt
+    $readOnly = -not ($inPlace -or ($userOpen -and -not $writeGuard))
     # Filename, UpdateLinks(never), ReadOnly, Format, Password(dummy), WriteResPassword, IgnoreReadOnlyRecommended
     try { $wb = $app.Workbooks.Open([string]$req.path, 0, $readOnly, $Missing, $NoPassword, $Missing, $true) }
     catch { throw "open failed: $($req.path) ($($_.Exception.Message))" }
     $res = @{ ok = $true; engine = 'excel' }
+    if ($userOpen) { Set-OpenState $res ([bool]$wb.ReadOnly) ([bool]$writeGuard) }
     switch ($req.op) {
       'inspect' { $res.inspect = Invoke-ExcelInspect $wb $app $req }
       'edit'    { $res.results = @(Invoke-ExcelEdit $wb $app $req) }
@@ -522,6 +561,9 @@ function Invoke-Excel($req) {
         $res.updated = $n
       }
     }
+    # previews (fitWidth): every sheet one page wide so wide tables and charts are not cut across pages.
+    # Only for a PDF of a read-only open (Node passes a temporary copy): the change is never saved.
+    if ($req.fitWidth -and $fmt -eq -1 -and -not $inPlace) { Set-XlFitWidth $wb $app }
     if ($req.save) {
       if ($inPlace) { $wb.Save() }
       elseif ($fmt -eq -1) { $wb.ExportAsFixedFormat(0, [string]$req.save) }

@@ -366,6 +366,8 @@ test('도구 이름·요약', () => {
   assert.equal(toolLabel('mcp__office-kit__office_replace'), '찾아 바꾸기');
   assert.equal(toolLabel('mystery_tool'), 'mystery_tool');
   assert.equal(summarize([{ type: 'text', text: '가\n\n나' }, { type: 'image', data: 'x' }]), '가 나 [이미지]');
+  // Claude CLI가 그림 결과에 붙이는 내부 경로는 보이지 않게
+  assert.equal(summarize('[Image: source: C:\\Users\\me\\.claude\\projects\\x\\a.png] 2쪽'), '[이미지] 2쪽');
   const long = summarize('한'.repeat(500), 10);
   assert.equal([...long].length, 10);
   assert.ok(long.endsWith('…'));

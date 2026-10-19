@@ -22,7 +22,11 @@ const RECENT_MAX = 10;
 export const OFFICE_STATE_KEY = /^[\w.:-]{1,128}$/;
 export const OFFICE_STATE_VALUE_MAX = 8 * 1024;
 export const OFFICE_STATE_MAX_KEYS = 128;
-const BACKUP_KEEP = 50;
+// 백업(문서 버전): 모두 합쳐 이만큼까지 (개수·바이트). 문서마다 몫은 main이 maxPerSource로 (최근 30개)
+export const BACKUP_KEEP = 200;
+export const BACKUP_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+/** 백업을 만든 까닭 → 버전 목록에 보일 말 (화면도 같은 이름을 쓴다) */
+export const BACKUP_REASONS = ['open', 'editor', 'ai', 'restore'];
 
 // 같은 경로인지 (Windows는 대소문자 무시)
 export const samePath = (a, b) => process.platform === 'win32'
@@ -146,13 +150,14 @@ export function stamp(d = new Date()) {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function hashFile(path) { return createHash('sha1').update(readFileSync(path)).digest('hex'); }
+export function hashFile(path) { return createHash('sha1').update(readFileSync(path)).digest('hex'); }
 
 /**
- * 원본 백업. dir = userData/backups
- * 파일 이름은 <yyyyMMdd-HHmmss>-<원래이름>, 원래 경로는 index.json에 적어 둔다.
+ * 원본 백업 = 문서 버전. dir = userData/backups
+ * 파일 이름은 <yyyyMMdd-HHmmss>-<원래이름>, 원래 경로·까닭(reason)·내용 해시는 index.json에 적어 둔다.
+ * keep: 모두 합쳐 몇 개까지, maxBytes: 모두 합쳐 몇 바이트까지 (방금 것·protect는 넘어도 남긴다)
  */
-export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
+export function createBackups(dir, { keep = BACKUP_KEEP, maxBytes = BACKUP_MAX_BYTES } = {}) {
   mkdirSync(dir, { recursive: true });
   const indexFile = join(dir, 'index.json');
   const load = () => readJson(indexFile, []).filter((e) => e && e.file && e.source && existsSync(join(dir, e.file)));
@@ -170,8 +175,10 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
      * 원본 복사. 같은 내용의 백업이 이미 있으면 새로 만들지 않고 그것을 돌려준다 → { file, path, time, source, reused }
      * protect: 정리할 때 지우면 안 되는 백업(파일 이름 또는 항목) — 열린 문서의 '원래대로' 기준 등
      * maxPerSource: 이 문서의 백업은 최근 n개만 (protect·방금 것은 남기고 개수에 센다). 0이면 따로 세지 않음
+     * reason: 왜 만드는지 ('open' 문서를 열 때 | 'editor' 편집 창 저장 전 | 'ai' AI 대화 전 | 'restore' 원래대로 전).
+     *   같은 내용의 백업을 다시 쓰면 처음 까닭을 그대로 둔다 (그 내용이 처음 생긴 때를 말하므로)
      */
-    backup(source, now = new Date(), { protect = [], maxPerSource = 0 } = {}) {
+    backup(source, now = new Date(), { protect = [], maxPerSource = 0, reason = null } = {}) {
       source = resolve(source);
       const list = load();
       const hash = hashFile(source);
@@ -184,7 +191,7 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
         let file = `${stamp(now)}-${basename(source)}`;
         for (let i = 2; existsSync(join(dir, file)); i++) file = `${stamp(now)}-${i}-${basename(source)}`;
         copyFileSync(source, join(dir, file));
-        entry = { file, source, time: now.getTime(), hash, size: statSync(source).size };
+        entry = { file, source, time: now.getTime(), hash, size: statSync(source).size, ...(BACKUP_REASONS.includes(reason) ? { reason } : {}) };
         list.push(entry);
       }
       // 오래 안 쓴 것부터 지워 keep개만 남긴다. 방금 것과 protect는 남긴다
@@ -205,6 +212,14 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
         try { rmSync(join(dir, list[i].file), { force: true }); } catch { i++; continue; }
         list.splice(i, 1);
       }
+      // 바이트 한도: 큰 문서를 자주 저장해도 디스크를 다 쓰지 않게 (오래 안 쓴 것부터)
+      let bytes = list.reduce((n, e) => n + (e.size ?? 0), 0);
+      for (let i = 0; bytes > maxBytes && i < list.length;) {
+        if (keepSet.has(list[i].file)) { i++; continue; }
+        try { rmSync(join(dir, list[i].file), { force: true }); } catch { i++; continue; }
+        bytes -= list[i].size ?? 0;
+        list.splice(i, 1);
+      }
       store(list);
       return { ...entry, path: join(dir, entry.file), reused };
     },
@@ -213,7 +228,13 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
       const e = forSource(load(), resolve(source))[0];
       return e ? { ...e, path: join(dir, e.file) } : null;
     },
+    /** 이 문서의 백업(버전)들, 최근에 쓴 것부터 */
     list(source) { return forSource(load(), resolve(source)).map((e) => ({ ...e, path: join(dir, e.file) })); },
+    /** 파일 이름으로 이 문서의 백업 하나 (없으면 null) */
+    find(source, file) {
+      const e = forSource(load(), resolve(source)).find((x) => x.file === file);
+      return e ? { ...e, path: join(dir, e.file) } : null;
+    },
     /** 백업을 원래 자리에 덮어쓴다. entry 생략 시 가장 최근 것 */
     restore(source, entry) {
       source = resolve(source);
@@ -226,5 +247,55 @@ export function createBackups(dir, { keep = BACKUP_KEEP } = {}) {
       try { const now = new Date(); utimesSync(source, now, now); } catch {}
       return { ...e, path: from };
     },
+  };
+}
+
+// ── 미리보기 PDF 기억 ────────────────────────────────────
+
+export const PREVIEW_CACHE_KEEP = 40;
+export const PREVIEW_CACHE_MAX_BYTES = 512 * 1024 * 1024;
+// 만드는 방법이 바뀌면 올린다 → 옛 PDF는 쓰지 않는다 (2: Excel 시트마다 한 쪽 너비)
+export const PREVIEW_CACHE_VERSION = 2;
+
+/**
+ * 프로그램(Word·Excel·PowerPoint·한컴)으로 만든 미리보기 PDF를 기억한다. dir = userData/preview-cache
+ * 열쇠 = 문서 경로·크기·수정 시각·미리보기 방식(엔진) → 파일이 그대로면 다시 변환하지 않는다 (5~25초 걸리는 변환).
+ * 경로는 해시로만 적는다. 최근에 쓴 것부터 keep개·maxBytes까지.
+ */
+export function createPreviewCache(dir, { keep = PREVIEW_CACHE_KEEP, maxBytes = PREVIEW_CACHE_MAX_BYTES } = {}) {
+  const indexFile = join(dir, 'index.json');
+  const load = () => readJson(indexFile, []).filter((e) => e && typeof e.key === 'string' && existsSync(join(dir, `${e.key}.pdf`)));
+  const keyOf = ({ path, size, mtimeMs, mode }) => createHash('sha1')
+    .update(`${PREVIEW_CACHE_VERSION}|${process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)}|${size}|${mtimeMs}|${mode}`).digest('hex');
+  return {
+    dir,
+    /** → { file(기억해 둔 PDF), engine, pages } | null. 쓴 시각을 새로 적는다 */
+    get(what) {
+      const k = keyOf(what);
+      const list = load();
+      const e = list.find((x) => x.key === k);
+      if (!e) return null;
+      e.usedAt = Date.now();
+      try { writeJsonAtomic(indexFile, list); } catch {}
+      return { file: join(dir, `${k}.pdf`), engine: e.engine ?? null, pages: e.pages ?? null };
+    },
+    /** PDF를 복사해 기억한다. 한도를 넘으면 오래 안 쓴 것부터 지운다 */
+    put(what, file, { engine = null, pages = null } = {}) {
+      mkdirSync(dir, { recursive: true });
+      const k = keyOf(what);
+      copyFileSync(file, join(dir, `${k}.pdf`));
+      const list = load().filter((x) => x.key !== k);
+      list.push({ key: k, engine, pages, size: statSync(join(dir, `${k}.pdf`)).size, usedAt: Date.now() });
+      list.sort((a, b) => (a.usedAt ?? 0) - (b.usedAt ?? 0));
+      let bytes = list.reduce((n, e) => n + (e.size ?? 0), 0);
+      while (list.length > 1 && (list.length > keep || bytes > maxBytes)) {
+        const old = list[0];
+        try { rmSync(join(dir, `${old.key}.pdf`), { force: true }); } catch { break; }
+        bytes -= old.size ?? 0;
+        list.shift();
+      }
+      writeJsonAtomic(indexFile, list);
+    },
+    clear() { rmSync(dir, { recursive: true, force: true }); },
   };
 }

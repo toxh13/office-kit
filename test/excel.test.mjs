@@ -217,6 +217,19 @@ describe('작업 검증', () => {
     assert.equal(normalizeOperations([{ op: 'column_width', range: 'A:B', width: 10 }])[0].columns, 'A:B');
     assert.equal(normalizeOperations([{ op: 'add_chart', range: 'A1:B3', type: 'pie', series_in: 'rows' }])[0].series_in, 'rows');
   });
+
+  test('add_chart: 떨어진 범위(range "A3:A10,H3:H10") · 항목+값(categories, values)', () => {
+    const n = (o) => normalizeOperations([{ op: 'add_chart', type: 'bar', ...o }])[0];
+    assert.equal(n({ range: 'a3:a10, $H$3:$H$10' }).range, 'A3:A10,H3:H10');
+    assert.deepEqual(n({ categories: 'A3:A10', values: ['H3:H10', 'C3:C10'] }), { op: 'add_chart', type: 'bar', values: ['H3:H10', 'C3:C10'], categories: 'A3:A10' });
+    assert.deepEqual(n({ values: 'H3:H10' }).values, ['H3:H10']);
+    bad([{ op: 'add_chart', range: 'A3:A10,H3:H8' }], /떨어진 범위는 행 수\(또는 열 수\)가 같아야 합니다/);
+    bad([{ op: 'add_chart', range: 'A3:A10', values: ['H3:H10'] }], /range 또는 values 중 하나만/);
+    bad([{ op: 'add_chart', categories: 'A3:A10' }], /categories는 values와 함께/);
+    bad([{ op: 'add_chart', categories: 'A3:A9', values: ['H3:H10'] }], /칸 수가 같아야 합니다/);
+    bad([{ op: 'add_chart', values: ['B3:C10'] }], /한 열 또는 한 행이어야 합니다/);
+    bad([{ op: 'add_chart', values: ['H3:H10'], series_in: 'rows' }], /series_in은 range와 함께만/);
+  });
 });
 
 // ── 파일 엔진 (exceljs) ─────────────────────────────────
@@ -979,6 +992,42 @@ describe('Excel 엔진', { skip: !COM_TESTS && 'OFFICEKIT_COM_TESTS=1 일 때만
     assert.notEqual(wb.getWorksheet('매출').views[0]?.state, 'frozen');
     assert.equal(wb.getWorksheet('매출').getCell('D7').result, 550);
     assert.equal(r.results[2], '모두 다시 계산함');
+  });
+
+  test('틀 고정: 숨은 Excel에서도 (차트가 있는 문서, 그 자리 저장) — 파일에 틀을 직접 쓴다', COM, async () => {
+    const { out } = await app([{ op: 'add_chart', sheet: '매출', range: 'A1:C6', type: 'column', at: 'F2' }]);
+    // 그 자리 저장
+    const r = await excelEdit(out, [{ op: 'set_cells', sheet: '매출', cells: { F1: '메모' } }, { op: 'freeze', sheet: '매출', cell: 'B3' }, { op: 'freeze', sheet: '목록', cell: 'C1' }], { engine: 'app' });
+    assert.deepEqual(r.results.slice(1), ["틀 고정 B3 (위 2행·왼쪽 1열) (시트 '매출')", "틀 고정 C1 (왼쪽 2열) (시트 '목록')"]);
+    const info = await excelInspect(out, { engine: 'app' });
+    assert.deepEqual(info.sheets.map((s) => [s.name, s.freeze, s.charts.length]), [['매출', 'B3', 1], ['목록', 'C1', 0]]);
+    assert.equal((await load(out)).getWorksheet('매출').getCell('F1').value, '메모');
+    // 다시 고정하면 바뀌고, 해제하면 풀린다
+    await excelEdit(out, [{ op: 'freeze', sheet: '매출', cell: 'A2' }, { op: 'freeze', sheet: '목록', cell: null }], { engine: 'app' });
+    const again = await excelEdit(out, [{ op: 'set_cells', sheet: '매출', cells: { F2: 1 } }], { engine: 'app' });
+    assert.equal(again.engine, 'excel');
+    const info2 = await excelInspect(out, { engine: 'app' });
+    assert.deepEqual(info2.sheets.map((s) => s.freeze), ['A2', null], '다른 작업으로 다시 저장해도 틀 고정이 남음');
+    // 실패하면 원본 그대로
+    const before = readFileSync(out);
+    await assert.rejects(excelEdit(out, [{ op: 'freeze', sheet: '매출', cell: 'D4' }, { op: 'set_cells', sheet: '없음', cells: { A1: 1 } }], { engine: 'app' }), /시트 없음: 없음/);
+    assert.ok(before.equals(readFileSync(out)));
+  });
+
+  test('add_chart: 항목+값(categories·values)과 떨어진 범위로 차트', COM, async () => {
+    const { out, r } = await app([
+      { op: 'add_chart', sheet: '매출', type: 'bar', categories: 'A1:A6', values: ['C1:C6'], at: 'F2' },
+      { op: 'add_chart', sheet: '매출', type: 'column', range: 'A1:A6,D1:D6', at: 'F20' },
+    ]);
+    assert.match(r.results[0], /차트 만듦: 가로 막대형 'Chart 1' \(항목 A1:A6, 값 C1:C6, 위치 F2, 계열 1개, 제목 '2월'\(자동\)\)/);
+    assert.match(r.results[1], /\(원본 A1:A6,D1:D6, 위치 F20, 계열 1개\(열마다\)/);
+    const zip = await JSZip.loadAsync(readFileSync(out));
+    const charts = await Promise.all(Object.keys(zip.files).filter((n) => /^xl\/charts\/chart\d+\.xml$/.test(n)).sort().map((n) => zip.file(n).async('string')));
+    const refs = (x) => [...x.matchAll(/<c:(tx|cat|val)>[\s\S]*?<c:f>([^<]*)<\/c:f>/g)].map((m) => `${m[1]} ${m[2]}`);
+    assert.deepEqual(charts.map(refs), [
+      ['tx 매출!$C$1', 'cat 매출!$A$2:$A$6', 'val 매출!$C$2:$C$6'],
+      ['tx 매출!$D$1', 'cat 매출!$A$2:$A$6', 'val 매출!$D$2:$D$6'],
+    ]);
   });
 
   test('한 번에 저장: 중간 작업이 실패하면 저장하지 않음 (한국어 오류)', COM, async () => {

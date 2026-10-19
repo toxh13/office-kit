@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import JSZip from 'jszip';
 import { josa, koreanComError, comCall, LOCK_WAIT_MS } from '../src/core/com.mjs';
-import { convertDocument, createDocument, readDocument, replaceText } from '../src/core/index.mjs';
+import { convertDocument, createDocument, openInApp, readDocument, replaceText } from '../src/core/index.mjs';
 import { COM_TESTS, MANUSCRIPT, tempDir } from './helpers/fixtures.mjs';
 
 const WIN = process.platform === 'win32';
@@ -168,6 +168,34 @@ try {
 } finally { [GC]::Collect(); [GC]::WaitForPendingFinalizers(); $m.ReleaseMutex(); $m.Dispose() }
 `;
 
+// '프로그램에서 열기'로 띄운 창의 그 문서 상태를 읽고 닫는다 (사용자가 연 다른 문서·창은 건드리지 않음)
+const CLOSE_OPENED_PS = `param([string]$App, [string]$Path)
+$ErrorActionPreference = 'Stop'
+$prog = @{ word = 'Word.Application'; excel = 'Excel.Application'; ppt = 'PowerPoint.Application' }[$App]
+$a = [Runtime.InteropServices.Marshal]::GetActiveObject($prog)
+$list = $(if ($App -eq 'word') { $a.Documents } elseif ($App -eq 'excel') { $a.Workbooks } else { $a.Presentations })
+$ro = $null
+foreach ($d in @($list)) {
+  if ([string]::Equals([string]$d.FullName, $Path, [StringComparison]::OrdinalIgnoreCase)) {
+    $ro = [bool]([int]$d.ReadOnly -ne 0)
+    if ($App -eq 'ppt') { $d.Close() } else { $d.Close($false) }
+  }
+}
+$left = $(if ($App -eq 'word') { $a.Documents.Count } elseif ($App -eq 'excel') { $a.Workbooks.Count } else { $a.Presentations.Count })
+if ($left -eq 0) { $a.Quit() }
+[void][Runtime.InteropServices.Marshal]::ReleaseComObject($a)
+[GC]::Collect(); [GC]::WaitForPendingFinalizers()
+"ro=$ro"
+`;
+async function closeOpened(app, path) {
+  const script = tmp.path('close-opened.ps1');
+  writeFileSync(script, CLOSE_OPENED_PS, 'ascii');
+  const out = await new Promise((done, fail) => execFile(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, app, path],
+    { timeout: 60_000, windowsHide: true }, (e, o, se) => (e ? fail(new Error(`${e.message} ${se}`)) : done(String(o)))));
+  return /ro=True/.test(out) ? true : /ro=False/.test(out) ? false : null;
+}
+const APP_OF = { docx: 'word', xlsx: 'excel', pptx: 'ppt' };
+
 const WRITE_PW = { docx: ['word/settings.xml', /<w:writeProtection\b[^>]*w:hash=/], xlsx: ['xl/workbook.xml', /<fileSharing\b[^>]*hashValue=/],
   pptx: ['ppt/presentation.xml', /<p:modifyVerifier\b/] };
 async function hasWritePassword(file) {
@@ -217,6 +245,21 @@ describe('프로그램 엔진 — OFFICEKIT_COM_TESTS=1 일 때만', { skip: !CO
         assert.ok(Date.now() - start < 60_000, `${Date.now() - start}ms`);
         assert.equal(readFileSync(out).subarray(0, 5).toString('latin1'), '%PDF-');
         assert.ok(await hasWritePassword(file(`wpw.${ext}`)), '원본의 쓰기 암호가 그대로');
+      });
+
+      test(`.${ext} 프로그램에서 열기: 보통 문서는 읽기·쓰기, 쓰기 암호 문서는 읽기 전용(이유 표시)`, { timeout: 200_000 }, async (t) => {
+        if (!ready) return t.skip('준비 실패');
+        const plain = file(`plain.${ext}`);
+        const r1 = await openInApp(plain);
+        assert.deepEqual([r1.readOnly, r1.readOnlyReason], [false, undefined]);
+        assert.equal(await closeOpened(APP_OF[ext], plain), false, '프로그램 창에서 읽기 전용으로 열림');
+        const src = file(`wpw.${ext}`);
+        const start = Date.now();
+        const r2 = await openInApp(src);
+        assert.ok(Date.now() - start < 60_000, `${Date.now() - start}ms (암호 창에서 멈춤?)`);
+        assert.deepEqual([r2.readOnly, r2.readOnlyReason], [true, 'writePassword']);
+        assert.equal(await closeOpened(APP_OF[ext], src), true);
+        assert.ok(await hasWritePassword(src), '원본의 쓰기 암호가 그대로');
       });
 
       test(`.${ext} 제자리 저장은 바로 한국어로 거절, 다른 파일로는 저장된다`, { timeout: 200_000 }, async (t) => {

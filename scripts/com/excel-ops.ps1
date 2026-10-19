@@ -48,6 +48,8 @@ function XlRange($ws, [string]$addr) {
 }
 
 function XlAddr($rg) { return [string]$rg.Address($false, $false) }
+# a reference as a formula ('=''Sheet''!$H$4:$H$10'): chart series given a Range object keep fixed values instead
+function XlRefFormula($ws, $rg) { return "='" + ([string]$ws.Name).Replace("'", "''") + "'!" + [string]$rg.Address($true, $true) }
 
 function XlSheetNameTaken($wb, [string]$name) {
   foreach ($s in $wb.Sheets) { if ($s.Name -eq $name) { return $true } }
@@ -548,14 +550,20 @@ function Invoke-XlOp($wb, $app, $op) {
       [void]$ws.Activate()
       $win = $wb.Windows.Item(1)
       $win.FreezePanes = $false
-      $win.SplitRow = 0; $win.SplitColumn = 0
+      try { $win.SplitRow = 0; $win.SplitColumn = 0 } catch {}
       if (XlProp $op 'cell') {
         $cell = XlRange $ws $op.cell
-        $win.ScrollRow = 1; $win.ScrollColumn = 1
-        if ($cell.Row -gt 1 -or $cell.Column -gt 1) {
-          $win.SplitColumn = $cell.Column - 1
-          $win.SplitRow = $cell.Row - 1
-          $win.FreezePanes = $true
+        if ($req.freezeInFile) {
+          # a hidden Excel cannot set SplitRow/SplitColumn or FreezePanes (its window is not on screen):
+          # Node writes the frozen pane into the saved .xlsx/.xlsm instead (sheet name + cell below)
+          $out.inFile = $true
+        } elseif ($cell.Row -gt 1 -or $cell.Column -gt 1) {
+          try {
+            $win.ScrollRow = 1; $win.ScrollColumn = 1
+            $win.SplitColumn = $cell.Column - 1
+            $win.SplitRow = $cell.Row - 1
+            $win.FreezePanes = $true
+          } catch { XlFail 'E_FREEZE_HIDDEN' (XlAddr $cell) }
         }
         $out.cell = XlAddr $cell
       }
@@ -613,8 +621,14 @@ function Invoke-XlOp($wb, $app, $op) {
     }
     'add_chart' {
       $ws = XlSheet $wb $op.sheet
-      $src = XlRange $ws $op.range
-      $at = $(if (XlProp $op 'at') { XlRange $ws $op.at } else { $ws.Cells.Item($src.Row, $src.Column + $src.Columns.Count + 1) })
+      # data: range (one block, or 'A3:A10,H3:H10' = areas side by side like a Ctrl+click selection)
+      # or values (one line per series) + optional categories
+      $byValues = XlHas $op 'values'
+      $src = $(if ($byValues) { XlRange $ws (@($op.values) -join ',') } else { XlRange $ws $op.range })
+      $last = $src.Areas.Item($src.Areas.Count)
+      $right = [int]$last.Column + [int]$last.Columns.Count
+      foreach ($ar in $src.Areas) { $right = [Math]::Max($right, [int]$ar.Column + [int]$ar.Columns.Count) }
+      $at = $(if (XlProp $op 'at') { XlRange $ws $op.at } else { $ws.Cells.Item($src.Areas.Item(1).Row, $right + 1) })
       $w = $(if (XlProp $op 'width') { [double]$op.width } else { 360.0 })
       $h = $(if (XlProp $op 'height') { [double]$op.height } else { 216.0 })
       $type = $XlChartTypes[[string]$op.type]
@@ -622,10 +636,36 @@ function Invoke-XlOp($wb, $app, $op) {
       try { $shape = $ws.Shapes.AddChart2(-1, $type, [double]$at.Left, [double]$at.Top, $w, $h) }
       catch { $shape = $ws.Shapes.AddChart($type, [double]$at.Left, [double]$at.Top, $w, $h) }
       $chart = $shape.Chart
-      # series follow Excel's Insert Chart rule (more rows than columns: one series per column) unless series_in says
-      $plotBy = $(if ($op.series_in -eq 'rows') { 1 } elseif ($op.series_in -eq 'columns') { 2 }
-        elseif ([int]$src.Rows.Count -gt [int]$src.Columns.Count) { 2 } else { 1 })
-      [void]$chart.SetSourceData($src, $plotBy)
+      $plotBy = 0
+      if ($byValues) {
+        # AddChart may plot whatever was selected: start empty, then one series per values line.
+        # A line whose first cell is text is that series' name (the matching first category cell is its header too)
+        while ([int]$chart.SeriesCollection().Count -gt 0) { [void]$chart.SeriesCollection(1).Delete() }
+        $cats = $(if (XlProp $op 'categories') { XlRange $ws $op.categories } else { $null })
+        foreach ($v in @($op.values)) {
+          $rg = XlRange $ws ([string]$v)
+          $n = [int]$rg.Cells.Count
+          $named = ($n -gt 1 -and ($rg.Cells.Item(1).Value2 -is [string]))
+          $data = $rg
+          if ($named) { $data = $ws.Range($rg.Cells.Item(2), $rg.Cells.Item($n)) }
+          $s = $chart.SeriesCollection().NewSeries()
+          XlSet $s 'Values' (XlRefFormula $ws $data)
+          if ($named) { XlSet $s 'Name' (XlRefFormula $ws $rg.Cells.Item(1)) }
+          if ($cats) {
+            $c = $cats
+            $cn = [int]$cats.Cells.Count
+            if ($named -and $cn -eq $n) { $c = $ws.Range($cats.Cells.Item(2), $cats.Cells.Item($cn)) }
+            XlSet $s 'XValues' (XlRefFormula $ws $c)
+          }
+        }
+      } else {
+        # series follow Excel's Insert Chart rule (more rows than columns: one series per column) unless series_in says
+        $rows = [int]$src.Areas.Item(1).Rows.Count; $cols = 0
+        foreach ($ar in $src.Areas) { $cols += [int]$ar.Columns.Count }
+        $plotBy = $(if ($op.series_in -eq 'rows') { 1 } elseif ($op.series_in -eq 'columns') { 2 }
+          elseif ($rows -gt $cols) { 2 } else { 1 })
+        [void]$chart.SetSourceData($src, $plotBy)
+      }
       $nSeries = [int]$chart.SeriesCollection().Count
       if (XlProp $op 'title') { $chart.HasTitle = $true; $chart.ChartTitle.Text = [string]$op.title }
       else {
@@ -635,7 +675,7 @@ function Invoke-XlOp($wb, $app, $op) {
         if (-not $keep) { try { $chart.HasTitle = $false } catch {} }
       }
       $out.sheet = $ws.Name; $out.name = $shape.Name; $out.range = XlAddr $src; $out.at = XlAddr $at
-      $out.series = $nSeries; $out.seriesIn = $(if ($plotBy -eq 2) { 'columns' } else { 'rows' })
+      $out.series = $nSeries; $out.seriesIn = $(if ($plotBy -eq 2) { 'columns' } elseif ($plotBy -eq 1) { 'rows' } else { $null })
       $out.title = $null
       try { if ($chart.HasTitle) { $out.title = [string]$chart.ChartTitle.Text } } catch {}
     }

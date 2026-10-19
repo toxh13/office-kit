@@ -88,6 +88,8 @@ MCP 도구  src/mcp/tools/<형식>.mjs ─┐
   **쪽 = 슬라이드 번호(숨긴 슬라이드 포함)**. 암호 문서는 열기 전에 거르고(`pptProtection`), pptx·odp는 꾸러미에서 슬라이드 수를 먼저 세어 범위를 확인한다.
   그림은 PowerPoint 기본 크기까지 (작은 dpi는 resvg로 줄임). 같은 파일·슬라이드 그림은 24개까지 기억.
 - Word·Excel: 프로그램으로 PDF 변환(8개까지 기억) → `office.ps1`의 `app:'pdf', op:'pageImage'` (Windows.Data.Pdf)로 PNG.
+  변환은 `index.mjs`의 `previewPdf`: Excel은 임시 사본을 시트마다 한 쪽 너비로(`fitWidth` → `Set-XlFitWidth`: Zoom 끔, FitToPagesWide 1, FitToPagesTall 끔) 내보낸다 — 넓은 표·차트가 쪽마다 잘리지 않게. 원본은 건드리지 않는다. 앱 미리보기도 같은 함수.
+- 한글 미리보기(`Hwp.openForView`): rhwp가 표의 바깥 아래 여백을 무시하므로 화면용 사본에서만 표 다음 문단의 문단 위 간격에 그 여백을 더한다 (`_gapAfterTables`).
 - `.pdf` 입력도 바로 처리.
 
 ### src/mcp/server.mjs
@@ -159,6 +161,10 @@ export function register(server, ctx)   // server.mjs의 TOOL_MODULES = [hwp, wo
   - 같은 범위라 이름이 부딪치지 않게 도우미에 형식 접두를 붙인다: Word `Wd…`, PowerPoint `…-Ppt…`, Excel `Xl…`.
 - `Invoke-Word` / `Invoke-Ppt` / `Invoke-Excel`이 문서를 열고 `switch ($req.op)`로 나눈다:
   `'inspect'` → `$res.inspect`, `'edit'` → `$res.results`(작업별 원자료). 저장할 것(`save`)이 없으면 읽기 전용으로 연다.
+  예외: 사람에게 넘기는 `op:'open', visible:true`('프로그램에서 열기')는 읽기·쓰기로 연다. 쓰기 암호가 있으면(OOXML 미리 확인, Word는 열기 실패로도 앎) 읽기 전용으로 열고
+  `readOnly:true, readOnlyReason:'write password'`, 다른 프로그램이 쥐고 있어 읽기 전용이 되면 `'in use or read-only file'` → `openInApp`이 `readOnlyReason: 'writePassword'|'inUse'`로, 화면은 알림.
+- Excel `freeze`: 숨은 Excel은 SplitRow·FreezePanes를 못 건다 → .xlsx·.xlsm으로 저장할 때는 `freezeInFile`: Excel은 창만 풀고 사본에 저장, Node(`writeFrozenPanes`)가 시트 보기에 `<pane state="frozen">`을 써서 `atomicWrite`
+  (그 자리 저장이면 쓰기 암호를 Node가 먼저 확인). 다른 형식은 COM으로 해 보고 안 되면 `E_FREEZE_HIDDEN`.
 - 요청: `{ app, op:'inspect'|'edit', path, operations, save, saveFormat, pidFile, …형식별 }`
   (Word `offset`·`limit`, PowerPoint `slide`·`offset`·`limit`·`maxShapes`, Excel `csvSheets`). 결과: `{ ok:true, inspect | results, saved }` 또는 `{ ok:false, error }`.
 - 파일은 **ASCII만** (PowerShell 5.1은 BOM 없는 스크립트를 ANSI로 읽음). 한국어는 JSON 요청으로 받고, 오류는 짧은 영어 코드로 던져
@@ -224,8 +230,14 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
 - `preload.cjs`: `window.officeKit` API만 노출 (contextIsolation, `webUtils.getPathForFile`로 끌어놓기 경로).
 - `renderer/`: 왼쪽 문서 미리보기 + 오른쪽 AI 대화창. 바닐라 JS, 번들러 없음.
 - `store.mjs`: 설정(JSON, 원자적 쓰기, AI마다 모델 따로 `models: {claude, codex}`), 최근 파일, 백업
-  (`userData/backups`, 최근 50개).
-- '원래대로'는 그 문서의 AI 대화를 멈춘 뒤 마지막 백업으로 되돌리고, 다음 메시지부터 새 대화로 시작한다.
+  = 문서 버전 (`userData/backups`, 항목마다 까닭 `reason`: `open`·`editor`·`ai`·`restore`, 문서마다 최근 30개(main의 `maxPerSource`), 모두 합쳐 200개·2GB),
+  미리보기 PDF 기억 `createPreviewCache` (`userData/preview-cache`, 열쇠 = 경로·크기·수정 시각·방식의 해시, 40개·512MB).
+- 버전을 남기는 때: 문서를 열 때, 편집 창이 덮어쓰기 전, AI 대화(`ai:send`)마다 시작 전, 되돌리기 전. 같은 내용이면 있던 것을 다시 쓴다 (처음 까닭 그대로).
+- '원래대로'(`doc:restore`)는 그 문서의 AI 대화를 멈춘 뒤 버전으로 되돌리고, 다음 메시지부터 새 대화로 시작한다.
+  인수 없으면 마지막 변경 전(지금 내용과 다른 가장 최근 버전), `{ file }`이면 그 버전 (`doc:versions`의 목록에 있는 것만).
+  화면은 원래대로 옆 ▾에서 버전 목록(시각·까닭·'이 버전으로 되돌리기')을 띄운다.
+- 미리보기(`doc:preview`): 프로그램으로 만든 PDF는 `preview-cache`에서 찾고, 없으면 만든 뒤 (만드는 동안 파일이 그대로였으면) 기억한다.
+- PDF로 저장(`doc:savePdf`)은 두 번: `{step:'pick'}` 저장 대화상자 → `{step:'make'}` 고른 곳에 만들기 (화면은 고른 뒤에만 'PDF 만드는 중').
 - AI 대화 세션은 문서마다 메모리에만 둔다 (앱을 다시 켜면 새 대화).
 - 확인용: `OFFICEKIT_SMOKE=<png경로>` 환경 변수로 실행하면 인수로 받은 파일을 열고 화면을 캡처한 뒤 종료 (못 열면 알림을 찍고 실패로 끝남). 최근 파일 목록·Windows 최근 항목은 건드리지 않는다.
   `OFFICEKIT_SMOKE_EDITOR=1`이면 그 문서를 편집 창으로도 열어, 다 뜨면(또는 실패 안내가 뜨면) `<png>-editor.png`로 찍고 주 창을 찍는다 (편집기가 못 뜨면 종료 코드 1).
@@ -258,7 +270,7 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
   studio의 문서 링크는 `window.open('about:blank')` 뒤 주소를 바꾸므로, `about:blank`만 숨긴 창(스크립트 끔, 같은 세션)으로 열어 주소를 바꾸려는 순간(`will-navigate`) 가로채 같은 확인을 거친 뒤 창을 없앤다.
 - **IPC** (편집 창 host의 최상위 틀에서만, 경로를 받지 않음 — 그 창이 연 파일에만 작용):
   `editor:get-document`, `editor:save`, `editor:save-as`(main의 저장 대화상자) / `editor:dirty`, `editor:log`, `editor:close`, `editor:reply` / main → host `editor:external-change`, `editor:request-close`, `editor:command`.
-- **저장**: host가 원래 형식으로 내보냄(hwp·hwt → `exportHwp`, hwpx → `exportHwpx`) → main이 형식 서명(OLE/ZIP)·512MB·읽기 전용을 확인 → 덮어쓰기 전 백업(`getBackups`, 문서마다 최근 5개) →
+- **저장**: host가 원래 형식으로 내보냄(hwp·hwt → `exportHwp`, hwpx → `exportHwpx`) → main이 형식 서명(OLE/ZIP)·512MB·읽기 전용을 확인 → 덮어쓰기 전 백업(`getBackups` = 버전 '직접 편집 저장 전', 문서마다 최근 30개) →
   같은 폴더 임시 파일에 쓰고 fsync → 있는 파일이면 내용만 덮어 복사(파일의 ACL·하드 링크가 그대로), 새 파일이면 이름 바꾸기 (`atomicWrite`) → `onSaved(path)`.
   단축키는 `before-input-event`로 받는다 (Ctrl+S, Ctrl+Shift+S, Ctrl+W). 다른 이름으로 저장에서 확장자를 붙인 이름이 이미 있으면 다시 묻는다.
 - **저장하는 동안 고친 것**: `notifySaved`는 studio를 무조건 '저장됨'으로 만든다. 그래서 그 뒤 `getDocumentState().documentSha256`(형식이 다르면 다시 내보내 비교)을 저장한 바이트와 견주고,

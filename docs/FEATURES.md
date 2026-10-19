@@ -256,11 +256,11 @@ AI 대화가 넘치지 않게 한 번에 보여 주는 양을 정해 두었다. 
 | `column_width` | `sheet?, columns('A' 또는 'A:C'), width(0~255)\|'auto'` | 열 너비 | ○ ('auto'는 근사) |
 | `row_height` | `sheet?, rows('5' 또는 '1:3'), height(0~409pt)\|'auto'` | 행 높이 | ○ ('auto'는 근사) |
 | `merge` / `unmerge` | `sheet?, range` | 병합 (두 칸 이상, 버린 값 개수를 알려 줌) / 풀기 | ○ |
-| `freeze` | `sheet?, cell('B2'\|null)` | 틀 고정 ('A2' = 1행만, null = 해제) | ○ |
+| `freeze` | `sheet?, cell('B2'\|null)` | 틀 고정 ('A2' = 1행만, null = 해제). Excel 엔진: 화면 없는 Excel은 틀 고정을 못 거므로 .xlsx·.xlsm은 Excel이 저장한 사본의 시트 보기에 직접 써서 옮긴다 (차트가 있어도 됨). 다른 형식(.xls·.ods)으로 저장하면 안 될 수 있다 (한국어 오류) | ○ |
 | `sort` | `sheet?, range, by(열 문자, 범위 안), order?('asc'(기본)\|'desc'), header?` | 정렬 (header 생략 = Excel이 판단, 병합 칸 있으면 거절) | × |
 | `autofilter` | `sheet?, range\|null` | 자동 필터 | ○ |
 | `add_table` | `sheet?, range, name?, style?(기본 TableStyleMedium2)` | 표(ListObject), 첫 행은 늘 머리글 | ○ |
-| `add_chart` | `sheet?, range, type('column'\|'bar'\|'line'\|'pie'\|'scatter'\|'area'), title?, at?(셀), width?(pt, 기본 360), height?(pt, 기본 216), series_in?('columns'\|'rows')` | 차트. 첫 행·첫 열은 이름표. series_in 생략 = Excel처럼(행이 열보다 많으면 columns). 결과 줄에 계열 수와 방향. title 생략 = 제목 없음 (계열 하나면 그 이름) | × |
+| `add_chart` | `sheet?, range` 또는 `values, categories?`, `type('column'\|'bar'\|'line'\|'pie'\|'scatter'\|'area'), title?, at?(셀), width?(pt, 기본 360), height?(pt, 기본 216), series_in?('columns'\|'rows')` | 차트. 첫 행·첫 열은 이름표. series_in 생략 = Excel처럼(행이 열보다 많으면 columns). 결과 줄에 계열 수와 방향. title 생략 = 제목 없음 (계열 하나면 그 이름). 떨어진 열: `range:'A3:A10,H3:H10'`(같은 행들에 나란히, Ctrl로 고른 것처럼) 또는 `categories:'A3:A10', values:['H3:H10', …]`(값 한 줄 = 계열 하나, 첫 칸이 글자면 계열 이름, categories와 칸 수가 같게, series_in 없이) | × |
 | `conditional_format` | `sheet?, range, rule{type('greater_than'\|'less_than'\|'between'\|'equal'\|'text_contains'\|'duplicate'\|'color_scale'\|'data_bar'), value?, value2?, fill?, font_color?}` | 조건부 서식 (기본 강조 '#FFC7CE' 배경·'#9C0006' 글자, value에 '=$B$1' 수식도) | ○ |
 | `data_validation` | `sheet?, range, list?(['예','아니오'] 또는 '=$E$1:$E$5')` 또는 `type('whole'\|'decimal'), min?, max?` | 입력 제한. 목록 항목에 쉼표·큰따옴표 불가, 합쳐 255자까지 | ○ |
 | `named_range` | `name, range('시트!A1:B2'), sheet?(range에 시트가 없을 때)` | 이름 정의 (통합 문서 범위, 있으면 바꿈, 표 이름과 같으면 거절) | ○ |
@@ -379,7 +379,7 @@ csv:
 | 직접 편집 (한글) | 상단 `직접 편집` (Ctrl+E), 새 문서 창 '만든 뒤 바로 편집 창 열기' (기본 켜짐) | hwp · hwpx · hwt | 없음 — 앱에 든 rhwp-studio, 인터넷 없이 |
 | 직접 편집 (문서 · 표 · 슬라이드) | 위와 같음 → 형식에 따라 '문서 편집' · '표 편집' · '슬라이드 편집' 창 | docx · xlsx · pptx | 없음 — 앱에 든 편집기(ONLYOFFICE Docs 기반, AGPL), 인터넷 없이, MS Office 없이 |
 
-- 직접 편집 저장: hwp·hwt → HWP, hwpx → HWPX (원래 형식). 다른 이름으로 저장은 .hwpx / .hwp. 덮어쓰기 전 내용은 백업 폴더에 남는다 (문서마다 최근 5개).
+- 직접 편집 저장: hwp·hwt → HWP, hwpx → HWPX (원래 형식). 다른 이름으로 저장은 .hwpx / .hwp. 덮어쓰기 전 내용은 문서 버전('직접 편집 저장 전')으로 남는다 (문서마다 최근 30개, 원래대로 ▾에서 되돌림).
   저장하는 동안 친 글은 '저장 안 됨'으로 남아 닫을 때 묻는다. 파일의 보안 설정(나만 읽기 등)은 저장해도 그대로다.
 - 문서 안 링크(http·https·mailto)를 누르면 "기본 브라우저로 열까요?"를 물은 뒤 연다. 이 PC·사설망 주소(127.x, 192.168.x 등)는 열지 않는다.
 - 원래대로: 편집 창에 저장 안 한 내용이 있으면 파일이 이미 원본과 같아도 편집 창이 다시 불러오기 / 내 편집 유지를 묻는다.

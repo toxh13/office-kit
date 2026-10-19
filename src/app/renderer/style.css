@@ -235,11 +235,39 @@ kbd {
 .btn.edit-btn:disabled svg.i { color: inherit; }
 .btn.edit-btn.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); background: var(--accent-soft); color: var(--accent-text); }
 
-/* 문서가 열려 있을 때 기본 창 너비(1440)에서도 문서 이름이 보이게: 엔진 표시(상태 막대에도 있음)와 '새 문서' 글자를 접는다 */
+/* 원래대로 + 버전 목록 (나뉜 버튼) */
+.split { display: inline-flex; align-items: center; }
+.split #btn-restore { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.actions .btn.ghost.split-caret { width: 22px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.btn.ghost.split-caret svg.i { width: 14px; height: 14px; }
+.btn.ghost.split-caret[aria-expanded="true"] { background: var(--active); color: var(--text); }
+
+.popover {
+  position: fixed; z-index: 60; width: 340px; max-width: calc(100vw - 24px);
+  max-height: min(460px, calc(100vh - 80px)); display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.popover[hidden] { display: none; }
+.pop-head { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px 8px; border-bottom: 1px solid var(--border); }
+.pop-head strong { font-size: 13.5px; }
+.pop-sub { font-size: 12px; color: var(--muted); }
+.pop-foot { padding: 6px 10px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+.ver-list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; }
+.ver-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius); }
+.ver-item:hover { background: var(--hover); }
+.ver-item.is-undo { background: var(--accent-soft); }
+.ver-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.ver-label { font-weight: 600; font-size: 13px; }
+.ver-time { font-size: 12px; color: var(--muted); }
+.ver-tag { font-size: 11px; color: var(--accent-text); font-weight: 600; }
+.ver-now { font-size: 12px; color: var(--muted); flex: none; }
+.ver-empty { padding: 14px; color: var(--muted); font-size: 12.5px; }
+
+/* 문서가 열려 있을 때 기본 창 너비(1440)에서도 문서 이름이 보이게: 엔진 표시(상태 막대에도 있음)를 접는다
+   ('새 문서' 글자는 그대로 — 문서를 열고 닫을 때 버튼 모양이 바뀌지 않게) */
 @media (max-width: 1500px) {
   .topbar:has(#docinfo:not([hidden])) .engine-badge { display: none; }
-  .topbar:has(#docinfo:not([hidden])) #btn-new .lbl { display: none; }
-  .topbar:has(#docinfo:not([hidden])) #btn-new { padding: 0; width: 34px; justify-content: center; }
 }
 @media (max-width: 1380px) {
   .actions .lbl { display: none; }
@@ -352,6 +380,8 @@ kbd {
   box-shadow: var(--page-shadow);
 }
 body.resizing iframe, body.dragging iframe { pointer-events: none; }
+/* 다른 창에서 끌어 온 파일을 PDF 미리보기 위에 바로 놓아도 받게 (app.js setupDragDrop) */
+body.drop-ready iframe.pdf-frame { pointer-events: none; }
 
 .pages { display: flex; flex-direction: column; align-items: center; gap: 28px; padding: 32px 32px 72px; min-width: min-content; }
 .page { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; }
@@ -418,6 +448,14 @@ body.resizing iframe, body.dragging iframe { pointer-events: none; }
 .error-card h3 { margin: 0 0 6px; font-size: 15px; }
 .error-card p { margin: 0 0 18px; color: var(--text-2); user-select: text; word-break: keep-all; overflow-wrap: anywhere; }
 .error-card .btn-row { justify-content: center; }
+/* 엔진이 낸 원래 오류 글 (오류 코드·경로·영어) — 접어 둔다 */
+.err-more { margin: -10px 0 16px; text-align: left; }
+.err-more summary { cursor: pointer; color: var(--muted); font-size: 12px; text-align: center; list-style-position: inside; }
+.err-detail {
+  margin: 8px 0 0; padding: 8px 10px; max-height: 160px; overflow: auto;
+  border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border);
+  font: 11.5px/1.5 var(--mono); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
 
 /* 글자 미리보기 */
 .text-wrap { display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 32px 32px 72px; }
@@ -888,6 +926,23 @@ button.st { border: 0; background: none; font: inherit; color: inherit; cursor: 
 .nd-actions { align-items: center; padding-top: 18px; }
 .nd-keys { margin-right: auto; display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 11.5px; }
 .nd-keys kbd + kbd { margin-left: 8px; }
+/* 낮은 창(약 780px)에서도 AI 부탁까지 굴리지 않고 보이게: 간격·타일을 줄이고 보조 설명을 접는다 */
+@media (max-height: 860px) {
+  .nd-head { padding-top: 16px; }
+  .nd-body { gap: 11px; padding-top: 10px; max-height: calc(100vh - 170px); }
+  .nd-field { gap: 5px; }
+  .format-tile { padding: 8px 4px 6px; }
+  .format-tile .file-tile { width: 26px; height: 26px; font-size: 11.5px; border-radius: 7px; margin-bottom: 3px; }
+  .format-tile:has(input:checked)::after { top: 5px; right: 5px; }
+  .name-box { height: 34px; }
+  .folder-box, .folder-row .btn { height: 34px; }
+  .start-choices .choice { padding: 8px 12px; }
+  .start-choices .choice-desc, .check-desc { display: none; }
+  .check-row { padding: 8px 12px; }
+  .ai-request { gap: 6px; }
+  .ai-request textarea { min-height: 52px; }
+  .nd-actions { padding-top: 12px; }
+}
 
 .dialog.settings { width: 780px; height: min(600px, calc(100vh - 48px)); }
 .settings-shell { display: grid; grid-template-columns: 200px 1fr; height: 100%; }

@@ -11,7 +11,7 @@ import { Resvg } from '@resvg/resvg-js';
 import JSZip from 'jszip';
 import { Hwp } from './hwp.mjs';
 import { comCall, comAppFor, comAvailableFor } from './com.mjs';
-import { convertDocument, extOf, kindOf, isHwp } from './index.mjs';
+import { previewPdf, extOf, kindOf, isHwp } from './index.mjs';
 
 const FONT = { loadSystemFonts: true, defaultFontFamily: '맑은 고딕', sansSerifFamily: '맑은 고딕' };
 
@@ -38,7 +38,8 @@ async function pdfFor(path) {
   const hit = pdfCache.get(key);
   if (hit && existsSync(hit.file)) return hit;
   const file = join(scratch(), `${pdfCache.size + 1}-${Date.now()}.pdf`);
-  const res = await convertDocument(path, file);
+  // Excel은 시트마다 한 쪽 너비로 (넓은 표·차트를 AI가 한 그림에서 보게)
+  const res = await previewPdf(path, file);
   const entry = { file, engine: res.engine };
   pdfCache.set(key, entry);
   if (pdfCache.size > 8) {

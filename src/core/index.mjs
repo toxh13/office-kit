@@ -300,6 +300,25 @@ export async function convertDocument(path, output) {
 }
 
 /**
+ * 미리보기·쪽 그림용 PDF (설치된 프로그램). Excel은 시트마다 한 쪽 너비에 맞춘다 (넓은 표·차트가 여러 쪽으로 잘리지 않게).
+ * 쪽 설정은 임시 사본에만 바꾸고 저장하지 않는다 — 원본 파일은 건드리지 않는다.
+ * '파일 → PDF로 저장'(convertDocument)은 문서의 인쇄 설정을 그대로 쓴다.
+ */
+export async function previewPdf(path, output) {
+  path = mustExist(path);
+  if (comAppFor(extOf(path)) !== 'excel' || !(await comAvailableFor(extOf(path)))) return convertDocument(path, output);
+  const work = mkdtempSync(join(tmpdir(), 'officekit-xlpdf-'));
+  try {
+    const copy = join(work, basename(path));
+    copyFileSync(path, copy);
+    await comCall({ app: 'excel', op: 'convert', path: copy, save: resolve(output), saveFormat: 'pdf', fitWidth: true }, { timeoutMs: 180_000 });
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  return { engine: 'excel', output: resolve(output) };
+}
+
+/**
  * 미리보기 만들기.
  *   mode 'auto' : 한글은 rhwp SVG(빠름), 나머지는 프로그램 PDF
  *   mode 'exact': 설치된 프로그램으로 PDF (가장 정확)
@@ -318,7 +337,7 @@ export async function renderPreview(path, outDir, { mode = 'auto', maxPages = 40
     const work = mkdtempSync(join(tmpdir(), 'officekit-preview-'));
     try {
       const pdf = join(work, 'preview.pdf');
-      await convertDocument(path, pdf);
+      await previewPdf(path, pdf);
       try { renameSync(pdf, file); } catch { copyFileSync(pdf, file); }
     } finally {
       rmSync(work, { recursive: true, force: true });
@@ -341,6 +360,7 @@ export async function openInApp(path) {
   path = mustExist(path);
   const ext = extOf(path);
   if (!(await comAvailableFor(ext, { interactive: true }))) throw new Error(`${kindOf(path)} 프로그램이 설치돼 있지 않습니다`);
-  await comCall({ app: comAppFor(ext), op: 'open', path, visible: true });
-  return { opened: path };
+  // 사람이 고치도록 읽기·쓰기로 연다. 쓰기 암호가 있거나 다른 프로그램이 쥐고 있으면 읽기 전용 (readOnlyReason)
+  const r = await comCall({ app: comAppFor(ext), op: 'open', path, visible: true });
+  return { opened: path, readOnly: !!r?.readOnly, ...(r?.readOnly ? { readOnlyReason: r.readOnlyReason === 'write password' ? 'writePassword' : 'inUse' } : {}) };
 }

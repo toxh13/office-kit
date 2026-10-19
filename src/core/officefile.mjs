@@ -106,7 +106,8 @@ function cellText(cell) {
   return cell.text ?? '';
 }
 
-const sheetsText = (sheets) => sheets.map((s) => `--- 시트 ${s.name} ---\n${s.rows.map((r) => r.join('\t')).join('\n')}`).join('\n\n');
+// 병합된 칸은 왼쪽 위 칸에만 값이 있고 나머지는 빈칸이다 → 시트 머리에 병합 범위를 적어 둔다
+const sheetsText = (sheets) => sheets.map((s) => `--- 시트 ${s.name} ---${s.merges?.length ? ` (병합: ${s.merges.join(', ')} — 값은 왼쪽 위 칸에만)` : ''}\n${s.rows.map((r) => r.join('\t')).join('\n')}`).join('\n\n');
 
 export async function readXlsx(path) {
   const wb = new ExcelJS.Workbook();
@@ -115,10 +116,15 @@ export async function readXlsx(path) {
     const rows = [];
     ws.eachRow({ includeEmpty: true }, (row, r) => {
       const vals = [];
-      for (let c = 1; c <= ws.columnCount; c++) vals.push(cellText(row.getCell(c)));
+      for (let c = 1; c <= ws.columnCount; c++) {
+        const cell = row.getCell(c);
+        // 병합된 칸의 나머지 칸은 exceljs가 왼쪽 위 값을 그대로 돌려준다 → 한 번만 (Excel과 같게)
+        vals.push(cell.isMerged && cell.master && cell.master.address !== cell.address ? '' : cellText(cell));
+      }
       rows[r - 1] = vals;
     });
-    return { name: ws.name, rows: Array.from(rows, (r) => r ?? []) };
+    const merges = Object.values(ws._merges ?? {}).map((m) => String(m.range ?? m.shortRange ?? m)).filter(Boolean);
+    return { name: ws.name, rows: Array.from(rows, (r) => r ?? []), ...(merges.length ? { merges } : {}) };
   });
   return { text: sheetsText(sheets), sheets };
 }

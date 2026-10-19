@@ -10,8 +10,9 @@
 | `0001-app-file-save-says-why.patch` | `file.save`에 `reason`을 더한다: 사용자 저장 `"user"`, 10분 자동 저장 `"auto"`. 자동 저장 중 누른 저장은 그 뒤에 따로 한다 | **예** — 없으면 자동 저장이 사용자 파일을 몰래 덮어쓴다 |
 | `0002-app-korean-strings.patch` | 앱 페이지 문구 한국어 (아래쪽 **법적 고지 줄** 포함). `ko` 지역 → `ko-KR` | 예 — 한국어 UI |
 | `0003-build-source-for-modified-builds.patch` | `build-app.mjs --source <주소>`: 수정판의 소스 위치를 법적 고지 줄에 넣는다 | 권장 — 안 주면 고지 줄이 filex 원본 태그를 가리킨다 |
+| `0004-app-no-feature-tips.patch` | 편집기 설정 `customization.features.featuresTips: false` — '신규' 기능 풍선(새 버튼 안내)을 끈다 | 권장 — 샌드박스 틀 안 편집기는 풍선을 닫은 것을 기억하지 못해 열 때마다 도구 모음을 가린다 |
 
-- 셋 다 **차례대로** 얹는다 (0001 → 0002 → 0003). 0002·0003은 앞 패치 위에서 만들었다.
+- 모두 **차례대로** 얹는다 (0001 → 0002 → 0003 → 0004). 0002·0003·0004는 앞 패치 위에서 만들었다.
 - 패치를 얹어 다시 빌드한 묶음은 릴리스 `ui.zip`과 **filex가 빌드하는 세 파일만** 다르다 (2,633개 중): `filex/app.js`(패치 내용 + 머리글), 다리 `editor/web-apps/vendor/socketio/socket.io.min.js`·`filex/x2t-worker.js`(코드는 같고 맨 위 머리글만 `MODIFIED build … Source of this build: <주소>` — 0003). 편집기 파일·x2t는 같은 바이트.
 - 검증: filex 단위 시험 280 → 293개 통과, `tsc` 통과. Electron 하네스에서 docx·xlsx·pptx 각 10개 확인 모두 통과 (아래 '검증').
 
@@ -125,6 +126,15 @@ filex에서 달라지는 것: `file.save`에 칸 하나가 더 붙는다 (filex�
 | `README.md`, `CHANGELOG.md` | 설명 |
 
 까닭: 패치를 얹은 앱의 고지 줄이 `…/filex-office-editor/tree/v0.3.1`(패치 없는 원본)을 가리키면 '지금 돌리는 것의 소스'가 아니다. Office Kit 빌드는 `github.com/toxh13/office-kit/releases/tag/v<버전>`(소스 꾸러미 `office-editor-source-<버전>.zip`이 붙는 곳, 설계 8장 4번)을 넘긴다 — W1 `build-office-editor.mjs`가 이미 그렇게 함. `--source` 없이 빌드하면 바이트가 예전과 같다.
+
+### 0004 — 새 기능 풍선 끄기 (2026-10-19, v0.1.4)
+
+| 파일 | 바뀐 것 |
+|---|---|
+| `src/app/config.ts` | `editorConfig().editorConfig.customization.features`에 `featuresTips: false` (ONLYOFFICE 9.4 설정 — `api.js`의 `features.featuresTips`) |
+| `tests/app-config.test.ts` | 그 값이 들어가는지 |
+
+까닭: 편집기는 새 기능마다 '신규 새 버튼: 서식' 같은 풍선을 처음 한 번 띄우고 닫았다는 것을 브라우저 저장소에 적는데, filex의 편집기 틀은 `sandbox`(opaque origin)라 저장소가 없어 열 때마다 다시 뜬다 (v0.1.3 최종 평가). 편집기 파일은 고치지 않는다 — 편집기가 받는 설정만 바꾼다.
 
 ---
 

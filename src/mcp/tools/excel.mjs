@@ -60,7 +60,11 @@ const excelOp = z.discriminatedUnion('op', [
   op('autofilter', { sheet: sheetOpt, range: str().nullable().describe("범위 (null이면 해제)") }, '자동 필터'),
   op('add_table', { sheet: sheetOpt, range, name: str().optional().describe('표 이름 (띄어쓰기 없이, 이미 있는 표·이름은 안 됨)'), style: str().optional().describe("표 스타일 (기본 'TableStyleMedium2', 예: 'TableStyleLight9')") }, '표(ListObject) 만들기 — 첫 행은 머리글'),
   op('add_chart', {
-    sheet: sheetOpt, range: range.describe("원본 데이터 범위 (첫 행·첫 열은 이름표) 예: 'A1:C6'"),
+    sheet: sheetOpt,
+    range: str().min(1, E).optional().describe("원본 데이터 범위 (첫 행·첫 열은 이름표) 예: 'A1:C6'. 떨어진 열은 쉼표로 'A3:A10,H3:H10' (같은 행들). values를 쓰면 생략"),
+    categories: str().min(1, E).optional().describe("항목(가로축 이름표) 범위 한 줄 예: 'A3:A10' (values와 함께, 칸 수가 같게)"),
+    values: z.union([str().min(1, E), z.array(str().min(1, E), E).min(1, E)], msg("values는 'H3:H10' 또는 ['H3:H10', 'C3:C10']이어야 합니다")).optional()
+      .describe("계열 값 범위 (한 줄마다 계열 하나) 예: ['H3:H10']. 첫 칸이 글자면 계열 이름으로 쓰고 categories의 첫 칸도 머리글로 본다"),
     type: z.enum(['column', 'bar', 'line', 'pie', 'scatter', 'area'], E).describe('column 세로 막대 | bar 가로 막대 | line 꺾은선 | pie 원 | scatter 분산 | area 영역'),
     title: str().optional().describe('차트 제목 (생략하면 제목 없음 — 계열이 하나면 그 계열 이름)'), at: str().optional().describe('차트 왼쪽 위 셀 (생략하면 데이터 오른쪽)'),
     width: num().optional().describe('너비(pt, 기본 360)'), height: num().optional().describe('높이(pt, 기본 216)'),
@@ -108,6 +112,7 @@ const OPS_HELP = [
   '  {op:"sort", sheet?, range, by:"B", order:"asc|desc", header?} ×',
   '  {op:"autofilter", sheet?, range|null} / {op:"add_table", sheet?, range, name?, style?}',
   '  {op:"add_chart", sheet?, range, type:"column|bar|line|pie|scatter|area", title?, at?:"E2", width?, height?, series_in?:"columns|rows"} ×  (첫 행·첫 열은 이름표, 계열 방향은 생략하면 Excel처럼 정함)',
+  '    떨어진 열: range:"A3:A10,H3:H10" · 또는 {op:"add_chart", categories:"A3:A10", values:["H3:H10"], type, ...} (계열마다 한 줄)',
   '  {op:"conditional_format", sheet?, range, rule:{type:"greater_than|less_than|between|equal|text_contains|duplicate|color_scale|data_bar", value?, value2?, fill?, font_color?}}',
   '  {op:"data_validation", sheet?, range, list:["예","아니오"]|"=$E$1:$E$5"} 또는 {..., type:"whole|decimal", min?, max?}',
   '  {op:"named_range", name, range:"시트!A1:B2"} / {op:"recalculate"} ×',

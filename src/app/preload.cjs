@@ -20,7 +20,10 @@ contextBridge.exposeInMainWorld('officeKit', {
     open: invoke('doc:open'),
     close: invoke('doc:close'),
     preview: invoke('doc:preview'),
+    // 버전으로 되돌리기: 인수 없으면 마지막 변경 전으로, { file }이면 그 버전으로
     restore: invoke('doc:restore'),
+    // 버전 목록 → { versions: [{ file, time, reason, size, current }], undo }
+    versions: invoke('doc:versions'),
     openInApp: invoke('doc:openInApp'),
     savePdf: invoke('doc:savePdf'),
     showInFolder: invoke('doc:showInFolder'),

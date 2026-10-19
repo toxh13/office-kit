@@ -2,6 +2,7 @@
 //   pptx: 노트·유인물 마스터가 다른 마스터와 테마 부분을 같이 쓰면 사본을 따로 준다 (없으면 PowerPoint 복구 창 — 필수)
 //   xlsx: 어떤 관계도 가리키지 않는 xl/theme/*.xml을 지운다 (x2t가 남기는 theme.xml)
 //         x14 확장에만 남은 보통 조건부 서식(cellIs 등)을 기본 조건부 서식으로 되돌린다 (Excel 없는 파일 엔진이 고칠 수 있게)
+//         차트 계열의 항목(c:cat) 범위가 값 범위와 길이가 다르면 맞추고, 원본이 있으면 행을 넣고·지운 만큼 원본 항목 글을 따라 범위를 옮긴다
 //   docx: 아래 행이 이어 받지 않는 <w:vMerge w:val="restart"/>를 지운다 (편집기에서 더한 표 행 → Word가 세로 병합으로 봄)
 // 원본에서 옮겨 오기 (덮어쓸 원래 파일을 주면 — 편집기에 화면이 없는 것만, 사용자 편집은 건드리지 않음):
 //   공통: 테마 글꼴 묶음(스크립트별 글꼴·빈 ea) — x2t가 지워 한글이 맑은 고딕 대신 바탕·Arial로 보임
@@ -989,6 +990,245 @@ function stripThreadPrefix(text, author) {
   return text.slice(0, t.openEnd) + rest + text.slice(t.closeStart);
 }
 
+// ── xlsx: 차트 범위 (편집기에서 데이터 범위 안에 행·열을 넣거나 지운 뒤) ─────────────
+// 편집기는 차트 범위를 제대로 옮기지 않는다: 행 머리글로 행을 넣으면 값(c:val) 범위만 늘리고 항목(c:cat) 범위는 그대로 두고,
+// 셀 하나를 골라 행을 넣으면 둘 다 그대로 둔다 → Excel에서 새 막대에 항목 이름이 없거나 마지막 행이 차트에서 빠진다.
+//   1) 같은 계열의 항목·값 범위가 같은 방향인데 길이가 다르면 → 항목 범위를 값 범위에 맞춘다
+//      (시작이나 끝이 같을 때만. 원본에 같은 범위 글로 이미 있던 계열은 그대로 — 사용자가 그렇게 만든 것)
+//   2) 원본과 범위 글이 같은 계열: 원본 항목 글(캐시)이 시트에서 다른 칸으로 옮겨 갔으면 → 처음·끝 항목을 따라 항목·값 범위를 옮기고 늘리거나 줄인다
+// 확실하지 않으면 고치지 않고 warnings에 남긴다. 고친 범위의 캐시(strCache·numCache)는 시트 값으로 다시 쓴다.
+
+const CHART_PART = /^xl\/charts\/chart[^/]*\.xml$/i;
+const REF = /^(?:'((?:[^']|'')+)'|([^'!\s()]+))!\$?([A-Z]{1,3})\$?(\d+)(?::\$?([A-Z]{1,3})\$?(\d+))?$/;
+const colNum = (s) => [...s].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+const colName = (n) => { let s = ''; for (; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
+
+/** '시트!$A$4:$A$9' → { sheet, token('시트' 그대로), c1, r1, c2, r2 } | null (여러 영역·이름 정의는 null) */
+export function parseChartRef(f) {
+  const s = String(f ?? '').trim();
+  const m = REF.exec(s);
+  if (!m) return null;
+  const [a, b] = [colNum(m[3]), m[5] ? colNum(m[5]) : colNum(m[3])];
+  const [x, y] = [Number(m[4]), m[6] ? Number(m[6]) : Number(m[4])];
+  return { sheet: m[1] != null ? m[1].replace(/''/g, "'") : m[2], token: s.slice(0, s.lastIndexOf('!')),
+    c1: Math.min(a, b), c2: Math.max(a, b), r1: Math.min(x, y), r2: Math.max(x, y) };
+}
+const refText = (r) => `${r.token}!$${colName(r.c1)}$${r.r1}${r.c1 === r.c2 && r.r1 === r.r2 ? '' : `:$${colName(r.c2)}$${r.r2}`}`;
+// 방향: 'v' 한 열 여러 행, 'h' 한 행 여러 열, '1' 한 칸
+const lineOf = (r) => (r.c1 === r.c2 && r.r1 !== r.r2 ? 'v' : r.r1 === r.r2 && r.c1 !== r.c2 ? 'h' : r.c1 === r.c2 ? '1' : null);
+const spanOf = (r, d) => (d === 'v' ? [r.r1, r.r2] : [r.c1, r.c2]);
+const withSpan = (r, d, a, b) => (d === 'v' ? { ...r, r1: a, r2: b } : { ...r, c1: a, c2: b });
+const cellAt = (r, d, k) => (d === 'v' ? `${colName(r.c1)}${k}` : `${colName(k)}${r.r1}`);
+
+/** 계열 안 tx·cat(xVal)·val(yVal)의 범위 → { role: { kind, el, text } } */
+function seriesRefs(xml, ser) {
+  const out = {};
+  const kids = childrenOf(xml, ser.openEnd, ser.closeStart);
+  for (const [role, names] of [['tx', ['c:tx']], ['cat', ['c:cat', 'c:xVal']], ['val', ['c:val', 'c:yVal']]]) {
+    const k = kids.find((x) => names.includes(x.name));
+    if (!k) continue;
+    const box = findEl(xml, k.name, k.start);
+    if (box.self) continue;
+    const r = childrenOf(xml, box.openEnd, box.closeStart).find((x) => ['c:strRef', 'c:numRef', 'c:multiLvlStrRef'].includes(x.name));
+    if (!r) continue;
+    const el = findEl(xml, r.name, r.start);
+    const f = el.self ? null : findEl(xml, 'c:f', el.openEnd, el.closeStart);
+    if (!f || f.self) continue;
+    out[role] = { kind: r.name, el, text: unescapeText(xml.slice(f.openEnd, f.closeStart)).trim() };
+  }
+  return out;
+}
+
+/** 캐시의 점들 → 길이 n 배열 (빈 칸은 '') */
+function cachePoints(xml, el) {
+  const cache = findEl(xml, el.kind === 'c:numRef' ? 'c:numCache' : 'c:strCache', el.el.openEnd, el.el.closeStart);
+  if (!cache || cache.self) return null;
+  const n = Number(findEl(xml, 'c:ptCount', cache.openEnd, cache.closeStart)?.attrs.val);
+  if (!Number.isInteger(n) || n < 0 || n > 100000) return null;
+  const out = Array(n).fill('');
+  for (const p of findAll(xml, 'c:pt', cache.openEnd, cache.closeStart)) {
+    const i = Number(p.attrs.idx);
+    const v = p.self ? null : findEl(xml, 'c:v', p.openEnd, p.closeStart);
+    if (Number.isInteger(i) && i >= 0 && i < n && v && !v.self) out[i] = unescapeText(xml.slice(v.openEnd, v.closeStart));
+  }
+  return out;
+}
+
+// 시트 값 읽기 (이름 → Map('A4' → 글)), 공유 문자열 포함. 시트마다 한 번만 푼다
+async function sheetValues(e) {
+  const sheets = new Map([...(await sheetMap(e))].map(([k, v]) => [lower(k), v]));
+  const [ss] = await workbookParts(e, 'sharedStrings');
+  let shared = null;
+  const done = new Map();
+  return async (name) => {
+    const key = lower(name);
+    if (done.has(key)) return done.get(key);
+    const part = sheets.get(key);
+    const xml = part ? await e.xml(part) : null;
+    if (xml == null) { done.set(key, null); return null; }
+    if (!shared) {
+      shared = [];
+      const sx = ss ? await e.xml(ss.part) : null;
+      for (const m of (sx ?? '').matchAll(/<(?:\w+:)?si\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?si>)/g)) {
+        const body = (m[1] ?? '').replace(/<(?:\w+:)?rPh\b[\s\S]*?<\/(?:\w+:)?rPh>/g, '');
+        shared.push([...body.matchAll(/<(?:\w+:)?t\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?t>)/g)].map((t) => unescapeText(t[1] ?? '')).join(''));
+      }
+    }
+    const cells = new Map();
+    for (const m of xml.matchAll(/<c\b((?:[^>"']|"[^"]*"|'[^']*')*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const a = attrsOf(m[1]);
+      if (!a.r || m[2] == null) continue;
+      let v;
+      if (a.t === 'inlineStr') v = [...m[2].matchAll(/<t\b[^>]*?(?:\/>|>([\s\S]*?)<\/t>)/g)].map((t) => unescapeText(t[1] ?? '')).join('');
+      else {
+        const x = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(m[2]);
+        if (!x) continue;
+        v = unescapeText(x[1]);
+        if (a.t === 's') v = shared[Number(v)] ?? '';
+      }
+      cells.set(a.r.replace(/\$/g, '').toUpperCase(), v);
+    }
+    done.set(key, cells);
+    return cells;
+  };
+}
+
+/** 범위 요소(c:strRef·c:numRef)를 새 범위 글 + 시트 값으로 만든 캐시로 다시 쓴 XML 조각 */
+function rebuiltRef(xml, el, ref, cells) {
+  const kids = childrenOf(xml, el.el.openEnd, el.el.closeStart);
+  const keep = kids.filter((k) => !['c:f', 'c:strCache', 'c:numCache'].includes(k.name)).map((k) => xml.slice(k.start, k.end)).join('');
+  const d = lineOf(ref) === 'h' ? 'h' : 'v';
+  const [a, b] = spanOf(ref, d);
+  const vals = Array.from({ length: b - a + 1 }, (_, i) => cells?.get(cellAt(ref, d, a + i)) ?? '');
+  let cache;
+  if (el.kind === 'c:numRef') {
+    const old = findEl(xml, 'c:numCache', el.el.openEnd, el.el.closeStart);
+    const fc = old && !old.self ? findEl(xml, 'c:formatCode', old.openEnd, old.closeStart) : null;
+    const pts = vals.map((v, i) => (v !== '' && Number.isFinite(Number(v)) ? `<c:pt idx="${i}"><c:v>${escapeText(v)}</c:v></c:pt>` : '')).join('');
+    cache = `<c:numCache>${fc ? xml.slice(fc.start, fc.end) : ''}<c:ptCount val="${vals.length}"/>${pts}</c:numCache>`;
+  } else {
+    cache = `<c:strCache><c:ptCount val="${vals.length}"/>${vals.map((v, i) => (v !== '' ? `<c:pt idx="${i}"><c:v>${escapeText(v)}</c:v></c:pt>` : '')).join('')}</c:strCache>`;
+  }
+  const name = el.kind;
+  return `${el.el.tag.replace(/\s*\/>$/, '>')}<c:f>${escapeText(refText(ref))}</c:f>${cache}${keep}</${name}>`;
+}
+
+/** 원본 항목 글이 시트에서 옮겨 간 자리 → { a, b } | null(그대로) | { uncertain } */
+function followLabels(cells, ref, d, labels) {
+  const [a, b] = spanOf(ref, d);
+  if (labels.length !== b - a + 1) return null;
+  const at = (k) => cells.get(cellAt(ref, d, k)) ?? '';
+  if (labels.every((l, i) => at(a + i) === l)) return null;
+  const first = labels.findIndex((l) => l !== '');
+  const last = labels.findLastIndex((l) => l !== '');
+  if (first < 0 || first === last) return { uncertain: '항목 글이 하나뿐' };
+  // 같은 줄(열·행)에서 그 글이 있는 자리들
+  const where = new Map();
+  for (const [addr, v] of cells) {
+    const m = /^([A-Z]+)(\d+)$/.exec(addr);
+    if (!m) continue;
+    const [c, r] = [colNum(m[1]), Number(m[2])];
+    if (d === 'v' ? c !== ref.c1 : r !== ref.r1) continue;
+    const k = d === 'v' ? r : c;
+    if (!where.has(v)) where.set(v, []);
+    where.get(v).push(k);
+  }
+  const near = (label, from, min) => (where.get(label) ?? []).filter((k) => k >= min).sort((x, y) => Math.abs(x - from) - Math.abs(y - from))[0] ?? null;
+  const nf = near(labels[first], a + first, 1);
+  const nl = nf == null ? null : near(labels[last], a + last, nf + 1);
+  if (nf == null || nl == null) return { uncertain: '처음·끝 항목을 시트에서 찾지 못함' };
+  // 사이 항목들이 차례대로 (절반 넘게) 있어야 같은 표로 본다
+  let k = nf; let found = 0; let want = 0;
+  for (const l of labels.slice(first, last + 1)) {
+    if (l === '') continue;
+    want++;
+    let j = k;
+    while (j <= nl && at(j) !== l) j++;
+    if (j <= nl) { found++; k = j + 1; }
+  }
+  if (found * 2 <= want) return { uncertain: '항목 차례가 원본과 다름' };
+  const na = nf - first;
+  const nb = nl + (labels.length - 1 - last);
+  if (na < 1) return { uncertain: '범위가 시트 밖' };
+  return na === a && nb === b ? null : { a: na, b: nb };
+}
+
+// 원본 계열: '항목 범위|값 범위' → { labels(항목 캐시), tx(이름 캐시) }
+async function originalSeries(orig) {
+  const out = new Map();
+  for (const part of [...orig.names.values()].filter((n) => orig.has(n) && CHART_PART.test(n))) {
+    const xml = await orig.xml(part);
+    for (const ser of findAll(xml, 'c:ser')) {
+      if (ser.self) continue;
+      const s = seriesRefs(xml, ser);
+      if (!s.cat || !s.val) continue;
+      out.set(`${s.cat.text}|${s.val.text}`, { labels: s.cat.kind === 'c:strRef' ? cachePoints(xml, s.cat) : null,
+        tx: s.tx ? cachePoints(xml, s.tx)?.[0] ?? null : null });
+    }
+  }
+  return out;
+}
+
+/** 차트 범위 고치기 → 경고 목록 (고친 것은 edit.fixes) */
+async function fixChartRanges(edit, orig) {
+  const charts = [...edit.names.values()].filter((n) => edit.has(n) && CHART_PART.test(n));
+  const warnings = [];
+  if (!charts.length) return warnings;
+  const values = await sheetValues(edit);
+  const before = orig ? await originalSeries(orig) : new Map();
+  for (const part of charts) {
+    let xml = await edit.xml(part);
+    let n = 0;
+    const sers = findAll(xml, 'c:ser').filter((s) => !s.self);
+    // 뒤에서부터 고쳐 앞 계열의 자리가 그대로이게
+    for (const ser of sers.reverse()) {
+      const s = seriesRefs(xml, ser);
+      if (!s.cat || !s.val || s.cat.kind === 'c:multiLvlStrRef') continue;
+      const cat = parseChartRef(s.cat.text);
+      const val = parseChartRef(s.val.text);
+      if (!cat || !val || lower(cat.sheet) !== lower(val.sheet)) continue;
+      const d = lineOf(val) === 'v' || lineOf(val) === 'h' ? lineOf(val) : lineOf(cat) === 'v' || lineOf(cat) === 'h' ? lineOf(cat) : null;
+      if (!d || ![d, '1'].includes(lineOf(cat)) || ![d, '1'].includes(lineOf(val))) continue;
+      const old = before.get(`${s.cat.text}|${s.val.text}`);
+      const cells = await values(cat.sheet);
+      const where = `${part} ${s.cat.text} / ${s.val.text}`;
+      let newCat = null; let newVal = null; let newTx = null;
+      if (old) {
+        // 2) 원본과 범위 글이 같다: 원본 항목 글을 따라간다
+        if (!old.labels || !cells) continue;
+        const moved = followLabels(cells, cat, d, old.labels);
+        if (!moved) continue;
+        if (moved.uncertain) { warnings.push(`차트 범위를 확인하지 못해 그대로 둠 (${moved.uncertain}): ${where}`); continue; }
+        newCat = withSpan(cat, d, moved.a, moved.b);
+        const [ca, cb] = spanOf(cat, d);
+        const [va, vb] = spanOf(val, d);
+        if (va === ca && vb === cb) newVal = withSpan(val, d, moved.a, moved.b);
+        // 계열 이름 칸도 같이 밀렸으면 (원본 이름 글이 그 칸에 있으면)
+        const tx = s.tx && parseChartRef(s.tx.text);
+        if (tx && old.tx && lineOf(tx) === '1' && lower(tx.sheet) === lower(cat.sheet) && moved.a !== ca) {
+          const shift = moved.a - ca;
+          const moveTx = d === 'v' ? { ...tx, r1: tx.r1 + shift, r2: tx.r2 + shift } : { ...tx, c1: tx.c1 + shift, c2: tx.c2 + shift };
+          if (cells.get(cellAt(tx, 'v', tx.r1)) !== old.tx && Math.min(moveTx.r1, moveTx.c1) >= 1 && cells.get(cellAt(moveTx, 'v', moveTx.r1)) === old.tx) newTx = moveTx;
+        }
+      } else {
+        // 1) 항목·값 길이가 다르면 항목을 값에 맞춘다 (시작이나 끝이 같을 때만)
+        const [ca, cb] = spanOf(cat, d);
+        const [va, vb] = spanOf(val, d);
+        if (cb - ca === vb - va) continue;
+        if (ca !== va && cb !== vb) { warnings.push(`차트 항목·값 범위 길이가 달라도 자리가 어긋나 그대로 둠: ${where}`); continue; }
+        newCat = withSpan(cat, d, va, vb);
+      }
+      // 뒤쪽 요소부터 바꾼다 (tx < cat < val 차례로 있음)
+      const jobs = [[s.val, newVal], [s.cat, newCat], [s.tx, newTx]].filter(([el, r]) => el && r).sort((x, y) => y[0].el.start - x[0].el.start);
+      for (const [el, r] of jobs) xml = splice(xml, el.el.start, el.el.end, rebuiltRef(xml, el, r, cells));
+      edit.fixes.push(`차트 범위 맞춤: ${part} ${s.cat.text} → ${refText(newCat)}${newVal ? `, ${s.val.text} → ${refText(newVal)}` : ''}`);
+      n++;
+    }
+    if (n) edit.write(part, xml);
+  }
+  return warnings;
+}
+
 // x14 조건부 서식 → 기본 조건부 서식 (Excel 2007 형식으로 나타낼 수 있는 것만: 수식·서식만 있는 규칙, 다른 시트 참조 없음)
 const CF_MAIN_TYPES = new Set(['cellIs', 'expression', 'containsText', 'notContainsText', 'beginsWith', 'endsWith', 'top10', 'aboveAverage',
   'timePeriod', 'containsBlanks', 'notContainsBlanks', 'containsErrors', 'notContainsErrors', 'duplicateValues', 'uniqueValues']);
@@ -1232,8 +1472,15 @@ async function fixOnce(input, e, orig, carry) {
   const types = await readTypes(edit.zip, edit.budget);
   const warnings = carry ? await carryOver(edit, types, e, orig) : [];
   if (e === 'pptx') await splitSharedThemes(edit, types);
-  else if (e === 'xlsx') await dropUnusedThemes(edit, types);
-  else await dropLoneRestarts(edit);
+  else if (e === 'xlsx') {
+    await dropUnusedThemes(edit, types);
+    // 차트 범위: 실패해도 저장·다른 고치기는 그대로 (그 단계만 되돌림)
+    const snap = edit.snapshot(types);
+    try { warnings.push(...await fixChartRanges(edit, carry ? orig : null)); } catch (err) {
+      edit.restore(snap, types);
+      warnings.push(`차트 범위 맞추기 실패: ${err?.message ?? err}`);
+    }
+  } else await dropLoneRestarts(edit);
   if (!edit.changed) return { changed: false, warnings };
   if (types.changed) edit.write('[Content_Types].xml', types.xml);
   for (const n of edit.removed) edit.zip.remove(n);

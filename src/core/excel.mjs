@@ -494,7 +494,7 @@ export const EXCEL_OP_KEYS = {
   insert_columns: ['sheet', 'at', 'count'], delete_columns: ['sheet', 'at', 'count'], format: ['sheet', 'range', ...FMT_KEYS],
   column_width: ['sheet', 'columns', 'width'], row_height: ['sheet', 'rows', 'height'], merge: ['sheet', 'range'], unmerge: ['sheet', 'range'],
   freeze: ['sheet', 'cell'], sort: ['sheet', 'range', 'by', 'order', 'header'], autofilter: ['sheet', 'range'],
-  add_table: ['sheet', 'range', 'name', 'style'], add_chart: ['sheet', 'range', 'type', 'title', 'at', 'width', 'height', 'series_in'],
+  add_table: ['sheet', 'range', 'name', 'style'], add_chart: ['sheet', 'range', 'categories', 'values', 'type', 'title', 'at', 'width', 'height', 'series_in'],
   conditional_format: ['sheet', 'range', 'rule'], data_validation: ['sheet', 'range', 'list', 'type', 'min', 'max'],
   named_range: ['name', 'range', 'sheet'], recalculate: [],
 };
@@ -657,8 +657,39 @@ function normalizeOp(raw) {
     }
     case 'add_chart': {
       withSheet();
-      const a = areaArg(raw.range, 'range', { multi: true });
-      op.range = areaText(a);
+      // 데이터: range(붙은 범위 또는 'A3:A10,H3:H10'처럼 떨어진 범위) 또는 categories + values(계열마다 한 줄)
+      if (has(raw, 'values')) {
+        if (has(raw, 'range')) throw new Error('add_chart에는 range 또는 values 중 하나만 주세요 (categories는 values와 함께)');
+        const vals = Array.isArray(raw.values) ? raw.values : [raw.values];
+        if (!vals.length || vals.length > 255) throw new Error('values에는 계열 범위를 1~255개 주세요 (예: ["H3:H10"])');
+        const line = (v, what) => {
+          const a = areaArg(v, what, { multi: true });
+          if (a.cols || a.rows || (a.c1 !== a.c2 && a.r1 !== a.r2)) throw new Error(`${what}는 한 열 또는 한 행이어야 합니다: ${v} (예: 'H3:H10')`);
+          return a;
+        };
+        const areas = vals.map((v, i) => line(v, `values[${i}]`));
+        op.values = areas.map(areaText);
+        if (has(raw, 'categories')) {
+          const c = line(raw.categories, 'categories');
+          const len = (a) => cellsIn(a);
+          if (areas.some((a) => len(a) !== len(c))) throw new Error(`categories(${areaText(c)})와 values 범위의 칸 수가 같아야 합니다`);
+          op.categories = areaText(c);
+        }
+        if (has(raw, 'series_in')) throw new Error('series_in은 range와 함께만 씁니다 (values는 범위마다 계열 하나)');
+      } else {
+        if (has(raw, 'categories')) throw new Error('categories는 values와 함께 주세요 (예: categories: "A3:A10", values: ["H3:H10"])');
+        const parts = String(raw.range ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+        if (parts.length > 1) {
+          const areas = parts.map((x) => areaArg(x, 'range'));
+          if (areas.some((a) => a.cols || a.rows)) throw new Error(`떨어진 범위에는 'A3:A10,H3:H10'처럼 칸 범위를 쓰세요: ${raw.range}`);
+          // 나란한 열들(같은 행들) 또는 쌓인 행들(같은 열들) — Excel이 Ctrl로 고른 범위로 차트를 그리는 모양
+          const [a0] = areas;
+          const sideBySide = areas.every((a) => a.r1 === a0.r1 && a.r2 === a0.r2);
+          const stacked = areas.every((a) => a.c1 === a0.c1 && a.c2 === a0.c2);
+          if (!sideBySide && !stacked) throw new Error(`떨어진 범위는 행 수(또는 열 수)가 같아야 합니다 — 같은 행들에 나란히 (예: 'A3:A10,H3:H10'): ${raw.range}`);
+          op.range = areas.map(areaText).join(',');
+        } else op.range = areaText(areaArg(raw.range, 'range', { multi: true }));
+      }
       op.type = oneOf(raw.type ?? 'column', CHART_TYPES, 'type');
       if (has(raw, 'title')) op.title = String(raw.title);
       if (has(raw, 'at')) { const c = parseCell(raw.at); if (!c) throw new Error(`at은 차트 왼쪽 위 셀이어야 합니다: ${raw.at}`); op.at = addr(c.col, c.row); }
@@ -816,9 +847,10 @@ function describe(op, d = {}) {
     case 'autofilter': return op.range ? `자동 필터 ${d.range ?? op.range}${on(d)}` : `자동 필터 해제${on(d)}`;
     case 'add_table': return `표 만듦: ${d.name ?? op.name} (${d.range ?? op.range}, ${d.style ?? op.style ?? 'TableStyleMedium2'})${on(d)}`;
     case 'add_chart': {
-      const series = d.series ? `, 계열 ${d.series}개(${d.seriesIn === 'rows' ? '행마다' : '열마다'})` : '';
+      const series = d.series ? `, 계열 ${d.series}개${d.seriesIn ? `(${d.seriesIn === 'rows' ? '행마다' : '열마다'})` : ''}` : '';
       const title = op.title ? `, 제목 '${op.title}'` : d.title ? `, 제목 '${d.title}'(자동)` : ', 제목 없음';
-      return `차트 만듦: ${CHART_KO[op.type]}${d.name ? ` '${d.name}'` : ''} (원본 ${op.range}${d.at ? `, 위치 ${d.at}` : ''}${series}${title})${on(d)}`;
+      const src = op.values ? `${op.categories ? `항목 ${op.categories}, ` : ''}값 ${op.values.join(', ')}` : `원본 ${op.range}`;
+      return `차트 만듦: ${CHART_KO[op.type]}${d.name ? ` '${d.name}'` : ''} (${src}${d.at ? `, 위치 ${d.at}` : ''}${series}${title})${on(d)}`;
     }
     case 'conditional_format': return `조건부 서식 ${op.range}: ${cfText(op.rule)}${d.note ? ` — ${d.note}` : ''}${on(d)}`;
     case 'data_validation': {
@@ -858,6 +890,7 @@ const COM_CODES = {
   E_MERGE_PARTIAL: (x) => `병합된 영역의 일부만 지울 수 없습니다(${x}) — 범위에 병합 영역 전체를 넣으세요`,
   E_SORT_MERGED: (x) => `병합된 칸이 있는 범위는 정렬할 수 없습니다: ${x} — 병합을 풀거나 범위를 바꾸세요`,
   E_PUSH_OFF: (x) => `시트 끝에 있는 내용이 밀려나므로 ${x === 'col' ? '열' : '행'}을 넣을 수 없습니다`,
+  E_FREEZE_HIDDEN: (x) => `화면 없이 일하는 Excel은 이 형식에 틀 고정(${x})을 저장하지 못합니다 — .xlsx로 저장하세요 (output을 .xlsx로)`,
   E_CSV_SHEETS: (a, b) => `csv에는 시트 하나의 값만 저장되는데 작업이 여러 시트('${a}', '${b}')를 고칩니다 — 시트마다 따로 저장하거나 xlsx로 저장하세요`,
 };
 // Excel이 영어로 내는 흔한 오류 → 한국어
@@ -2351,6 +2384,45 @@ function csvEdit(path, ops, output) {
 
 const comOps = (ops) => ops.map((op) => ({ ...op }));
 
+// 틀 고정: 숨은 Excel은 창이 화면에 없어 FreezePanes를 못 건다 → Excel이 저장한 .xlsx·.xlsm 꾸러미의 시트 보기에 직접 쓴다
+const FREEZE_IN_FILE = new Set(['xlsx', 'xlsm']);
+const WRITE_GUARD = /<(?:\w+:)?fileSharing\b[^>]*?\s(?:reservationPassword|hashValue)=/;
+/** freezes: Map(시트 이름 → 셀 'B3'). 시트 보기의 pane·selection을 바꾼 꾸러미 바이트 */
+export async function writeFrozenPanes(buf, freezes) {
+  const zip = await JSZip.loadAsync(buf);
+  const book = await zip.file('xl/workbook.xml')?.async('string');
+  const rels = await zip.file('xl/_rels/workbook.xml.rels')?.async('string');
+  if (!book || !rels) throw new Error('틀 고정을 쓸 통합 문서 부분을 찾지 못했습니다');
+  const relTarget = new Map([...rels.matchAll(/<Relationship\b[^>]*>/g)].map((m) => [/\bId="([^"]*)"/.exec(m[0])?.[1], /\bTarget="([^"]*)"/.exec(m[0])?.[1]]));
+  const unesc = (x) => x.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const parts = new Map();
+  for (const m of book.matchAll(/<(?:\w+:)?sheet\b[^>]*>/g)) {
+    const name = /\bname="([^"]*)"/.exec(m[0])?.[1];
+    const target = relTarget.get(/\br:id="([^"]*)"/.exec(m[0])?.[1]);
+    if (name != null && target) parts.set(unesc(name).toLowerCase(), target.startsWith('/') ? target.slice(1) : `xl/${target}`);
+  }
+  for (const [sheet, cell] of freezes) {
+    const part = parts.get(String(sheet).toLowerCase());
+    const xml = part && await zip.file(part)?.async('string');
+    if (!xml) throw new Error(`틀 고정을 쓸 시트를 찾지 못했습니다: ${sheet}`);
+    const c = parseCell(cell);
+    const view = /<sheetView\b[^>]*?(\/>|>[\s\S]*?<\/sheetView>)/.exec(xml);
+    if (!view) throw new Error(`시트 보기(sheetView)가 없습니다: ${sheet}`);
+    const open = /^<sheetView\b[^>]*?(?=\/?>)/.exec(view[0])[0];
+    // pane·selection은 sheetView의 맨 앞 자식들 (뒤에 pivotSelection·extLst)
+    const inner = view[1] === '/>' ? '' : view[0].slice(view[0].indexOf('>', open.length) + 1, -'</sheetView>'.length)
+      .replace(/<pane\b[^>]*?(?:\/>|>[\s\S]*?<\/pane>)/g, '').replace(/<selection\b[^>]*?(?:\/>|>[\s\S]*?<\/selection>)/g, '');
+    let pane = '';
+    if (c && (c.col > 1 || c.row > 1)) {
+      const active = c.col > 1 && c.row > 1 ? 'bottomRight' : c.row > 1 ? 'bottomLeft' : 'topRight';
+      pane = `<pane${c.col > 1 ? ` xSplit="${c.col - 1}"` : ''}${c.row > 1 ? ` ySplit="${c.row - 1}"` : ''} topLeftCell="${cell}" activePane="${active}" state="frozen"/>`
+        + `<selection pane="${active}" activeCell="${cell}" sqref="${cell}"/>`;
+    }
+    zip.file(part, xml.slice(0, view.index) + `${open}>${pane}${inner}</sheetView>` + xml.slice(view.index + view[0].length));
+  }
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+}
+
 async function appInspect(path) {
   const res = await comCall({ app: 'excel', op: 'inspect', path }, { timeoutMs: COM_TIMEOUT });
   const i = res.inspect ?? {};
@@ -2388,19 +2460,33 @@ async function appEdit(path, ops, output, { csvSheets = null } = {}) {
       }
     }
     // csv는 Excel이 UTF-8로 저장하도록 다른 이름으로 저장한 뒤 옮긴다 (그대로 저장하면 ANSI csv가 된다)
-    const viaTemp = outExt === 'csv';
-    const target = viaTemp ? join(workDir(), `out-${Date.now()}.csv`) : output;
+    // 틀 고정(.xlsx·.xlsm)도 사본에 저장 → 틀을 쓴 뒤 옮긴다 (하나라도 실패하면 원본은 그대로)
+    const freezeInFile = FREEZE_IN_FILE.has(outExt) && ops.some((o) => o.op === 'freeze' && o.cell);
+    const viaTemp = outExt === 'csv' || freezeInFile;
+    if (freezeInFile && resolve(output) === resolve(path) && FREEZE_IN_FILE.has(ext)) {
+      // 그 자리 저장은 Excel처럼 쓰기 암호를 지킨다 (사본 저장은 office.ps1의 확인을 거치지 않으므로)
+      const wbXml = await (await JSZip.loadAsync(readFileSync(path)).catch(() => null))?.file('xl/workbook.xml')?.async('string');
+      if (wbXml && WRITE_GUARD.test(wbXml)) throw new Error(`쓰기 암호가 걸린 문서라 그 자리에 저장할 수 없습니다: ${basename(path)} — output(명령줄은 -o)으로 다른 파일에 저장하세요`);
+    }
+    const target = viaTemp ? join(workDir(), `out-${Date.now()}.${outExt}`) : output;
     const inPlace = !viaTemp && src === path && resolve(output) === resolve(path);
     const before = inPlace ? statSync(path).mtimeMs : 0;
     let res;
     try {
-      res = await comCall({ app: 'excel', op: 'edit', path: src, operations: comOps(ops), save: target, saveFormat: outExt, ...(csvSheets ? { csvSheets } : {}) },
+      res = await comCall({ app: 'excel', op: 'edit', path: src, operations: comOps(ops), save: target, saveFormat: outExt, ...(csvSheets ? { csvSheets } : {}),
+        ...(freezeInFile ? { freezeInFile: true } : {}) },
         { timeoutMs: COM_TIMEOUT });
     } catch (e) { throw comEditError(e); }
     if (inPlace && statSync(path).mtimeMs === before) {
       throw new Error(`Excel이 문서를 저장하지 못했습니다 (문서가 다른 프로그램에서 열려 있는지 확인하세요): ${path}`);
     }
-    if (viaTemp) {
+    if (freezeInFile) {
+      // 시트마다 마지막 틀 고정 작업 (해제(null)·A1이면 Excel이 이미 풀었다)
+      const freezes = new Map();
+      list(res.results).forEach((d, i) => { if (ops[i].op === 'freeze' && d?.sheet) freezes.set(d.sheet, ops[i].cell ?? null); });
+      for (const [k, v] of freezes) if (!v) freezes.delete(k);
+      atomicWrite(output, await writeFrozenPanes(readFileSync(target), freezes));
+    } else if (viaTemp) {
       let buf = readFileSync(target);
       // BOM 없던 UTF-8 csv는 BOM 없이 (원래 인코딩 유지), CP949는 UTF-8(BOM)으로 바뀜을 알린다
       if (encoding === 'utf8' && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) buf = buf.subarray(3);

@@ -84,6 +84,20 @@ describe('엑셀 셀 쓰기', () => {
     assert.equal(rows[0][4], '메모');
   });
 
+  test('병합된 칸은 값을 한 번만 (왼쪽 위 칸), 시트 머리에 병합 범위 표시', async () => {
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('표');
+    ws.addRows([['2027 예산 현황', '', ''], ['부서', '예산', '집행']]);
+    ws.mergeCells('A1:C1');
+    const p = tmp.path('merged.xlsx');
+    await wb.xlsx.writeFile(p);
+    const d = await readDocument(p, FILE);
+    assert.deepEqual(d.sheets[0].rows[0], ['2027 예산 현황', '', '']);
+    assert.deepEqual(d.sheets[0].merges, ['A1:C1']);
+    assert.match(d.text, /^--- 시트 표 --- \(병합: A1:C1 — 값은 왼쪽 위 칸에만\)\n2027 예산 현황\t\t\n/);
+  });
+
   test('없는 시트·엑셀 아닌 파일은 한국어 오류', async () => {
     await assert.rejects(setCells(src, { A1: 1 }, { sheet: '없음', engine: 'file', output: tmp.path('x.xlsx') }), /시트 없음/);
     const docx = tmp.path('cells.docx');

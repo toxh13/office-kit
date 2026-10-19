@@ -76,6 +76,41 @@ async function renders(outs) {
   }
 }
 
+// ── 표 다음 문단 · 새 표 칸 여백 (미리보기) ─────────────────
+
+describe('표 다음 문단과 새 표 칸', () => {
+  // 쪽 글 배치에서 '위와 같이' 문단의 위치와 표 아래 끝 (px)
+  const gapAfterTable = (h) => {
+    const t = h.tables()[0];
+    const bb = JSON.parse(h.raw.getTableBBox(t.section, t.paraIndex, t.controlIndex));
+    const next = JSON.parse(h.raw.getPageTextLayout(bb.pageIndex)).runs.find((r) => /위와 같이/.test(r.text ?? ''));
+    return next.y - (bb.y + bb.height);
+  };
+
+  test('미리보기(openForView): 표 다음 문단을 표의 바깥 아래 여백(1mm)만큼 띄운다 — 파일은 그대로', () => {
+    for (const ext of ['hwp', 'hwpx']) {
+      const p = join(ROOT, 'examples', `신청서.${ext}`);
+      const before = readFileSync(p);
+      const plain = Hwp.open(p);
+      try { assert.ok(gapAfterTable(plain) < 0.5, `${ext}: 엔진 그대로는 표 바로 밑에 붙거나 겹침`); } finally { plain.close(); }
+      const view = Hwp.openForView(p);
+      try { const g = gapAfterTable(view); assert.ok(g > 3.5 && g < 4.2, `${ext}: ${g}px (1mm ≈ 3.8px)`); } finally { view.close(); }
+      assert.ok(before.equals(readFileSync(p)), '파일은 바뀌지 않음');
+    }
+  });
+
+  test('새로 만든 표: 칸 안 위·아래 여백 1mm (글자가 테두리에 붙지 않게)', async () => {
+    const out = tmp.path('table-pad.hwpx');
+    await createDocument(out, '| 품목 | 수량 |\n|---|---|\n| 노트북 | 1 |\n\n위와 같이 신청합니다.');
+    const h = Hwp.open(out);
+    try {
+      const t = h.tables()[0];
+      const tp = JSON.parse(h.raw.getTableProperties(t.section, t.paraIndex, t.controlIndex));
+      assert.deepEqual([tp.paddingTop, tp.paddingBottom, tp.paddingLeft, tp.paddingRight], [283, 283, 510, 510]);
+    } finally { h.close(); }
+  });
+});
+
 // ── 살펴보기 ─────────────────────────────────────────────
 
 for (const ext of FORMATS) {

@@ -44,6 +44,7 @@
     if (!r || r.ok !== true) {
       const err = new Error(r?.error || '알 수 없는 오류가 났습니다');
       err.code = r?.code ?? null;
+      err.detail = r?.detail ?? null;
       throw err;
     }
     return r.value;
@@ -213,10 +214,41 @@
     return close;
   }
 
+  /**
+   * 오류 → { text: 쉬운 한국어, detail: 원래 글(다르면), retry: 다시 해 볼 만한지 }
+   * 엔진 오류 코드(UNSUPPORTED_FILE_FORMAT 등)·전체 경로·Office의 영어 문장은 '자세히'로 미룬다
+   */
+  function friendlyError(err) {
+    const raw = String(err?.message ?? err ?? '').trim();
+    // 전체 경로 → 파일 이름 (폴더 부분만 지운다. 폴더·파일 이름에 띄어쓰기가 있어도)
+    let text = raw.replace(/(?:[A-Za-z]:|\\\\[^\\/\s]+)[\\/](?:[^\\/:*?"<>|\r\n]+[\\/])+/g, '');
+    let retry = true;
+    // 이미 쉬운 한국어(오류 코드·경로·영어 문장 없음)면 그 글을 그대로 쓴다
+    const plain = !/오류코드|[A-Z][A-Z0-9]*_[A-Z0-9_]{3,}|[A-Za-z]:[\\/]|[A-Za-z]{3,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(raw);
+    if (err?.code === 'ENCRYPTED' || /암호가 걸린|password|encrypted/i.test(raw)) {
+      if (!plain || !/프로그램에서/.test(raw)) text = '암호가 걸린 문서라 열 수 없어요. ‘프로그램에서 열기’로 열어 암호를 넣어 주세요.';
+      retry = false;
+    } else if (/UNSUPPORTED_FILE_FORMAT|오류코드|유효하지 않은 파일|손상|corrupt|damaged|not a valid|unreadable content|cannot open the file/i.test(raw) || err?.code === 'BAD_FORMAT') {
+      if (!plain || !/프로그램에서/.test(raw)) text = '문서가 손상됐거나 지원하지 않는 형식이라 열 수 없어요. ‘프로그램에서 열기’로 열어 보세요.';
+      retry = false;
+    } else {
+      // 괄호 안 영어 문장(Office가 낸 원문)은 자세히로
+      text = text.replace(/\s*\((?=[^()]*[A-Za-z]{3,}\s+[A-Za-z]{2,})[^()가-힣]*\)/g, '').trim();
+    }
+    text = text || raw;
+    // 자세히: 엔진이 낸 원래 글 (보여 준 글과 같으면 빼고)
+    const detail = [raw !== text ? raw : null, err?.detail].filter(Boolean).join('\n');
+    return { text, detail: detail || null, retry };
+  }
+  function showDetail(title, detail) {
+    confirmDialog({ title, body: h('pre', { class: 'err-detail', text: detail }), ok: '닫기', cancel: null });
+  }
+
   function showError(err, prefix) {
-    const message = prefix ? `${prefix}: ${err.message}` : err.message;
+    const f = friendlyError(err);
+    const message = prefix ? `${prefix}: ${f.text}` : f.text;
     if (err.code === 'HANCOM_SETUP') toast(message, { type: 'warn', action: { label: '설정 열기', run: () => openSettings('hancom') } });
-    else toast(message, { type: 'error' });
+    else toast(message, { type: 'error', ...(f.detail ? { action: { label: '자세히', run: () => showDetail('오류 자세히', f.detail) } } : {}) });
   }
 
   // ── 확인 창 ──────────────────────────────────────────
@@ -316,6 +348,7 @@
   }
 
   function onDocOpened(doc) {
+    closeVersions();
     // 열려 있는 문서를 다시 연 경우: 미리보기는 그대로 두고 바뀌었을 때만 새로 그린다
     if (doc && state.doc && pathKey(doc.path) === pathKey(state.doc.path)) {
       state.doc = doc;
@@ -361,7 +394,9 @@
     for (const id of ['btn-refresh', 'btn-openapp', 'btn-pdf', 'btn-folder']) $(`#${id}`).disabled = !d;
     const restore = $('#btn-restore');
     restore.disabled = !d || !d.backup || !!state.restoring;
-    restore.title = d?.backup ? `${whenText(d.backup.time)}에 만든 백업으로 되돌리기` : '이 문서의 백업이 없어요';
+    restore.title = d?.backup ? '마지막 변경 전으로 되돌리기 (옆 ▾: 버전 목록)' : '이 문서의 백업이 없어요';
+    $('#btn-versions').disabled = restore.disabled;
+    if (restore.disabled) closeVersions();
     renderEditButton();
     if (!d) return;
     const ks = kindStyle(d.kind);
@@ -387,7 +422,7 @@
     let pages = '';
     if (d && p) {
       if (p.kind === 'svg') pages = p.total > p.pages.length ? `${p.total}쪽 (앞 ${p.pages.length}쪽 표시)` : `${p.total}쪽`;
-      else if (p.kind === 'pdf') pages = p.pages ? `${p.pages}쪽` : '';
+      else if (p.kind === 'pdf') pages = !p.pages ? '' : d.kind === 'PowerPoint' ? `슬라이드 ${p.pages}장` : `${p.pages}쪽`;
       else if (p.sheets?.length) pages = `시트 ${p.sheets.length}개`;
       else if (p.slides?.length) pages = `슬라이드 ${p.slides.length}장`;
       else if (p.pages) pages = `${p.pages}쪽`;
@@ -520,7 +555,20 @@
     const had = !!state.preview;
     if (!had) showSkeleton();
     else if (!ifChanged || reason === 'manual') el.refreshing.hidden = false;
-    setBusy('preview', had ? '미리보기 새로 고치는 중…' : '미리보기 만드는 중…');
+    const busyText = had ? '미리보기 새로 고치는 중…' : '미리보기 만드는 중…';
+    setBusy('preview', busyText);
+    // 프로그램으로 PDF를 만들면 오래 걸린다 (처음 한 번): 몇 초 지나면 무엇을 기다리는지와 걸린 시간을 보여 준다
+    const started = Date.now();
+    const kind = state.doc.kind;
+    const slow = setInterval(() => {
+      const sec = Math.round((Date.now() - started) / 1000);
+      if (sec < 3 || seq !== state.previewSeq) return;
+      const by = { Word: 'Word', Excel: 'Excel', PowerPoint: 'PowerPoint' }[kind];
+      const text = by ? `${by}로 미리보기 PDF를 만드는 중… ${sec}초 (처음 한 번만 오래 걸려요)` : `${busyText.replace(/…$/, '')}… ${sec}초`;
+      if (state.busy.has('preview')) setBusy('preview', text);
+      const label = $('.sk-label', el.preview);
+      if (label) label.replaceChildren(spinner(), text);
+    }, 1000);
     let result = null;
     try {
       const res = await call(K.doc.preview({ ifChanged }));
@@ -539,6 +587,7 @@
       else showError(err, '미리보기를 새로 고치지 못했어요');
       result = { ok: false, kind: 'error', error: err.message };
     } finally {
+      clearInterval(slow);
       // 다른 문서를 그리는 중이면 그쪽 표시는 건드리지 않는다
       const mine = pathKey(state.rendering) === pathKey(path);
       if (mine) state.rendering = null;
@@ -566,12 +615,16 @@
   function showPreviewError(err) {
     el.zoombar.hidden = true;
     el.preview.className = 'preview';
+    const f = friendlyError(err);
     const card = h('div', { class: 'error-card', role: 'alert' },
       h('div', { class: 'err-icon' }, icon('alert')),
       h('h3', { text: '미리보기를 만들지 못했어요' }),
-      h('p', { text: err.message }),
+      h('p', { text: f.text }),
+      // 엔진이 낸 원래 글(오류 코드·경로·영어)은 접어 둔다
+      f.detail ? h('details', { class: 'err-more' }, h('summary', { text: '자세히' }), h('pre', { class: 'err-detail', text: f.detail })) : null,
       h('div', { class: 'btn-row' },
-        h('button', { class: 'btn primary', onclick: () => refreshPreview({ reason: 'manual' }) }, icon('refresh'), '다시 시도'),
+        // 암호·손상은 다시 해도 같다 → 다시 시도 없이
+        f.retry ? h('button', { class: 'btn primary', onclick: () => refreshPreview({ reason: 'manual' }) }, icon('refresh'), '다시 시도') : null,
         err.code === 'HANCOM_SETUP' ? h('button', { class: 'btn', onclick: () => openSettings('hancom') }, '설정 열기') : null,
         h('button', { class: 'btn', onclick: () => actOpenInApp() }, icon('external'), '프로그램에서 열기')));
     el.preview.replaceChildren(h('div', { class: 'preview-error' }, card));
@@ -743,37 +796,55 @@
 
   // ── 문서 작업 ────────────────────────────────────────
 
-  async function actRestore() {
+  // 버전(백업)을 남긴 까닭 → 목록에 보일 말
+  const VERSION_LABEL = { open: '처음 연 상태', editor: '직접 편집 저장 전', ai: 'AI 대화 전', restore: '원래대로 전' };
+  const versionLabel = (v) => VERSION_LABEL[v?.reason] ?? '백업';
+
+  /** 버전으로 되돌리기. file을 주지 않으면 마지막 변경 전으로 (지금과 다른 가장 최근 버전) */
+  async function actRestore(file) {
     const d = state.doc;
     if (!d?.backup || state.restoring) return;
+    closeVersions();
+    let target;
+    try {
+      const v = await call(K.doc.versions());
+      target = typeof file === 'string' ? v.versions.find((x) => x.file === file) : v.versions.find((x) => x.file === v.undo);
+      if (typeof file !== 'string' && !target) {
+        // 바뀐 것이 없다. 편집 창에 저장 안 한 내용이 있을 때만 (그것을 버릴지 묻게) 지금 버전으로 되돌린다
+        if (!d.editor?.dirty) { toast('되돌릴 변경이 없어요. 문서가 마지막으로 남긴 버전과 같아요.', { type: 'info' }); return; }
+        target = v.versions[0];
+      }
+      if (!target) { toast('그 버전을 찾을 수 없어요. 버전 목록을 다시 열어 주세요.', { type: 'warn' }); return; }
+    } catch (err) { showError(err); return; }
     // AI가 고치는 중이면 먼저 멈춘다 (main이 멈추고 끝날 때까지 기다린 뒤 되돌린다)
     const aiBusy = !!chatFor(d.path).busy;
+    const what = `${whenText(target.time)} · ${versionLabel(target)}`;
     const yes = await confirmDialog({
-      title: '원래대로 되돌릴까요?',
+      title: typeof file === 'string' ? '이 버전으로 되돌릴까요?' : '마지막 변경 전으로 되돌릴까요?',
       body: [
         aiBusy ? '진행 중인 AI 작업을 멈추고 되돌립니다.' : null,
-        `${whenText(d.backup.time)}에 문서를 열면서 만든 백업으로 되돌립니다.`,
-        '그 뒤에 바뀐 내용은 문서에서 사라지지만, 지금 상태도 백업 폴더에 따로 남겨 둡니다.',
+        `${what} 버전으로 되돌립니다.`,
+        '지금 상태도 버전 목록에 ‘원래대로 전’으로 남겨 두니, 다시 돌아올 수 있어요.',
         !d.editor?.open ? null : d.editor.dirty
           ? '편집 창에 저장하지 않은 내용이 있어요. 되돌린 뒤 편집 창에서 다시 불러올지, 내 편집을 유지할지 고를 수 있어요.'
           : '열려 있는 편집 창도 되돌린 내용으로 다시 불러와요.',
       ].filter(Boolean),
-      ok: aiBusy ? '멈추고 되돌리기' : '원래대로', tone: 'danger',
+      ok: aiBusy ? '멈추고 되돌리기' : '되돌리기', tone: 'danger',
     });
     if (!yes || !state.doc || pathKey(state.doc.path) !== pathKey(d.path)) return;
     const chat = chatFor(d.path);
     if (chat.busy) markStopping(chat);
     state.restoring = true;
     renderTopbar();
-    setBusy('restore', chat.busy ? 'AI 작업을 멈추고 되돌리는 중…' : '원래대로 되돌리는 중…');
+    setBusy('restore', chat.busy ? 'AI 작업을 멈추고 되돌리는 중…' : '되돌리는 중…');
     try {
-      const r = await call(K.doc.restore());
+      const r = await call(K.doc.restore({ file: target.file }));
       if (r.doc) updateDoc(r.doc);
       const editorNote = !r.editorNotified ? '' : state.doc?.editor?.dirty ? '. 편집 창에서 다시 불러올지 골라 주세요' : '. 편집 창도 다시 불러와요';
-      toast(`${r.stoppedAi > 0 ? 'AI 작업을 멈추고 원래대로 되돌렸어요' : '원래대로 되돌렸어요'}${editorNote}`, { type: 'success' });
+      toast(`${r.stoppedAi > 0 ? 'AI 작업을 멈추고 ' : ''}${what} 버전으로 되돌렸어요${editorNote}`, { type: 'success' });
       // main이 이 문서의 AI 대화를 끝냈다 → 대화창에 알린다 (AI가 되돌리기 전 내용을 기억하지 않게)
       if (r.newChat && chat.items.length) {
-        chat.items.push({ role: 'note', text: '문서를 원래대로 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
+        chat.items.push({ role: 'note', text: '문서를 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
         if (chatCurrent() === chat) renderChat();
       }
       if (state.doc && pathKey(state.doc.path) === pathKey(d.path)) await refreshPreview({ reason: 'manual' });
@@ -784,21 +855,61 @@
     }
   }
 
+  // ── 버전 목록 (원래대로 ▾) ───────────────────────────
+
+  function closeVersions() {
+    const pop = $('#versions-pop');
+    if (!pop || pop.hidden) return;
+    pop.hidden = true;
+    $('#btn-versions').setAttribute('aria-expanded', 'false');
+  }
+
+  async function toggleVersions() {
+    const pop = $('#versions-pop');
+    const btn = $('#btn-versions');
+    if (!pop.hidden) { closeVersions(); return; }
+    if (!state.doc) return;
+    let v;
+    try { v = await call(K.doc.versions()); } catch (err) { showError(err); return; }
+    const item = (x) => h('li', { class: `ver-item${x.file === v.undo ? ' is-undo' : ''}` },
+      h('div', { class: 'ver-text' },
+        h('span', { class: 'ver-label', text: versionLabel(x) }),
+        h('span', { class: 'ver-time', text: whenText(x.time) }),
+        x.file === v.undo ? h('span', { class: 'ver-tag', text: '마지막 변경 전 (원래대로 버튼)' }) : null),
+      x.current ? h('span', { class: 'ver-now', text: '지금 상태' })
+        : h('button', { class: 'btn sm', text: '이 버전으로 되돌리기', onclick: () => actRestore(x.file) }));
+    $('#ver-list').replaceChildren(...(v.versions.length ? v.versions.map(item) : [h('li', { class: 'ver-empty', text: '아직 남긴 버전이 없어요' })]));
+    const r = btn.getBoundingClientRect();
+    pop.hidden = false;
+    pop.style.top = `${Math.round(r.bottom + 6)}px`;
+    pop.style.left = `${Math.round(Math.max(12, Math.min(r.right - pop.offsetWidth, window.innerWidth - pop.offsetWidth - 12)))}px`;
+    btn.setAttribute('aria-expanded', 'true');
+    ($('#ver-list button') ?? $('#ver-open-backups')).focus();
+  }
+
   async function actOpenInApp() {
     if (!state.doc) return;
     setBusy('openapp', '프로그램 여는 중…');
     try {
-      await call(K.doc.openInApp());
-      toast('프로그램에서 열었어요. 저장하면 여기 미리보기도 자동으로 바뀌어요.', { type: 'success' });
+      const r = await call(K.doc.openInApp());
+      if (r?.readOnly) {
+        toast(r.readOnlyReason === 'writePassword'
+          ? '쓰기 암호가 걸린 문서라 읽기 전용으로 열었어요. 고치려면 그 프로그램에서 문서를 닫고 다시 열어 쓰기 암호를 넣으세요.'
+          : '다른 프로그램이 이 문서를 쓰고 있거나 읽기 전용 파일이라 읽기 전용으로 열었어요.', { type: 'warn' });
+      } else {
+        toast('프로그램에서 열었어요. 저장하면 여기 미리보기도 자동으로 바뀌어요.', { type: 'success' });
+      }
     } catch (err) { showError(err); } finally { clearBusy('openapp'); }
   }
 
   async function actSavePdf() {
     if (!state.doc) return;
-    setBusy('pdf', 'PDF 만드는 중…');
     try {
-      const r = await call(K.doc.savePdf());
-      if (r?.canceled) return;
+      // 저장 대화상자가 떠 있는 동안에는 'PDF 만드는 중'을 보이지 않는다 (자리를 고른 뒤에 만든다)
+      const pick = await call(K.doc.savePdf({ step: 'pick' }));
+      if (pick?.canceled) return;
+      setBusy('pdf', 'PDF 만드는 중…');
+      const r = await call(K.doc.savePdf({ step: 'make' }));
       toast(`PDF로 저장했어요: ${baseName(r.output)}`, { type: 'success', action: { label: '폴더에서 보기', run: () => call(K.shell.showItem(r.output)).catch(showError) } });
     } catch (err) { showError(err); } finally { clearBusy('pdf'); }
   }
@@ -1827,6 +1938,15 @@
     };
     // dragleave가 빠지는 경우를 대비해 dragover가 끊기면 닫는다
     const keepAlive = () => { clearTimeout(hideTimer); hideTimer = setTimeout(() => show(false), 400); };
+    // PDF 미리보기(iframe)는 그 위로 들어온 끌기를 혼자 받아 버린다 (창에 drop이 오지 않음).
+    // 끌기는 다른 창(탐색기)에서 시작하므로: 이 창이 포커스를 잃거나 마우스가 창 밖으로 나가면 iframe이 마우스를 받지 않게 했다가
+    // (끌기가 어디로 들어와도 이 창이 받는다), 창 안에서 마우스가 움직이면 되돌린다 (끌기 중에는 mousemove가 오지 않는다)
+    let passing = false;
+    const passThrough = (on) => { if (passing !== on) { passing = on; document.body.classList.toggle('drop-ready', on); } };
+    window.addEventListener('blur', () => passThrough(true));
+    document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) passThrough(true); });
+    window.addEventListener('mousemove', () => passThrough(false), { passive: true });
+    window.addEventListener('focus', () => { if (!document.body.classList.contains('dragging')) setTimeout(() => passThrough(false), 0); });
     window.addEventListener('dragenter', (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
@@ -1896,7 +2016,17 @@
     // 끌어놓기 칸의 빈 곳을 눌러도 파일 열기
     $('#dropzone').addEventListener('click', (e) => { if (!e.target.closest('button')) pickFile(); });
     $('#btn-refresh').addEventListener('click', () => refreshPreview({ reason: 'manual' }));
-    $('#btn-restore').addEventListener('click', actRestore);
+    $('#btn-restore').addEventListener('click', () => actRestore());
+    $('#btn-versions').addEventListener('click', (e) => { e.stopPropagation(); toggleVersions(); });
+    $('#ver-open-backups').addEventListener('click', () => { closeVersions(); call(K.shell.openBackups()).catch(showError); });
+    // 바깥을 누르거나 Esc → 닫기
+    document.addEventListener('mousedown', (e) => {
+      if (!$('#versions-pop').hidden && !e.target.closest('#versions-pop, #btn-versions')) closeVersions();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !$('#versions-pop').hidden) { e.preventDefault(); closeVersions(); $('#btn-versions').focus(); }
+    });
+    window.addEventListener('resize', closeVersions);
     el.btnEdit.addEventListener('click', actEdit);
     el.stEditor.addEventListener('click', actEdit);
     $('#editor-warn-show').addEventListener('click', actEdit);

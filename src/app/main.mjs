@@ -1,10 +1,10 @@
 // main.mjs — Office Kit 창, 단일 인스턴스, IPC, 원본 백업, 파일 감시, AI 대화 중계.
 import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, screen, session, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createBackups, createSettings, samePath } from './store.mjs';
+import { createBackups, createPreviewCache, createSettings, hashFile, samePath } from './store.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(here, '../..');
@@ -51,6 +51,8 @@ async function start() {
   const settings = createSettings(userData);
   const backups = createBackups(join(userData, 'backups'));
   const previewDir = join(userData, 'preview');
+  // 프로그램으로 만든 미리보기 PDF는 파일이 그대로면 다시 쓴다 (Excel·Word 변환은 5~25초)
+  const previewCache = createPreviewCache(join(userData, 'preview-cache'));
 
   /** @type {BrowserWindow | null} */
   let win = null;
@@ -153,8 +155,11 @@ async function start() {
     };
   }
 
-  // 이번 실행에서 문서를 처음 열 때 만든 백업 (문서 경로 → 백업). 다시 열어도 '원래대로' 기준은 이것
+  // 이번 실행에서 문서를 처음 열 때 만든 백업 (문서 경로 → 백업). 버전 목록의 '처음 연 상태' — 정리할 때 지우지 않는다
   const restorePoints = new Map();
+  // 문서 버전(백업): 문서를 열 때·편집 창 저장 전·AI 대화 전·원래대로 전에 남긴다. 문서마다 최근 몇 개까지
+  const VERSIONS_PER_DOC = 30;
+  const keepVersion = (p, reason) => backups.backup(p, new Date(), { protect: protectedBackups(), maxPerSource: VERSIONS_PER_DOC, reason });
   const backupExists = (e) => !!e?.file && existsSync(join(backups.dir, e.file));
   // 백업 정리 때 지우면 안 되는 것: 열었던 문서들의 '원래대로' 기준
   const protectedBackups = () => [...restorePoints.values()].map((e) => e.file);
@@ -180,7 +185,7 @@ async function start() {
     let backup = null; let backupError = null;
     try {
       // 지금 상태는 늘 남기되, 이번 실행에서 연 적이 있으면 처음 열 때의 백업으로 되돌린다 (그 사이 AI가 고친 것이 기준이 되지 않게)
-      const made = backups.backup(p, new Date(), { protect: protectedBackups() });
+      const made = keepVersion(p, 'open');
       backup = backupExists(first) ? first : made;
     } catch (err) {
       if (backupExists(first)) backup = first;
@@ -296,22 +301,37 @@ async function start() {
     let res;
     // '글자만': 프로그램을 띄우지 않고 파일 엔진으로 바로 읽는다 (한글은 원래 빠르므로 그대로 그림)
     const ext = extOf(doc.path);
-    if (m === 'text' && ['docx', 'pptx', 'xlsx'].includes(ext)) res = { ...(await core.readDocument(doc.path, { engine: 'file' })), kind: 'text' };
-    else res = await core.renderPreview(doc.path, previewDir, { mode: m === 'exact' ? 'exact' : 'auto' });
-    if (res.kind === 'pdf') {
+    const cacheKey = st && m !== 'text' ? { path: doc.path, size: st.size, mtimeMs: st.mtimeMs, mode: m } : null;
+    let cached = null;
+    try { cached = cacheKey && previewCache.get(cacheKey); } catch {}
+    if (cached) {
+      // 기억해 둔 PDF의 사본을 미리보기 폴더에 (보는 동안 기억 정리가 지우지 못하게)
+      const file = join(previewDir, `${basename(doc.path)}.${Date.now()}.pdf`);
+      try { copyFileSync(cached.file, file); res = { kind: 'pdf', file, engine: cached.engine, pages: cached.pages, cached: true }; } catch {}
+    }
+    if (!res && m === 'text' && ['docx', 'pptx', 'xlsx'].includes(ext)) res = { ...(await core.readDocument(doc.path, { engine: 'file' })), kind: 'text' };
+    else if (!res) res = await core.renderPreview(doc.path, previewDir, { mode: m === 'exact' ? 'exact' : 'auto' });
+    if (res.kind === 'pdf' && !res.cached) {
       // 빈 시트처럼 쪽이 하나도 없는 PDF는 PDF 뷰어가 빈 화면에서 멈춘다 → 글자 미리보기로
       const pages = pdfPageCount(res.file);
       if (pages === 0) {
         try { rmSync(res.file, { force: true }); } catch {}
         res = { ...(await core.readDocument(doc.path, { engine: 'file' })), kind: 'text', note: '내용이 없어 미리 볼 쪽이 없어요' };
-      } else res = { ...res, pages };
+      } else {
+        res = { ...res, pages };
+        // 변환하는 동안 파일이 바뀌지 않았을 때만 기억한다
+        const after = statOf(doc.path);
+        if (cacheKey && after && after.size === st.size && after.mtimeMs === st.mtimeMs) {
+          try { previewCache.put(cacheKey, res.file, { engine: res.engine, pages }); } catch (err) { console.error('[preview] 기억', err?.message ?? err); }
+        }
+      }
     }
     if (current === doc) { doc.renderedStat = st; doc.stat = st; }
     const base = { mode: m, ms: Date.now() - started, doc: current === doc ? docInfo() : null };
     if (res.kind === 'pdf') {
       const pdf = tidyPdf(res.file, doc.path);
       cleanPreviews(pdf.dir ?? pdf.file);
-      return { ...base, kind: 'pdf', engine: res.engine, url: `${pathToFileURL(pdf.file).href}#view=FitH&navpanes=0`, pages: res.pages };
+      return { ...base, kind: 'pdf', engine: res.engine, cached: !!res.cached, url: `${pathToFileURL(pdf.file).href}#view=FitH&navpanes=0`, pages: res.pages };
     }
     if (res.kind === 'svg') {
       return { ...base, kind: 'svg', engine: res.engine, total: res.total,
@@ -347,11 +367,47 @@ async function start() {
     return ended ? running.length : -1;
   }
 
-  async function restore() {
+  // 지금 파일 내용의 해시 (크기·수정 시각이 같으면 다시 읽지 않는다)
+  const hashCache = new Map();
+  function currentHash(p) {
+    const st = statOf(p);
+    if (!st) return null;
+    const c = hashCache.get(key(p));
+    if (c && c.mtimeMs === st.mtimeMs && c.size === st.size) return c.hash;
+    const hash = hashFile(p);
+    hashCache.set(key(p), { ...st, hash });
+    return hash;
+  }
+
+  /**
+   * 열린 문서의 버전 목록 → { versions: [{ file, time, reason, size, current }], undo: 파일 이름 | null }
+   * 최근에 쓴 것부터. current = 지금 파일과 내용이 같음. undo = 마지막 변경 전 (지금과 다른 가장 최근 버전)
+   */
+  function versions() {
+    const doc = needDoc();
+    let now = null;
+    try { now = currentHash(doc.path); } catch {}
+    const list = backups.list(doc.path).map((e) => ({ file: e.file, time: e.time, usedAt: e.usedAt ?? e.time, reason: e.reason ?? null, size: e.size ?? 0, current: !!now && e.hash === now }));
+    return { versions: list, undo: list.find((e) => !e.current)?.file ?? null };
+  }
+
+  /** 버전으로 되돌리기. file을 주지 않으면 마지막 변경 전으로 (되돌리기 전 상태도 '원래대로 전' 버전으로 남는다) */
+  async function restore(args) {
     const doc = needDoc();
     const k = key(doc.path);
     if (restoring.has(k)) throw fail('이미 되돌리는 중입니다');
-    const entry = doc.backup ?? backups.latest(doc.path);
+    const want = args && typeof args === 'object' && typeof args.file === 'string' ? args.file : null;
+    let entry;
+    if (want) {
+      entry = backups.find(doc.path, want);
+      if (!entry) throw fail('그 버전을 찾을 수 없어요 (정리됐을 수 있어요). 목록을 다시 열어 주세요.', 'NO_VERSION');
+    } else {
+      const v = versions();
+      if (!v.versions.length) throw fail('이 문서의 백업이 없습니다');
+      entry = v.undo ? backups.find(doc.path, v.undo) : null;
+      // 바꾼 것이 없으면 (모든 버전이 지금과 같음) 파일은 그대로 두고 편집 창에만 알린다
+      entry ??= backups.find(doc.path, v.versions[0].file);
+    }
     if (!entry) throw fail('이 문서의 백업이 없습니다');
     restoring.add(k);
     restoreGen.set(k, (restoreGen.get(k) ?? 0) + 1);
@@ -359,8 +415,8 @@ async function start() {
       // AI가 이 문서를 고치는 중이면 먼저 멈춘다 (안 그러면 되돌린 파일에 AI가 다시 쓴다)
       const stoppedAi = await stopChatsFor(doc.path);
       if (stoppedAi < 0) throw fail('AI 작업이 멈추지 않아 되돌리지 않았습니다. 잠시 뒤 다시 시도하세요.');
-      // 되돌리기 전 상태도 남겨 둔다 (실수로 눌렀을 때 백업 폴더에서 찾을 수 있게). 되돌릴 백업은 정리하지 않는다
-      try { backups.backup(doc.path, new Date(), { protect: [entry.file, ...protectedBackups()] }); } catch {}
+      // 되돌리기 전 상태도 버전으로 남겨 둔다 (다시 '원래대로'로 돌아올 수 있게). 되돌릴 백업은 정리하지 않는다
+      try { backups.backup(doc.path, new Date(), { protect: [entry.file, ...protectedBackups()], maxPerSource: VERSIONS_PER_DOC, reason: 'restore' }); } catch {}
       doc.quietUntil = Date.now() + 1500;
       try { backups.restore(doc.path, entry); } catch (err) {
         if (/EBUSY|EPERM|EACCES/.test(err.code ?? err.message)) throw fail('문서가 다른 프로그램에서 열려 있어 되돌릴 수 없습니다. 프로그램을 닫고 다시 시도하세요.');
@@ -373,7 +429,7 @@ async function start() {
       const editorNotified = !!editors?.notifyExternalChange(doc.path, { force: !!editors?.isDirty(doc.path), reason: 'restore' });
       // AI가 기억하는 문서 내용은 이제 틀리므로 다음 메시지부터 새 대화로 시작한다
       const newChat = sessions.delete(k);
-      return { time: entry.time, stoppedAi, newChat, editorNotified, doc: current === doc ? docInfo() : null };
+      return { time: entry.time, reason: entry.reason ?? null, file: entry.file, stoppedAi, newChat, editorNotified, doc: current === doc ? docInfo() : null };
     } finally {
       restoring.delete(k);
     }
@@ -402,8 +458,8 @@ async function start() {
       return { via: 'shell' };
     }
     try {
-      await core.openInApp(doc.path);
-      return { via: 'app' };
+      const r = await core.openInApp(doc.path);
+      return { via: 'app', readOnly: !!r?.readOnly, readOnlyReason: r?.readOnlyReason ?? null };
     } catch (err) {
       const e2 = await shell.openPath(doc.path);
       if (e2) throw fail(`프로그램에서 열지 못했습니다: ${err.message}`);
@@ -411,8 +467,18 @@ async function start() {
     }
   }
 
-  async function savePdf() {
+  // PDF로 저장은 두 번에 나눈다: 저장 대화상자(step 'pick') → 고른 곳에 만들기(step 'make').
+  // 화면은 자리를 고른 뒤에만 'PDF 만드는 중'을 보인다. 만들 곳은 main이 기억한 것만 쓴다 (화면이 경로를 주지 않음)
+  let pdfTarget = null;
+  async function savePdf({ step } = {}) {
     const doc = needDoc();
+    if (step === 'make') {
+      const t = pdfTarget;
+      pdfTarget = null;
+      if (!t || !samePath(t.doc, doc.path)) throw fail('저장할 곳을 다시 골라 주세요');
+      const res = await core.convertDocument(doc.path, t.output);
+      return { output: res.output, engine: res.engine };
+    }
     await appCheck(doc.path, 'PDF로 저장');
     const stem = basename(doc.path).replace(/\.[^.]+$/, '');
     const r = await dialog.showSaveDialog(win, {
@@ -422,6 +488,7 @@ async function start() {
     if (r.canceled || !r.filePath) return { canceled: true };
     const output = r.filePath.toLowerCase().endsWith('.pdf') ? r.filePath : `${r.filePath}.pdf`;
     if (samePath(output, doc.path)) throw fail('원본 문서와 같은 이름으로는 저장할 수 없습니다');
+    if (step === 'pick') { pdfTarget = { doc: doc.path, output }; return { output, picked: true }; }
     const res = await core.convertDocument(doc.path, output);
     return { output: res.output, engine: res.engine };
   }
@@ -545,7 +612,6 @@ async function start() {
   // 창 이름 ('ONLYOFFICE'는 쓰지 않는다 — 설계 8장)
   const EDITOR_LABELS = { hwp: '한글 편집', docx: '문서 편집', xlsx: '표 편집', pptx: '슬라이드 편집' };
   let OFFICE_DRAFTS = 'office-drafts';
-  const EDITOR_BACKUPS_PER_DOC = 5; // 편집 창 저장 전 백업: 문서마다 최근 몇 개 ('원래대로' 기준은 따로 남는다)
   /** 파일 경로 → 'hwp' | 'office' | null */
   const editorKind = (p) => Object.keys(EDITOR_KINDS).find((k) => EDITOR_KINDS[k].includes(extOf(p))) ?? null;
   /** 파일 경로 → '한글 편집' | '문서 편집' | '표 편집' | '슬라이드 편집' */
@@ -575,7 +641,7 @@ async function start() {
       testHooks: dev && process.env.OFFICEKIT_EDITOR_TEST === '1',
       // 편집 창이 덮어쓰기 전에 백업한다 (열었던 문서들의 '원래대로' 기준은 정리하지 않게).
       // 자주 저장해도 다른 문서의 백업을 밀어내지 않도록 이 문서 몫은 최근 몇 개만 둔다
-      getBackups: () => ({ backup: (p) => backups.backup(p, new Date(), { protect: protectedBackups(), maxPerSource: EDITOR_BACKUPS_PER_DOC }) }),
+      getBackups: () => ({ backup: (p) => keepVersion(p, 'editor') }),
       // 문서·표·슬라이드 편집기의 설정(보기·확대 등)은 settings.json의 officeEditor.settings에
       officeState: { get: (k) => settings.officeGet(k), set: (k, v) => { settings.officeSet(k, v); } },
       onSaved: (p) => editorSaved(p),
@@ -680,6 +746,17 @@ async function start() {
    * 열린 문서를 편집 창으로 연다 (이미 열려 있으면 그 창을 앞으로) → { path, kind, reused, notice }
    * notice: Office 편집 창이 많이 열렸을 때 메모리 안내 (없으면 null)
    */
+  /** 한글 문서를 내장 엔진(rhwp)으로 열어 본다 → 문제 없으면 null, 있으면 { code, message, detail } */
+  function hwpOpenProblem(p) {
+    try { const h = core.Hwp.openForView(p); h.close(); return null; } catch (err) {
+      const why = String(err?.message ?? err);
+      if (/암호|password|encrypt|distribut|배포용/i.test(why)) {
+        return { code: 'ENCRYPTED', message: '암호가 걸렸거나 배포용인 한글 문서라 직접 편집할 수 없어요. ‘프로그램에서 열기’로 열어 주세요.', detail: why };
+      }
+      return { code: 'BAD_FORMAT', message: `‘${basename(p)}’ 파일은 손상됐거나 지원하지 않는 한글 문서라 직접 편집할 수 없어요. ‘프로그램에서 열기’로 열어 보세요.`, detail: why };
+    }
+  }
+
   async function editDocument() {
     const doc = needDoc();
     const kind = editorKind(doc.path);
@@ -688,6 +765,11 @@ async function start() {
       throw fail(`${kindOf(doc.path)} 문서(.${ext || '확장자 없음'})는 앱 안에서 직접 편집할 수 없어요. 직접 편집은 한글(HWP·HWPX)·Word(DOCX)·Excel(XLSX)·PowerPoint(PPTX) 문서만 돼요. ‘프로그램에서 열기’로 고쳐 주세요.`, 'UNSUPPORTED');
     }
     const label = editorLabel(doc.path);
+    // 한글: 내장 엔진이 못 여는 문서(손상·암호·지원 안 하는 판)는 창을 띄우기 전에 거른다 (Office는 editor-window가 거름)
+    if (kind === 'hwp' && !editors?.isOpen(doc.path)) {
+      const bad = hwpOpenProblem(doc.path);
+      if (bad) throw Object.assign(fail(bad.message, bad.code), { detail: bad.detail });
+    }
     if (!editors) throw fail(`${label} 기능을 불러오지 못했습니다: ${editorLoadError}`, 'EDITOR_MISSING');
     const a = editors.available(kind);
     if (!a.available) throw fail(a.reason || `${label}기 파일이 없습니다.`, 'EDITOR_MISSING');
@@ -746,6 +828,8 @@ async function start() {
     const mcp = { ...base, env: { ...(base.env ?? {}), OFFICEKIT_WRITE_ROOTS: dirname(path) } };
     // 준비하는 사이 '원래대로'를 눌렀으면 시작하지 않는다 (되돌린 파일을 다시 고치지 않게)
     if (restoring.has(k) || (restoreGen.get(k) ?? 0) !== gen) throw fail('문서를 원래대로 되돌려서 이 요청은 보내지 않았습니다.');
+    // AI가 고치기 전 상태를 버전으로 남긴다 (대화 한 번마다. 내용이 같으면 있던 것을 다시 씀)
+    try { keepVersion(path, 'ai'); } catch (err) { console.error('[ai:send] 백업', err?.message ?? err); }
     const sess = sessions.get(k);
     const chatId = randomUUID();
     // 모델은 AI마다 따로 (다른 AI의 모델 이름을 넘기면 모든 요청이 실패한다)
@@ -905,7 +989,8 @@ async function start() {
         return { ok: true, value: await fn(...args) };
       } catch (err) {
         if (!err?.expected && err?.code !== 'MODULE_MISSING') console.error(`[${channel}]`, err);
-        return { ok: false, error: err?.message ?? String(err), code: err?.code ?? null };
+        // detail: 엔진이 낸 원래 글 (화면이 '자세히'로 접어 보여 준다)
+        return { ok: false, error: err?.message ?? String(err), code: err?.code ?? null, ...(err?.detail ? { detail: String(err.detail).slice(0, 4000) } : {}) };
       }
     });
   }
@@ -951,10 +1036,11 @@ async function start() {
   handle('doc:preview', (opts = {}) => preview({
     mode: ['auto', 'exact', 'text'].includes(opts?.mode) ? opts.mode : undefined, ifChanged: opts?.ifChanged === true,
   }));
-  handle('doc:restore', () => restore());
+  handle('doc:restore', (args) => restore(args));
+  handle('doc:versions', () => versions());
   handle('doc:openInApp', () => openInProgram());
   handle('doc:edit', () => editDocument());
-  handle('doc:savePdf', () => savePdf());
+  handle('doc:savePdf', (args) => savePdf(args && typeof args === 'object' ? { step: ['pick', 'make'].includes(args.step) ? args.step : undefined } : {}));
   handle('doc:showInFolder', () => { shell.showItemInFolder(needDoc().path); return null; });
   handle('shell:showItem', (p) => { shell.showItemInFolder(existingFile(p)); return null; });
   handle('shell:openBackups', async () => { mkdirSync(backups.dir, { recursive: true }); await shell.openPath(backups.dir); return null; });

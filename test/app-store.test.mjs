@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSettings, createBackups, writeJsonAtomic, stamp, DEFAULT_SETTINGS, guessModelProvider } from '../src/app/store.mjs';
+import { createSettings, createBackups, createPreviewCache, writeJsonAtomic, stamp, DEFAULT_SETTINGS, guessModelProvider } from '../src/app/store.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'okstore-'));
 
@@ -139,14 +139,14 @@ test('백업: 원래대로 순서(지금 상태 백업 → 복원)에서 되돌�
   assert.deepEqual(b.list(doc).map((e) => read(e.path)).sort(), ['EDITED BY AI', 'ORIGINAL']);
 });
 
-test('백업: 기본 50개, 한 달 전 연 문서를 다시 열고 원래대로 해도 원본이 남는다', () => {
+test('백업: 기본 200개, 한 달 전 연 문서를 다시 열고 원래대로 해도 원본이 남는다', () => {
   const dir = tmp();
   const docs = join(dir, 'docs'); mkdirSync(docs);
   const b = createBackups(join(dir, 'backups'));
   const X = join(docs, '보고서.hwp'); writeFileSync(X, 'ORIGINAL');
   const day = 86400000; const t0 = Date.now() - 30 * day;
   b.backup(X, new Date(t0));
-  for (let i = 1; i <= 49; i++) { const f = join(docs, `other${i}.docx`); writeFileSync(f, `o${i}`); b.backup(f, new Date(t0 + i * 60000)); }
+  for (let i = 1; i <= 199; i++) { const f = join(docs, `other${i}.docx`); writeFileSync(f, `o${i}`); b.backup(f, new Date(t0 + i * 60000)); }
   const openEntry = b.backup(X);
   assert.equal(openEntry.reused, true);
   writeFileSync(X, 'EDITED BY AI');
@@ -154,7 +154,38 @@ test('백업: 기본 50개, 한 달 전 연 문서를 다시 열고 원래대로
   assert.equal(existsSync(openEntry.path), true);
   b.restore(X, openEntry);
   assert.equal(read(X), 'ORIGINAL');
-  assert.equal(readdirSync(join(dir, 'backups')).filter((f) => f !== 'index.json').length, 50);
+  assert.equal(readdirSync(join(dir, 'backups')).filter((f) => f !== 'index.json').length, 200);
+});
+
+test('버전: 까닭(reason)을 적고, 같은 내용을 다시 쓰면 처음 까닭 그대로 · find로 하나 찾기', () => {
+  const dir = tmp();
+  const b = createBackups(join(dir, 'backups'));
+  const doc = join(dir, '보고서.docx'); writeFileSync(doc, 'A');
+  let t = Date.UTC(2026, 9, 1);
+  const opened = b.backup(doc, new Date(t += 1000), { reason: 'open' });
+  assert.equal(opened.reason, 'open');
+  assert.equal(b.backup(doc, new Date(t += 1000), { reason: 'ai' }).reason, 'open', '내용이 같으면 새로 만들지 않음');
+  writeFileSync(doc, 'B');
+  const ai = b.backup(doc, new Date(t += 1000), { reason: 'ai' });
+  writeFileSync(doc, 'C');
+  b.backup(doc, new Date(t += 1000), { reason: 'editor' });
+  writeFileSync(doc, 'D');
+  b.backup(doc, new Date(t += 1000), { reason: 'restore' });
+  b.backup(doc, new Date(t += 1000), { reason: '모름' }); // 모르는 까닭은 적지 않음 (D는 이미 있음)
+  assert.deepEqual(b.list(doc).map((e) => [read(e.path), e.reason]), [['D', 'restore'], ['C', 'editor'], ['B', 'ai'], ['A', 'open']]);
+  assert.equal(b.find(doc, ai.file).reason, 'ai');
+  assert.equal(b.find(doc, 'none.docx'), null);
+  assert.equal(b.find(join(dir, '다른.docx'), ai.file), null, '다른 문서의 버전은 찾지 않음');
+});
+
+test('버전: 모두 합친 바이트 한도 (maxBytes) — 오래 안 쓴 것부터, 방금 것·protect는 남김', () => {
+  const dir = tmp();
+  const b = createBackups(join(dir, 'backups'), { maxBytes: 250 });
+  let t = Date.UTC(2026, 9, 1);
+  const made = [];
+  for (const n of ['a', 'b', 'c']) { const p = join(dir, `${n}.hwp`); writeFileSync(p, n.repeat(100)); made.push(b.backup(p, new Date(t += 1000), { protect: made.slice(0, 1) })); }
+  // 300바이트 > 250 → 보호된 a는 남고 b가 지워짐
+  assert.deepEqual(made.map((e) => existsSync(e.path)), [true, false, true]);
 });
 
 test('백업: protect 없이도 방금 만든·다시 쓴 백업은 지우지 않고, protect가 많으면 keep을 넘겨 남긴다', () => {
@@ -225,4 +256,29 @@ test('백업: maxPerSource — 편집 창에서 자주 저장해도 그 문서 �
   // maxPerSource를 안 주면 예전처럼 따로 세지 않는다
   b.backup(doc, new Date(t += 1000));
   assert.equal(b.list(doc).length, 5);
+});
+
+test('미리보기 기억: 경로·크기·수정 시각·방식이 같을 때만 다시 쓰고, 개수·바이트 한도', () => {
+  const dir = tmp();
+  const c = createPreviewCache(join(dir, 'preview-cache'), { keep: 2, maxBytes: 1000 });
+  const pdf = (name, text) => { const p = join(dir, name); writeFileSync(p, text); return p; };
+  const what = { path: join(dir, '표.xlsx'), size: 10, mtimeMs: 1000, mode: 'auto' };
+  assert.equal(c.get(what), null);
+  c.put(what, pdf('a.pdf', '%PDF-a'), { engine: 'excel', pages: 2 });
+  const hit = c.get({ ...what, path: what.path.toUpperCase() }); // Windows: 대소문자 무시
+  assert.deepEqual([read(hit.file), hit.engine, hit.pages], ['%PDF-a', 'excel', 2]);
+  assert.equal(c.get({ ...what, mtimeMs: 2000 }), null, '파일이 바뀌면 안 씀');
+  assert.equal(c.get({ ...what, size: 11 }), null);
+  assert.equal(c.get({ ...what, mode: 'exact' }), null, '방식이 다르면 따로');
+  // 경로는 해시로만 남는다
+  assert.doesNotMatch(read(join(dir, 'preview-cache', 'index.json')), /표\.xlsx/);
+  // 개수 한도: 오래 안 쓴 것부터
+  c.put({ ...what, path: join(dir, 'b.docx') }, pdf('b.pdf', '%PDF-b'));
+  c.get(what); // a를 다시 씀 → b가 더 오래 안 씀
+  c.put({ ...what, path: join(dir, 'c.docx') }, pdf('c.pdf', '%PDF-c'));
+  assert.ok(c.get(what));
+  assert.equal(c.get({ ...what, path: join(dir, 'b.docx') }), null);
+  // 바이트 한도
+  c.put({ ...what, path: join(dir, 'big.docx') }, pdf('big.pdf', 'x'.repeat(999)));
+  assert.equal(readdirSync(join(dir, 'preview-cache')).filter((f) => f.endsWith('.pdf')).length, 1);
 });

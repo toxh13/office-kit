@@ -483,12 +483,14 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(sentTo(editorWin, 'editor:external-change').length, n0 + 1);
   });
 
-  await t.test('원래대로: 파일이 이미 원본과 같아도 편집 창에 저장 안 한 편집이 있으면 알린다 (다시 불러올지 묻게)', async () => {
+  await t.test('원래대로: 파일이 이미 그 버전과 같아도 편집 창에 저장 안 한 편집이 있으면 알린다 (다시 불러올지 묻게)', async () => {
     assert.equal(sha(docPath), before);
     const count = () => sentTo(editorWin, 'editor:external-change').length;
+    const same = (await call('doc:versions')).value.versions.find((v) => v.current);
+    assert.ok(same, '지금 내용과 같은 버전');
     // 깨끗하면 알릴 것이 없다
     let n0 = count();
-    let r = await call('doc:restore');
+    let r = await call('doc:restore', { file: same.file });
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.editorNotified, false);
     assert.equal(count(), n0);
@@ -496,13 +498,55 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     fake.emit('editor:dirty', editorWin.webContents, true);
     await until(() => lastSent('doc:editor', (d) => d.dirty));
     n0 = count();
-    r = await call('doc:restore');
+    r = await call('doc:restore', { file: same.file });
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.editorNotified, true);
     assert.equal(count(), n0 + 1);
     assert.equal(sha(docPath), before);
     fake.emit('editor:dirty', editorWin.webContents, false);
     assert.ok(await until(() => lastSent('doc:editor', (d) => !d.dirty)));
+  });
+
+  await t.test('버전 목록: 열 때·편집 창 저장 전·AI 대화 전·원래대로 전, 원래대로(인수 없음) = 마지막 변경 전', async () => {
+    const w = join(base, 'ver-w.hwpx'); const x = join(base, 'ver-x.hwpx'); const y = join(base, 'ver-y.hwpx');
+    await createBlankDocument(w, { title: '편집 창 저장 전 내용' });
+    await createBlankDocument(x, { title: 'AI 대화 전 내용' });
+    await createBlankDocument(y, { title: 'AI가 고친 내용' });
+    writeFileSync(docPath, readFileSync(w));
+    // 편집 창 저장 = 덮어쓰기 전 상태를 버전으로
+    const saved = await hostCall('editor:save', new Uint8Array(readFileSync(x)));
+    assert.equal(saved.ok, true, saved.error);
+    assert.equal(sha(docPath), sha(x));
+    // AI 대화 한 번 = 고치기 전 상태를 버전으로
+    assert.equal((await call('ai:send', { prompt: '고쳐줘', editorOk: true })).ok, true);
+    assert.ok(await until(() => lastSent('ai:event', (d) => d.type === 'end')));
+    writeFileSync(docPath, readFileSync(y)); // AI가 고친 것처럼
+    let v = (await call('doc:versions')).value;
+    const reasons = v.versions.map((e) => e.reason);
+    for (const want of ['open', 'editor', 'ai', 'restore']) assert.ok(reasons.includes(want), `${want}: ${reasons.join(', ')}`);
+    assert.ok(v.versions.length <= 30);
+    const undo = v.versions.find((e) => e.file === v.undo);
+    assert.equal(undo.reason, 'ai', '마지막 변경(AI) 전');
+    assert.equal(v.versions.some((e) => e.current), false, 'AI가 고친 지금 내용은 아직 버전이 아님');
+    let r = await call('doc:restore');
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.value.reason, 'ai');
+    assert.equal(sha(docPath), sha(x));
+    // 되돌리기 전 상태(AI가 고친 것)가 '원래대로 전'으로 남아 다시 돌아올 수 있다
+    v = (await call('doc:versions')).value;
+    assert.equal(v.versions[0].reason, 'restore');
+    assert.equal(v.undo, v.versions[0].file);
+    assert.equal(v.versions.find((e) => e.current)?.reason, 'ai');
+    // 처음 연 상태로
+    const opened = v.versions.find((e) => e.reason === 'open');
+    r = await call('doc:restore', { file: opened.file });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(sha(docPath), before);
+    // 목록에 없는 이름은 거절
+    r = await call('doc:restore', { file: '..\settings.json' });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'NO_VERSION');
+    assert.equal(sha(docPath), before);
   });
 
   // ── 문서·표·슬라이드 편집 창 (Office) ──
@@ -740,6 +784,21 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.code, 'ENCRYPTED');
     assert.match(r.error, /암호가 걸린 문서는 직접 편집할 수 없습니다/);
     assert.equal(fake.windows.length, n);
+  });
+
+  await t.test('한글: 내장 엔진이 못 여는 문서(손상)는 편집 창을 띄우기 전에 거절 — 엔진 원래 글은 detail로', async () => {
+    const bad = join(docs, '깨진 문서.hwp');
+    const bytes = Buffer.alloc(4096, 0x5a);
+    Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]).copy(bytes);
+    writeFileSync(bad, bytes);
+    assert.equal((await call('doc:open', bad)).ok, true);
+    const n = fake.windows.length;
+    const r = await call('doc:edit');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'BAD_FORMAT');
+    assert.match(r.error, /^‘깨진 문서\.hwp’ 파일은 손상됐거나 지원하지 않는 한글 문서라 직접 편집할 수 없어요/);
+    assert.ok(r.detail, '엔진이 낸 원래 글');
+    assert.equal(fake.windows.length, n, '창을 띄우지 않음');
   });
 
   await t.test('다른 이름으로 저장: 확장자를 붙인 이름이 이미 있으면 다시 묻고, 취소하면 그대로', async () => {

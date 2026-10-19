@@ -1247,9 +1247,10 @@ async function runFlows({ app, report, check, ud, core, create, draftPathFor, op
       check(g, '멈춤 뒤 복구 흐름', false, String(err?.message ?? err));
     }
 
-    // 원래대로 (주 창) — 고친 것 없을 때: 편집 창이 저절로 다시 불러옴, 파일은 처음 백업
+    // 원래대로 (주 창) — 고친 것 없을 때: 편집 창이 저절로 다시 불러옴, 파일은 처음 연 상태 버전 (버전 목록에서 고름)
     const appCtx2 = app.t.frame(RE.app, e.sid)?.ctx;
-    const rr = await app.apiRaw('doc.restore');
+    const openedVersion = async () => (await app.apiRaw('doc.versions'))?.value?.versions?.find((v) => v.reason === 'open')?.file;
+    const rr = await app.apiRaw('doc.restore', { file: await openedVersion() });
     const back = await waitFor(async () => {
       const ctx = app.t.frame(RE.app, e.sid)?.ctx;
       if (!ctx || ctx === appCtx2) return false;
@@ -1263,7 +1264,7 @@ async function runFlows({ app, report, check, ud, core, create, draftPathFor, op
     // 원래대로 — 고친 것 있을 때: 띠
     await typeAtEnd('되돌리기 전 편집');
     await e.waitDirty(true);
-    const rr2 = await app.apiRaw('doc.restore');
+    const rr2 = await app.apiRaw('doc.restore', { file: await openedVersion() });
     const b2 = await waitFor(async () => { const s = await e.state(); return s.banner === 'changed' ? s : null; }, 15_000);
     check(g, "고친 뒤 '원래대로' → 띠 '주 창에서 문서를 원래대로 되돌렸습니다'", rr2?.ok && !!b2 && b2.bannerText.includes('원래대로 되돌렸습니다'), b2?.bannerText ?? rr2);
     await e.host('window.__officeTest.bannerAction("다시 불러오기")');

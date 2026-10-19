@@ -78,7 +78,7 @@ async function toDocx(blocks) {
       }));
     } else children.push(new Paragraph({ alignment: b.center ? AlignmentType.CENTER : undefined, children: [new TextRun({ text: b.text, bold: b.bold })] }));
   }
-  const doc = new Document({ styles: { default: { document: { run: { font: '맑은 고딕' } } } }, sections: [{ children }] });
+  const doc = new Document({ styles: { default: { document: { run: { font: '맑은 고딕', language: KO_LANG } } } }, sections: [{ children }] });
   return Packer.toBuffer(doc);
 }
 
@@ -160,6 +160,8 @@ export async function createDocument(output, markdown) {
 
 /** 빈 문서로 만들 수 있는 형식 (앞이 기본) */
 export const BLANK_FORMATS = Object.freeze(['hwpx', 'hwp', 'docx', 'pptx', 'xlsx']);
+// 문서 기본 언어: 한국어 (Word·편집 창의 맞춤법·글자 언어 표시가 '영어(미국)'으로 나오지 않게)
+const KO_LANG = { value: 'ko-KR', eastAsia: 'ko-KR' };
 const FONT = '맑은 고딕';
 
 // 만든 꾸러미(zip)의 XML 몇 개를 고친다 (라이브러리가 채우는 영어 기본값 정리)
@@ -187,7 +189,7 @@ async function blankBytes(ext, title) {
       : [new Paragraph({})];
     const doc = new Document({
       creator: '', lastModifiedBy: '', title: title || undefined,
-      styles: { default: { document: { run: { font: FONT } } } },
+      styles: { default: { document: { run: { font: FONT, language: KO_LANG } } } },
       sections: [{ children }],
     });
     return Buffer.from(await Packer.toBuffer(doc));

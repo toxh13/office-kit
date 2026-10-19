@@ -309,6 +309,8 @@ export function summarize(content, max = 160) {
   else if (Array.isArray(content)) {
     s = content.map((c) => (typeof c === 'string' ? c : c?.type === 'text' ? c.text : c?.type === 'image' ? '[이미지]' : '')).filter(Boolean).join(' ');
   } else if (content && typeof content === 'object') s = JSON.stringify(content);
+  // Claude CLI가 그림 결과를 '[Image: source: C:\…\x.png]'로 적는다 → 내부 경로 대신 '[이미지]'
+  s = s.replace(/\[Image\b[^\]]*\]/gi, '[이미지]');
   const chars = [...s.replace(/\s+/g, ' ').trim()];
   return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : chars.join('');
 }

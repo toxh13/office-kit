@@ -569,6 +569,78 @@ describe('원본에서 옮겨 오기 — xlsx (셀 글꼴·메모·조건부 서
   });
 });
 
+// carry/chart.orig.xlsx = 막대 차트(항목 A4:A9, 값 B4:B9·G4:G9) 문서, 편집기에서 9행에 행을 넣고 저장한 것:
+//   chart-rowhead.saved.xlsx  행 머리글 → '위의 행 삽입': 값 범위만 B4:B10으로 늘고 항목은 A4:A9 (Excel에서 7번째 막대 이름이 빔)
+//   chart-cell.saved.xlsx     셀 하나 고르고 행 삽입: 범위가 둘 다 그대로 (마지막 행 '홍보담당관'이 차트에서 빠짐)
+const chartRefs = (xml) => [...xml.matchAll(/<c:(cat|val)>[\s\S]*?<c:f>([^<]*)<\/c:f>[\s\S]*?<c:ptCount val="(\d+)"/g)].map((m) => `${m[1]} ${m[2]} ${m[3]}`);
+const lastCatLabel = (xml) => [...xml.match(/<c:cat>[\s\S]*?<\/c:cat>/)[0].matchAll(/<c:v>([^<]*)<\/c:v>/g)].at(-1)[1];
+
+describe('xlsx — 차트 범위 (편집기에서 데이터 범위 안에 행을 넣은 뒤)', () => {
+  const orig = CARRY('chart.orig.xlsx');
+  const want = ['cat 집행현황!$A$4:$A$10 7', 'val 집행현황!$B$4:$B$10 7', 'cat 집행현황!$A$4:$A$10 7', 'val 집행현황!$G$4:$G$10 7'];
+
+  test('값 범위만 늘었으면 항목 범위를 값에 맞춘다 (원본 없이도) + 항목 캐시도 시트 값으로', async () => {
+    const saved = CARRY('chart-rowhead.saved.xlsx');
+    assert.deepEqual(chartRefs((await unzip(saved)).text('xl/charts/chart1.xml')),
+      ['cat 집행현황!$A$4:$A$9 6', 'val 집행현황!$B$4:$B$10 7', 'cat 집행현황!$A$4:$A$9 6', 'val 집행현황!$G$4:$G$10 7']);
+    for (const original of [null, orig]) {
+      const r = await fixOoxml(saved, 'xlsx', { original });
+      assert.equal(r.error, null);
+      assert.deepEqual(r.warnings, []);
+      assert.deepEqual(r.fixes.filter((f) => f.startsWith('차트')), [
+        '차트 범위 맞춤: xl/charts/chart1.xml 집행현황!$A$4:$A$9 → 집행현황!$A$4:$A$10',
+        '차트 범위 맞춤: xl/charts/chart1.xml 집행현황!$A$4:$A$9 → 집행현황!$A$4:$A$10',
+      ]);
+      const chart = (await unzip(r.bytes)).text('xl/charts/chart1.xml');
+      assert.deepEqual(chartRefs(chart), want);
+      assert.equal(lastCatLabel(chart), '홍보담당관');
+      assert.ok(xmlBalanced(chart));
+      // 손대지 않은 부분은 그대로 (시트·스타일 등)
+      assertUntouched(await unzip(saved), await unzip(r.bytes), ['xl/charts/chart1.xml', ...(original ? ['xl/theme/theme1.xml', 'xl/styles.xml'] : [])]);
+      assert.equal((await fixOoxml(r.bytes, 'xlsx', { original })).fixes.filter((f) => f.startsWith('차트')).length, 0, '다시 고쳐도 그대로');
+    }
+  });
+
+  test('범위가 그대로면 원본 항목 글을 따라 범위를 옮긴다 (원본이 있을 때만)', async () => {
+    const saved = CARRY('chart-cell.saved.xlsx');
+    const before = (await unzip(saved)).text('xl/charts/chart1.xml');
+    assert.deepEqual(chartRefs(before), ['cat 집행현황!$A$4:$A$9 6', 'val 집행현황!$B$4:$B$9 6', 'cat 집행현황!$A$4:$A$9 6', 'val 집행현황!$G$4:$G$9 6']);
+    // 원본이 없으면 판단할 근거가 없다 → 그대로
+    const bare = await fixOoxml(saved, 'xlsx');
+    assert.equal(bare.fixes.filter((f) => f.startsWith('차트')).length, 0);
+    const r = await fixOoxml(saved, 'xlsx', { original: orig });
+    assert.equal(r.error, null);
+    assert.deepEqual(r.warnings, []);
+    const chart = (await unzip(r.bytes)).text('xl/charts/chart1.xml');
+    assert.deepEqual(chartRefs(chart), want);
+    assert.equal(lastCatLabel(chart), '홍보담당관');
+    // 계열 이름(B3·G3)은 그 자리 그대로
+    assert.match(chart, /<c:tx><c:strRef><c:f>집행현황!\$B\$3<\/c:f>/);
+  });
+
+  test('원본에도 같은 범위 글로 있던 길이 차이는 사용자가 만든 것 → 그대로, 자리가 어긋나면 경고만', async () => {
+    const odd = await mutate(CARRY('chart-rowhead.saved.xlsx'), async (z, read) => {
+      z.file('xl/charts/chart1.xml', (await read('xl/charts/chart1.xml')).replaceAll('집행현황!$A$4:$A$9', '집행현황!$A$5:$A$9'));
+    });
+    const r = await fixOoxml(odd, 'xlsx');
+    assert.equal(r.error, null);
+    assert.equal(r.fixes.filter((f) => f.startsWith('차트')).length, 0);
+    assert.equal(r.warnings.length, 2);
+    assert.match(r.warnings[0], /^차트 항목·값 범위 길이가 달라도 자리가 어긋나 그대로 둠: xl\/charts\/chart1\.xml/);
+    // 원본(같은 범위 글) = 저장본 그 자체 → 이미 있던 차이
+    const same = await fixOoxml(CARRY('chart-rowhead.saved.xlsx'), 'xlsx', { original: CARRY('chart-rowhead.saved.xlsx') });
+    assert.equal(same.fixes.filter((f) => f.startsWith('차트')).length, 0);
+  });
+
+  test('범위 글 읽기: 따옴표 시트 이름·한 칸·여러 영역', async () => {
+    const { parseChartRef } = await import('../src/core/ooxml-fixups.mjs');
+    assert.deepEqual(parseChartRef("'My ''Data'''!$B$4:$B$10"), { sheet: "My 'Data'", token: "'My ''Data'''", c1: 2, c2: 2, r1: 4, r2: 10 });
+    assert.deepEqual(parseChartRef('Sheet1!$AA$3'), { sheet: 'Sheet1', token: 'Sheet1', c1: 27, c2: 27, r1: 3, r2: 3 });
+    assert.equal(parseChartRef('(Sheet1!$A$1:$A$3,Sheet1!$A$5:$A$6)'), null);
+    assert.equal(parseChartRef('이름정의'), null);
+  });
+});
+
 describe('원본에서 옮겨 오기 — pptx (테마 글꼴·구역)', () => {
   // blank-raw.pptx: 슬라이드 256·257. 원본에 구역 둘(앞·뒤)을 넣은 것
   const SECTIONS = '<p:extLst><p:ext uri="{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"><p14:sectionLst xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main">'
@@ -721,6 +793,29 @@ describe('Office 엄격 열기 (경고 모두 켬·복구 끔·감시 타이머)
       assert.equal(res.code, 0, `${name}: ${JSON.stringify(res.r)}`);
       assert.equal(res.r.hung, false, name);
     }
+  });
+
+  test('차트 범위를 맞춘 xlsx: Excel에서 7번째 막대에 항목 이름이 붙는다 (고치기 전은 빈 이름)', { timeout: 600_000 }, async () => {
+    const ps = join(dir, 'chart-labels.ps1');
+    writeFileSync(ps, `param([string]$Path, [string]$Out)
+$m = New-Object System.Threading.Mutex($false, 'Local\\OfficeKitCom'); try { [void]$m.WaitOne() } catch [System.Threading.AbandonedMutexException] { }
+$x = New-Object -ComObject Excel.Application
+try {
+  $x.DisplayAlerts = $false
+  $wb = $x.Workbooks.Open($Path, 0, $true)
+  $res = @(foreach ($s in $wb.Worksheets.Item(1).ChartObjects(1).Chart.SeriesCollection()) { $xv = @($s.XValues); @{ n = @($s.Values).Count; labels = @($xv | ForEach-Object { [string]$_ }) } })
+  $wb.Close($false)
+  [System.IO.File]::WriteAllText($Out, (ConvertTo-Json -InputObject $res -Depth 4 -Compress), (New-Object System.Text.UTF8Encoding($false)))
+} finally { $x.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($x); [GC]::Collect(); [GC]::WaitForPendingFinalizers(); $m.ReleaseMutex() }
+`, 'ascii');
+    const labels = (file) => new Promise((done, fail) => execFile(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps, file, `${file}.json`],
+      { windowsHide: true, timeout: 300_000 }, (err, _o, se) => (err ? fail(new Error(`${err.message} ${se}`)) : done(JSON.parse(readFileSync(`${file}.json`, 'utf8'))))));
+    const raw = await labels(write('chart-raw.xlsx', CARRY('chart-rowhead.saved.xlsx')));
+    assert.deepEqual(raw.map((s) => [s.n, s.labels.length, s.labels.at(-1)]), [[7, 7, ''], [7, 7, '']]);
+    const fixed = await labels(write('chart-fixed.xlsx', (await fixOoxml(CARRY('chart-rowhead.saved.xlsx'), 'xlsx', { original: CARRY('chart.orig.xlsx') })).bytes));
+    assert.deepEqual(fixed.map((s) => [s.n, s.labels.at(-1)]), [[7, '홍보담당관'], [7, '홍보담당관']]);
+    const followed = await labels(write('chart-followed.xlsx', (await fixOoxml(CARRY('chart-cell.saved.xlsx'), 'xlsx', { original: CARRY('chart.orig.xlsx') })).bytes));
+    assert.deepEqual(followed[0].labels, ['총무과', '기획예산과', '정보통신과', '시설관리과', '민원봉사과', '감사담당관', '홍보담당관']);
   });
 
   test('끝: 시험이 띄운 Office가 남지 않았다', { timeout: 60_000 }, async () => {

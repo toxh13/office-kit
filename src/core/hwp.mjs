@@ -38,6 +38,8 @@ const BASE_CHAR = { bold: false, italic: false, underline: false, strikethrough:
 
 // 단위: HWPUNIT = 1/7200인치. 문단 여백·들여쓰기·문단 간격은 rhwp에 HWPUNIT의 2배 값으로 넘긴다 (1pt = 200)
 const HU_PER_MM = 7200 / 25.4;
+const HU_PER_PX = 7200 / 96; // 엔진이 돌려주는 문단 간격 값(px, 96dpi) → HWPUNIT
+const CELL_PAD_TB = Math.round(HU_PER_MM); // 새 표 칸 안 위·아래 여백 1mm
 const PARA_PER_MM = HU_PER_MM * 2;
 const PARA_PER_PT = 200;
 const mmOf = (hu) => Math.round((hu / HU_PER_MM) * 10) / 10;
@@ -111,11 +113,12 @@ export class Hwp {
 
   /**
    * 화면(그림)용으로 열기. 줄 배치 정보(lineseg)가 빈 hwpx(rhwp가 만든 hwpx 등)는
-   * 표 다음 문단이 겹쳐 그려지므로 hwp로 한 번 거쳐 다시 연다. 파일은 바꾸지 않는다.
+   * 표 다음 문단이 겹쳐 그려지므로 hwp로 한 번 거쳐 다시 연다. 표 다음 문단은 표의 바깥 아래 여백만큼 띄운다 (_gapAfterTables).
+   * 파일은 바꾸지 않는다.
    */
   static openForView(path, opts) {
     let h = Hwp.open(path, opts);
-    if (extname(path).toLowerCase() !== '.hwpx') return h;
+    if (extname(path).toLowerCase() !== '.hwpx') { h._gapAfterTables(); return h; }
     let empty = 0;
     try { empty = JSON.parse(h.doc.getValidationWarnings()).count ?? 0; } catch {}
     if (empty) {
@@ -126,7 +129,31 @@ export class Hwp {
       } catch {}
     }
     h._relayoutObjects();
+    h._gapAfterTables();
     return h;
+  }
+
+  // 표 다음 문단: 한글은 표의 바깥 아래 여백(기본 1mm)만큼 띄우는데 rhwp 0.8.7은 그 여백을 무시하고 표 바로 밑에 붙여 그린다
+  // (다음 문단 글자가 표 아래 테두리에 닿거나 겹침). 화면용 사본에서만 다음 문단의 '문단 위 간격'에 그 여백을 더한다.
+  // rhwp는 문단 위 간격을 절반으로 그리므로(값 1000 → 6.7px = 500 HWPUNIT) 두 배를 더한다. 파일은 바꾸지 않는다.
+  _gapAfterTables() {
+    let list = [];
+    try { list = this.tables(); } catch { return; }
+    if (!list.length) return;
+    this._batch(() => {
+      for (const t of list) {
+        try {
+          const tp = JSON.parse(this.doc.getTableProperties(t.section, t.paraIndex, t.controlIndex));
+          const gap = Number(tp.outerBottom) || 0;
+          if (tp.treatAsChar || tp.textWrap !== 'TopAndBottom' || gap <= 0) continue;
+          const next = t.paraIndex + 1;
+          if (next >= this.doc.getParagraphCount(t.section)) continue;
+          const pp = JSON.parse(this.doc.getParaPropertiesAt(t.section, next, 0));
+          const before = Math.round((Number(pp.spacingBefore) || 0) * HU_PER_PX);
+          this.doc.applyParaFormat(t.section, next, JSON.stringify({ spacingBefore: before + 2 * gap }));
+        } catch {}
+      }
+    });
   }
 
   // 글 없이 그림·수식만 든 문단은 줄 정보가 비어 있으면 그려지지 않는다 → 화면용 사본에서 한 글자 넣었다 지워 다시 배치
@@ -649,6 +676,8 @@ export class Hwp {
     // 앞 문단이 가운데 정렬이면 표 칸까지 물려받으므로 기본 정렬로 되돌린다
     call(this.doc.applyParaFormat(sec, para, JSON.stringify({ alignment: 'justify' })), '문단 서식');
     const t = call(this.doc.createTable(sec, para, 0, rowCount, colCount), '표 만들기');
+    // 칸 안 위·아래 여백: 엔진 기본(0.5mm)은 글자가 테두리에 붙어 보인다 → 1mm (왼쪽·오른쪽 1.8mm는 그대로)
+    try { this.doc.setTableProperties(sec, t.paraIdx, t.controlIdx, JSON.stringify({ paddingTop: CELL_PAD_TB, paddingBottom: CELL_PAD_TB })); } catch {}
     rows.forEach((row, r) => row.forEach((value, c) => {
       const text = String(value ?? '');
       if (!text) return;
