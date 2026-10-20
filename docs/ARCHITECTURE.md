@@ -14,6 +14,10 @@ src/app/       Electron 앱 (main.mjs, preload.cjs, renderer/, ai.mjs)
                한글: editor/(host 페이지·preload) / 문서·표·슬라이드: office-editor/(host 페이지·preload, fonts/ 글꼴 목록 생성기 — AGPL)
 src/core/ooxml-fixups.mjs  Office 편집 창이 저장한 docx·xlsx·pptx를 Office가 경고 없이 열게 고치기
 src/core/hwppdf.mjs  한컴오피스 없이 한글 → PDF (vendor/rhwp-cli/rhwp.exe 실행)
+src/core/diff.mjs    두 버전의 바뀐 글 (문단·글자 단위 Myers, 엑셀은 칸 단위) — '바뀐 내용 보기'
+src/core/pii.mjs     개인정보 찾기(글자 규칙)·가린 사본 만들기(replaceText) + 다시 읽어 남은 것 확인
+src/core/batch.mjs   한글 → HWPX 일괄 변환(convertDocument) + 다시 열어 쪽·표·글 비교, CSV 보고서
+src/setup/fileassoc.mjs  기본 프로그램 후보 등록 상태 읽기·고쳐 쓰기 (HKCU, build/installer.nsh와 같은 키)
 scripts/com/   office.ps1 — 설치된 프로그램을 COM으로 조작. 형식별 작업은 word-ops.ps1, ppt-ops.ps1, excel-ops.ps1
 scripts/build-editor.mjs  한글 편집기 묶음 만들기 (rhwp-studio v0.8.7 → vendor/)
 scripts/build-office-editor.mjs  Office 편집기 묶음 만들기 (filex-office-editor v0.3.1 ui.zip → vendor/office-editor), 고정 값·규칙은 scripts/office-editor/
@@ -235,6 +239,18 @@ installCliShim(spec) / uninstallCliShim()     // %LOCALAPPDATA%\Microsoft\Window
   바꾸거나 지워도 깨지지 않게). 종료 코드는 0/1. MSIX 앱 안에서 쓰면 결과에 `warning`이 붙는다.
 - 모든 함수가 경로·실행기를 바꿔 끼울 수 있어 시험은 실제 설정을 건드리지 않는다.
 
+### src/setup/fileassoc.mjs
+```js
+registrationEntries(exe) → [{ key, name, value }]   // HKCU 아래: ProgID OfficeKit.<확장자>, .<확장자>\OpenWithProgids,
+                                                     // Software\OfficeKit\Capabilities, RegisteredApplications, Applications\Office Kit.exe
+assocStatus({ exe }) → { registered, matches, types: [{ ext, desc, kind, progId, isDefault }] }
+registerFileTypes({ exe })                           // reg.exe add (설치된 앱에서만 — main이 확인)
+DEFAULT_APPS_URI = 'ms-settings:defaultapps?registeredAppUser=Office%20Kit'
+```
+- 기본 프로그램(UserChoice)은 쓰지 않는다 — Windows가 해시로 막고, 고르는 것은 사용자 몫이다. `.<확장자>` 키의 기본값도 건드리지 않는다.
+- 읽기는 PowerShell + .NET 레지스트리 API(한글 경로가 깨지지 않게, `Get-ItemProperty`는 없는 키에서 느려서 안 씀). `UserChoiceLatest`(24H2)가 `UserChoice`보다 앞선다.
+- 설치 프로그램(`build/installer.nsh`)이 같은 키를 쓰고, 진짜 제거일 때만 지운다 (업데이트 중에는 그대로 — 사용자가 고른 기본 프로그램이 끊기지 않게).
+
 ### src/setup/hancom.mjs
 ```js
 hancomSecurityStatus() → { hancomInstalled, registered, dllPath, dllExists }
@@ -260,7 +276,15 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
 - 미리보기(`doc:preview`): 프로그램으로 만든 PDF는 `preview-cache`에서 찾고, 없으면 만든 뒤 (만드는 동안 파일이 그대로였으면) 기억한다.
 - PDF로 저장(`doc:savePdf`)은 두 번: `{step:'pick'}` 저장 대화상자 → `{step:'make'}` 고른 곳에 만들기 (화면은 고른 뒤에만 'PDF 만드는 중').
 - AI 대화 세션은 문서마다 메모리에만 둔다 (앱을 다시 켜면 새 대화).
+- 바뀐 내용(`doc:diff { file }`): 그 버전 → 지금 파일(임시 사본)을 `core/diff.mjs`로 비교. AI 대화가 끝날 때(`ai:event` `end`) 파일이 대화 전 버전과 다르면
+  `changed: true, before: <버전 파일>`을 붙여 보내고, 화면은 대화창에 '바뀐 내용 보기 · 이 대화 전으로 되돌리기'를 띄운다.
+- 문서를 열면 편집 창도(`settings.openAction`: `'edit'` 기본 | `'preview'`): 사용자가 연 것(탐색기·끌어놓기·최근 목록·열기 대화상자)이면
+  `doc:opened`에 `autoEdit: true`를 붙이고, 화면이 '직접 편집'과 같은 길(`doc:edit`)로 편집 창을 띄운다. 새 문서는 자기 '바로 편집 창 열기'를 따른다.
+- 기본 프로그램(`assoc:status`·`assoc:repair`·`assoc:openSettings`): 설치된 앱에서만 등록을 고쳐 쓰고 Windows 기본 앱 설정을 연다.
+- 도구: 개인정보(`pii:scan`·`pii:mask` — 원본 옆 `<이름>_가림.<확장자>`), 한글 → HWPX 일괄 변환(`batch:pick`·`batch:scan`·`batch:start`(진행은 `batch:progress` 이벤트)·`batch:cancel`·`batch:saveReport`).
 - 확인용: `OFFICEKIT_SMOKE=<png경로>` 환경 변수로 실행하면 인수로 받은 파일을 열고 화면을 캡처한 뒤 종료 (못 열면 알림을 찍고 실패로 끝남). 최근 파일 목록·Windows 최근 항목은 건드리지 않는다.
+  `OFFICEKIT_SMOKE_AUTOEDIT=1`: '열면 바로 편집 창'이 실제로 창을 띄웠는지 `[smoke]` 줄의 `autoEditor`로. `OFFICEKIT_SMOKE_DIFF=<파일>`: 연 뒤 그 파일로 덮어쓰고 '바뀐 내용' 창을 찍는다.
+  `OFFICEKIT_SMOKE_TOOL=pii|pii-mask|batch` (+ `OFFICEKIT_SMOKE_BATCH=<폴더>`): 도구 창을 찍는다. `OFFICEKIT_SMOKE_SETTINGS=open`: 설정의 파일 열기 쪽.
   `OFFICEKIT_SMOKE_EDITOR=1`이면 그 문서를 편집 창으로도 열어, 다 뜨면(또는 실패 안내가 뜨면) `<png>-editor.png`로 찍고 주 창을 찍는다 (편집기가 못 뜨면 종료 코드 1).
 - ESM 진입 파일에서 `await app.whenReady()`를 최상위에서 기다리면 멈춘다 → `start()`를 기다리지 않고 부른다.
 - 정리(감시 끄기·AI 대화 멈춤·미리보기 PDF 지우기)는 `will-quit`에서 한다. '끝내기'가 편집 창의 저장 확인에서 **취소**될 수 있어서 `before-quit`에서는 하지 않는다.

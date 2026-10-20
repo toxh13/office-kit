@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('officeKit', {
     restore: invoke('doc:restore'),
     // 버전 목록 → { versions: [{ file, time, reason, size, current }], undo }
     versions: invoke('doc:versions'),
+    // 버전 이후 바뀐 글 { file } → { kind: 'text'|'cells', hunks|cells, stats, same, time, reason }
+    diff: invoke('doc:diff'),
     openInApp: invoke('doc:openInApp'),
     savePdf: invoke('doc:savePdf'),
     showInFolder: invoke('doc:showInFolder'),
@@ -66,6 +68,29 @@ contextBridge.exposeInMainWorld('officeKit', {
     remove: invoke('hancom:remove'),
   },
 
+  // 개인정보: 열린 문서에서 찾기 → { items, total, output(가린 사본 이름) } · 가린 사본 만들기 { values } → { output, items, remaining }
+  pii: {
+    scan: invoke('pii:scan'),
+    mask: invoke('pii:mask'),
+  },
+
+  // 한글 → HWPX 일괄 변환: 고르기·세기·시작(진행은 on.batchProgress)·멈추기·보고서 저장
+  batch: {
+    pick: invoke('batch:pick'),
+    pickOut: invoke('batch:pickOut'),
+    scan: invoke('batch:scan'),
+    start: invoke('batch:start'),
+    cancel: invoke('batch:cancel'),
+    saveReport: invoke('batch:saveReport'),
+  },
+
+  // 기본 프로그램: 상태(형식마다 Office Kit로 여는지) · 등록 고치기 · Windows 기본 앱 설정 열기
+  assoc: {
+    status: invoke('assoc:status'),
+    repair: invoke('assoc:repair'),
+    openSettings: invoke('assoc:openSettings'),
+  },
+
   shell: {
     showItem: invoke('shell:showItem'),
     openBackups: invoke('shell:openBackups'),
@@ -85,6 +110,7 @@ contextBridge.exposeInMainWorld('officeKit', {
     aiEvent: subscribe('ai:event'),
     menu: subscribe('menu'),
     toast: subscribe('toast'),
+    batchProgress: subscribe('batch:progress'),
   },
 
   /** 확인용 캡처 신호 (OFFICEKIT_SMOKE일 때만 main이 듣는다) */

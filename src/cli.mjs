@@ -39,6 +39,12 @@ const HELP = `office-kit ${VERSION} — 한글·Word·PowerPoint·Excel 문서 �
   edit <파일> <작업.json> [-o 출력] [--overwrite]
                                       형식별 편집: 작업 목록을 순서대로 모두 적용한 뒤 한 번만 저장
                                       (하나라도 실패하면 저장 안 함). 작업 종류: office-kit help edit
+  hwpx <파일·폴더...> [--out 폴더] [--overwrite] [--report 보고서.csv]
+                                      한글(.hwp)을 HWPX로 한꺼번에 변환하고, 바꾼 파일을 다시 열어 쪽 수·표·글이
+                                      원본과 같은지 확인 (폴더는 하위 폴더까지. 결과는 원본 옆, --out이면 그 폴더에)
+  pii <파일> [--mask] [-o 출력] [--types rrn,mobile,...] [--json]
+                                      개인정보 찾기 (주민·외국인등록번호, 휴대전화·전화, 이메일, 카드, 계좌, 여권, 운전면허).
+                                      --mask: 가린 사본 만들기 (원본은 그대로, 기본 이름 <이름>_가림.<확장자>)
   mcp                                 MCP 서버 실행 (stdio, Claude/Codex 연결용)
   setup <대상> [--remove]             연결 설정. 대상: claude-desktop | claude-code | codex | cli | hancom
                                       (hancom: --dll <경로> 로 보안 모듈 파일 지정, --download 로 한컴 공식 배포본 받기)
@@ -63,13 +69,15 @@ const HELP = `office-kit ${VERSION} — 한글·Word·PowerPoint·Excel 문서 �
   office-kit image 보고서.hwp 2 -o 2쪽.png
   office-kit inspect 발표.pptx --slide 2
   office-kit edit 보고서.docx 작업.json -o 보고서_수정.docx
+  office-kit hwpx 문서함 --report 변환결과.csv
+  office-kit pii 명단.xlsx --mask
 `;
 
 // ── 인수 해석 ────────────────────────────────────────────
 
 const VALUED = { '-o': 'out', '--out': 'out', '--output': 'out', '--sheet': 'sheet', '--engine': 'engine', '--dpi': 'dpi', '--dll': 'dll',
-  '--offset': 'offset', '--limit': 'limit', '--slide': 'slide' };
-const FLAGS = { '--remove': 'remove', '--download': 'download', '--json': 'json', '--force': 'force', '--overwrite': 'overwrite',
+  '--offset': 'offset', '--limit': 'limit', '--slide': 'slide', '--report': 'report', '--types': 'types' };
+const FLAGS = { '--remove': 'remove', '--download': 'download', '--json': 'json', '--force': 'force', '--overwrite': 'overwrite', '--mask': 'mask',
   '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version' };
 
 export function parseArgs(argv) {
@@ -501,6 +509,51 @@ const COMMANDS = {
     const r = await setCells(src, jsonArg(cells, '셀'), { sheet: opt.sheet, output: outOf(opt, src), engine: opt.engine });
     print(`셀 ${r.updated}개 씀 (${r.engine})`);
     print(`저장: ${r.output}`);
+  },
+
+  async hwpx(paths, opt) {
+    need(paths, 1, 'hwpx <파일·폴더...> [--out 폴더] [--overwrite] [--report 보고서.csv]');
+    const b = await import('./core/batch.mjs');
+    const { items, truncated } = b.collectHwpFiles(paths.map((p) => resolve(p)));
+    if (!items.length) throw new Error('바꿀 한글(.hwp) 파일을 찾지 못했습니다');
+    const outDir = opt.out ? resolve(opt.out) : undefined;
+    print(`한글 → HWPX ${items.length}개${truncated ? ` (파일이 많아 앞 ${items.length}개만)` : ''}${outDir ? ` → ${outDir}` : ''}`);
+    const r = await b.convertHwpBatch(items, {
+      outDir, overwrite: !!opt.overwrite,
+      onProgress: ({ index, total, result: x }) => print(`[${index + 1}/${total}] ${b.BATCH_STATUS_KO[x.status]}  ${x.src}${x.notes?.length ? ` — ${x.notes.join(', ')}` : ''}`),
+    });
+    const s = r.summary;
+    print(`완료: 같음 ${s.ok}, 확인 필요 ${s.check}, 건너뜀 ${s.skipped}, 실패 ${s.fail}`);
+    if (opt.report) print(`보고서: ${b.writeBatchReport(resolve(opt.report), r.results)}`);
+    if (s.fail) process.exitCode = 1;
+  },
+
+  async pii([input], opt) {
+    need([input].filter(Boolean), 1, 'pii <파일> [--mask] [-o 출력] [--types 종류,...]');
+    const m = await import('./core/pii.mjs');
+    const src = fileArg(input);
+    const types = opt.types ? String(opt.types).split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+    const bad = types?.filter((t) => !m.PII_TYPES[t]);
+    if (bad?.length) throw new Error(`알 수 없는 종류: ${bad.join(', ')} (가능: ${Object.keys(m.PII_TYPES).join(', ')})`);
+    if (!opt.mask) {
+      const r = await m.scanDocument(src, { types });
+      if (opt.json) { print(JSON.stringify(r.items, null, 2)); return; }
+      if (!r.items.length) { print('개인정보를 찾지 못했습니다.'); return; }
+      print(`${r.items.length}가지 (모두 ${r.total}번):`);
+      for (const it of r.items) print(`  ${it.label}  ${it.value} → ${it.masked}${it.count > 1 ? ` (${it.count}번)` : ''}`);
+      print('가린 사본을 만들려면 --mask');
+      return;
+    }
+    const out = opt.out ? resolve(opt.out) : m.maskedPathFor(src);
+    if (existsSync(out) && !opt.overwrite) throw new Error(`이미 있는 파일입니다: ${out} (덮어쓰려면 --overwrite)`);
+    const r = await m.maskDocument(src, { output: out, types });
+    if (opt.json) { print(JSON.stringify(r, null, 2)); return; }
+    for (const it of r.items) print(`  ${it.label}  ${it.value} → ${it.masked} (${it.count}곳)`);
+    print(`가린 사본: ${r.output}`);
+    if (r.remaining.length) {
+      print(`주의: 가리지 못한 것 ${r.remaining.length}가지 — ${r.remaining.map((x) => x.value).join(', ')} (직접 확인하세요)`);
+      process.exitCode = 1;
+    } else print('확인: 가린 사본을 다시 읽어 남은 것이 없습니다.');
   },
 
   async convert([input, output]) {

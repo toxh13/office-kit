@@ -1,7 +1,8 @@
 // main.mjs — Office Kit 창, 단일 인스턴스, IPC, 원본 백업, 파일 감시, AI 대화 중계.
 import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, screen, session, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createBackups, createPreviewCache, createSettings, hashFile, samePath } from './store.mjs';
@@ -11,13 +12,18 @@ const APP_ROOT = resolve(here, '../..');
 const INDEX_HTML = join(here, 'renderer', 'index.html');
 const SMOKE = process.env.OFFICEKIT_SMOKE ? resolve(process.env.OFFICEKIT_SMOKE) : '';
 const SMOKE_CHAT = process.env.OFFICEKIT_SMOKE_CHAT === '1';
-const SMOKE_SETTINGS = ['ai', 'view', 'connect', 'hancom'].includes(process.env.OFFICEKIT_SMOKE_SETTINGS) ? process.env.OFFICEKIT_SMOKE_SETTINGS : null;
+const SMOKE_SETTINGS = ['ai', 'view', 'open', 'connect', 'hancom'].includes(process.env.OFFICEKIT_SMOKE_SETTINGS) ? process.env.OFFICEKIT_SMOKE_SETTINGS : null;
 // 새 문서 창을 연 채로 찍기: '1' = 빈 문서, 'ai' = AI에게 부탁하기를 고른 모양
 const SMOKE_NEWDOC = ['1', 'ai'].includes(process.env.OFFICEKIT_SMOKE_NEWDOC) ? process.env.OFFICEKIT_SMOKE_NEWDOC : null;
 // 편집 창(한글·문서·표·슬라이드)도 열어 두 창을 함께 찍기 (편집 창은 <png>-editor.png)
 const SMOKE_EDITOR = process.env.OFFICEKIT_SMOKE_EDITOR === '1';
 // 'PDF로 저장'도 눌러 보기: 저장 대화상자 대신 이 경로에 만든다 (OFFICEKIT_SMOKE와 함께일 때만). 결과는 [smoke] 줄의 pdf
 const SMOKE_PDF = SMOKE && process.env.OFFICEKIT_SMOKE_PDF ? resolve(process.env.OFFICEKIT_SMOKE_PDF) : '';
+// '바뀐 내용' 창 찍기: 문서를 연 뒤(처음 연 상태 버전이 생긴 뒤) 이 파일로 덮어쓰고, 처음 연 상태 → 지금을 비교해 보인다
+const SMOKE_DIFF = SMOKE && process.env.OFFICEKIT_SMOKE_DIFF ? resolve(process.env.OFFICEKIT_SMOKE_DIFF) : '';
+// 도구 창 찍기: 'pii'(찾은 목록) | 'pii-mask'(가린 사본까지) | 'batch'(OFFICEKIT_SMOKE_BATCH 폴더를 바꾼 결과)
+const SMOKE_TOOL = SMOKE && ['pii', 'pii-mask', 'batch'].includes(process.env.OFFICEKIT_SMOKE_TOOL) ? process.env.OFFICEKIT_SMOKE_TOOL : null;
+const SMOKE_BATCH = SMOKE_TOOL === 'batch' && process.env.OFFICEKIT_SMOKE_BATCH ? resolve(process.env.OFFICEKIT_SMOKE_BATCH) : '';
 const APP_ICON = [join(APP_ROOT, 'build', 'icon.ico'), join(APP_ROOT, 'build', 'icon.png')].find((f) => existsSync(f));
 
 // 테스트용으로 설정 폴더를 바꿀 수 있게 (단일 인스턴스 잠금도 폴더별로 걸린다)
@@ -170,15 +176,24 @@ async function start() {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   }
 
-  async function openDocument(p) {
+  /** 열 때 편집 창도 바로 띄울지 (설정 '문서를 열면': 편집 창 / 미리보기). 편집 창으로 열 수 있는 형식만 */
+  // 확인용 캡처는 OFFICEKIT_SMOKE_AUTOEDIT=1일 때만 (다른 캡처는 주 창만 찍는다)
+  const wantsEditor = (p) => (!SMOKE || process.env.OFFICEKIT_SMOKE_AUTOEDIT === '1') && settings.get('openAction') !== 'preview' && !!editorKind(p);
+
+  /**
+   * 문서 열기. autoEdit: 사용자가 연 것(탐색기·끌어놓기·최근 목록·열기 대화상자)이면 설정에 따라 편집 창도 연다
+   * → 화면이 doc:opened의 autoEdit를 보고 '직접 편집'과 같은 길로 편집 창을 띄운다
+   */
+  async function openDocument(p, { autoEdit = false } = {}) {
     p = docPath(p);
+    const edit = autoEdit && wantsEditor(p);
     // 이미 열린 문서를 다시 열면(탐색기 더블클릭·끌어놓기·최근 목록) 백업 기준과 감시는 그대로 두고 앞으로 가져오기만 한다
     if (current && samePath(current.path, p)) {
       if (!watcher) startWatch(current.path);
       if (!SMOKE) settings.addRecent(current.path);
       const doc = docInfo();
-      send('doc:opened', doc);
-      focusWindow();
+      send('doc:opened', edit ? { ...doc, autoEdit: true } : doc);
+      if (!edit) focusWindow();
       return doc;
     }
     stopWatch();
@@ -203,7 +218,7 @@ async function start() {
     }
     startWatch(p);
     const doc = docInfo();
-    send('doc:opened', doc);
+    send('doc:opened', edit ? { ...doc, autoEdit: true } : doc);
     focusWindow();
     return doc;
   }
@@ -435,6 +450,113 @@ async function start() {
     } finally {
       restoring.delete(k);
     }
+  }
+
+  /**
+   * 버전(백업) 이후 바뀐 글 → { file, time, reason, kind: 'text'|'cells', hunks|cells, stats, same, … } (core/diff.mjs)
+   * 지금 파일은 사본으로 읽는다 (다른 프로그램이 열고 있어도 읽히게, 읽는 사이 바뀌어도 한 시점으로)
+   */
+  let loadedDiff = null;
+  async function diffVersion(args) {
+    const doc = needDoc();
+    const file = args && typeof args === 'object' && typeof args.file === 'string' ? args.file : null;
+    if (!file) throw fail('비교할 버전을 골라 주세요');
+    const entry = backups.find(doc.path, file);
+    if (!entry) throw fail('그 버전을 찾을 수 없어요 (정리됐을 수 있어요). 목록을 다시 열어 주세요.', 'NO_VERSION');
+    const m = await (loadedDiff ??= import('../core/diff.mjs'));
+    const work = mkdtempSync(join(tmpdir(), 'officekit-diff-'));
+    try {
+      const now = join(work, `now.${extOf(doc.path)}`);
+      try { copyFileSync(doc.path, now); } catch (err) { throw fail(`문서를 읽지 못했습니다: ${err.message}`); }
+      let d;
+      try { d = await m.diffDocuments(entry.path, now); } catch (err) {
+        throw Object.assign(fail(`바뀐 내용을 비교하지 못했어요: ${err?.message ?? err}`, 'DIFF_FAILED'), { detail: err?.stack ?? '' });
+      }
+      return { file: entry.file, time: entry.time, reason: entry.reason ?? null, ...d };
+    } finally {
+      try { rmSync(work, { recursive: true, force: true, maxRetries: 3 }); } catch {}
+    }
+  }
+
+  // ── 개인정보 찾기·가리기 (core/pii.mjs) ──────────────
+  let loadedPii = null;
+  const loadPii = async () => (loadedPii ??= await import('../core/pii.mjs'));
+
+  async function piiScan() {
+    const doc = needDoc();
+    const m = await loadPii();
+    try {
+      const r = await m.scanDocument(doc.path);
+      return { path: doc.path, items: r.items, total: r.total, chars: r.chars, types: m.PII_TYPES, output: m.maskedPathFor(doc.path) };
+    } catch (err) { throw Object.assign(fail(`개인정보를 찾지 못했어요: ${err?.message ?? err}`, 'PII_FAILED'), { detail: err?.stack ?? '' }); }
+  }
+
+  /** 가린 사본 만들기 (원본은 그대로, 원본 옆 '<이름>_가림.<확장자>') → { output, items, remaining } */
+  async function piiMask(args) {
+    const doc = needDoc();
+    const values = Array.isArray(args?.values) ? args.values.filter((v) => typeof v === 'string' && v.length <= 200).slice(0, 2000) : null;
+    if (!values?.length) throw fail('가릴 항목을 하나 이상 골라 주세요');
+    const m = await loadPii();
+    const output = m.maskedPathFor(doc.path);
+    let r;
+    try { r = await m.maskDocument(doc.path, { output, values }); } catch (err) {
+      if (/EBUSY|EPERM|EACCES/.test(err?.code ?? err?.message)) throw fail('가린 사본을 저장하지 못했어요. 문서 폴더에 쓸 수 없거나 같은 이름의 파일이 열려 있어요.');
+      throw Object.assign(fail(`가린 사본을 만들지 못했어요: ${err?.message ?? err}`, 'PII_FAILED'), { detail: err?.stack ?? '' });
+    }
+    if (!SMOKE) { try { settings.addRecent(r.output); } catch {} }
+    return { output: r.output, items: r.items, remaining: r.remaining, engine: r.engine };
+  }
+
+  // ── 한글 → HWPX 일괄 변환 (core/batch.mjs) ────────────
+  let loadedBatch = null;
+  const loadBatch = async () => (loadedBatch ??= await import('../core/batch.mjs'));
+  let batchRun = null; // { cancelled, results }
+  let batchLast = null;
+
+  const pathList = (v) => (Array.isArray(v) ? v : []).filter((p) => typeof p === 'string' && isAbsolute(p) && p.length <= 4096).slice(0, 500);
+
+  async function batchPick({ kind } = {}) {
+    const folder = kind === 'folder';
+    const r = await dialog.showOpenDialog(win, folder
+      ? { title: '한글 문서가 든 폴더 고르기', properties: ['openDirectory', 'multiSelections'], defaultPath: current ? dirname(current.path) : app.getPath('documents') }
+      : { title: '한글 문서 고르기', properties: ['openFile', 'multiSelections'], defaultPath: current ? dirname(current.path) : app.getPath('documents'), filters: [{ name: '한글 문서 (.hwp)', extensions: ['hwp'] }] });
+    return r.canceled ? [] : r.filePaths;
+  }
+
+  async function batchScan({ inputs, recursive } = {}) {
+    const m = await loadBatch();
+    const { items, truncated } = m.collectHwpFiles(pathList(inputs), { recursive: recursive !== false });
+    return { count: items.length, truncated, files: items.slice(0, 200).map((it) => it.src) };
+  }
+
+  async function batchStart({ inputs, recursive, overwrite, outDir } = {}) {
+    if (batchRun) throw fail('이미 변환하는 중이에요');
+    const m = await loadBatch();
+    const { items } = m.collectHwpFiles(pathList(inputs), { recursive: recursive !== false });
+    if (!items.length) throw fail('바꿀 한글(.hwp) 파일이 없어요');
+    const out = typeof outDir === 'string' && outDir && isAbsolute(outDir) ? resolve(outDir) : undefined;
+    const run = { cancelled: false };
+    batchRun = run;
+    try {
+      const r = await m.convertHwpBatch(items, {
+        outDir: out, overwrite: overwrite === true,
+        isCancelled: () => run.cancelled,
+        onProgress: ({ index, total, result }) => send('batch:progress', { index, total, result }),
+      });
+      batchLast = r.results;
+      return r;
+    } finally { batchRun = null; }
+  }
+
+  async function batchSaveReport() {
+    if (!batchLast?.length) throw fail('저장할 결과가 없어요');
+    const m = await loadBatch();
+    const dir = dirname(batchLast[0].out);
+    const r = await dialog.showSaveDialog(win, { title: '변환 결과 보고서 저장', defaultPath: join(dir, 'HWPX 변환 결과.csv'), filters: [{ name: 'CSV (엑셀에서 열기)', extensions: ['csv'] }] });
+    if (r.canceled || !r.filePath) return { canceled: true };
+    const file = r.filePath.toLowerCase().endsWith('.csv') ? r.filePath : `${r.filePath}.csv`;
+    m.writeBatchReport(file, batchLast);
+    return { output: file };
   }
 
   /** 이 형식을 프로그램으로 다룰 수 있는지 미리 확인 (한글은 보안 모듈이 없으면 COM을 쓰지 않는다) */
@@ -842,7 +964,9 @@ async function start() {
     // 준비하는 사이 '원래대로'를 눌렀으면 시작하지 않는다 (되돌린 파일을 다시 고치지 않게)
     if (restoring.has(k) || (restoreGen.get(k) ?? 0) !== gen) throw fail('문서를 원래대로 되돌려서 이 요청은 보내지 않았습니다.');
     // AI가 고치기 전 상태를 버전으로 남긴다 (대화 한 번마다. 내용이 같으면 있던 것을 다시 씀)
-    try { keepVersion(path, 'ai'); } catch (err) { console.error('[ai:send] 백업', err?.message ?? err); }
+    // → 끝날 때 이 버전과 다르면 화면에 '바뀐 내용 보기 · 이 대화 전으로 되돌리기'를 띄운다
+    let before = null;
+    try { before = keepVersion(path, 'ai'); } catch (err) { console.error('[ai:send] 백업', err?.message ?? err); }
     const sess = sessions.get(k);
     const chatId = randomUUID();
     // 모델은 AI마다 따로 (다른 AI의 모델 이름을 넘기면 모든 요청이 실패한다)
@@ -866,7 +990,12 @@ async function start() {
     Promise.resolve(handle.done)
       .then((r) => { if (r?.sessionId) sessions.set(k, { provider: selected, sessionId: String(r.sessionId) }); })
       .catch((err) => { if (!errored) send('ai:event', { type: 'error', message: err?.message ?? String(err), chatId, path }); })
-      .finally(() => { chats.delete(chatId); send('ai:event', { type: 'end', chatId, path }); });
+      .finally(() => {
+        chats.delete(chatId);
+        let changed = false;
+        try { changed = !!before?.hash && existsSync(path) && currentHash(path) !== before.hash; } catch {}
+        send('ai:event', { type: 'end', chatId, path, ...(changed ? { changed: true, before: before.file } : {}) });
+      });
     return { chatId, provider: list.find((p) => p.id === selected)?.name ?? selected };
   }
 
@@ -879,7 +1008,7 @@ async function start() {
 
   // ── 설정 ─────────────────────────────────────────────
 
-  const PUBLIC_KEYS = ['provider', 'models', 'previewMode', 'theme', 'chatWidth', 'chatCollapsed'];
+  const PUBLIC_KEYS = ['provider', 'models', 'previewMode', 'openAction', 'theme', 'chatWidth', 'chatCollapsed'];
   const publicSettings = () => Object.fromEntries(PUBLIC_KEYS.map((k) => [k, k === 'models' ? { ...settings.get(k) } : settings.get(k)]));
   const PROVIDER_ID = /^[a-z0-9_-]{1,32}$/i;
 
@@ -903,6 +1032,9 @@ async function start() {
       } else if (k === 'previewMode') {
         if (!['auto', 'exact', 'text'].includes(v)) throw fail('잘못된 미리보기 방식입니다');
         clean.previewMode = v;
+      } else if (k === 'openAction') {
+        if (!['edit', 'preview'].includes(v)) throw fail('잘못된 열기 방식입니다');
+        clean.openAction = v;
       } else if (k === 'theme') {
         if (!['system', 'light', 'dark'].includes(v)) throw fail('잘못된 테마입니다');
         clean.theme = v;
@@ -955,6 +1087,43 @@ async function start() {
     const spec = await mcpSpec();
     const res = on ? await fn(spec) : await fn();
     return { result: res && typeof res === 'object' ? JSON.parse(JSON.stringify(res)) : res ?? null, status: await integrationStatus() };
+  }
+
+  // ── 기본 프로그램 (Windows 파일 연결) ─────────────────
+  // 설치 프로그램이 Office Kit를 기본 프로그램 후보로 등록한다. 고르는 것은 Windows 설정에서 사용자가 한다.
+  // 설치된 앱에서만: 개발 실행(electron.exe)을 등록하면 탐색기가 엉뚱한 프로그램을 띄운다
+  let loadedAssoc = null;
+  const loadAssoc = async () => (loadedAssoc ??= await import('../setup/fileassoc.mjs'));
+  const assocExe = () => (app.isPackaged && process.platform === 'win32' ? process.execPath : null);
+
+  async function assocStatus() {
+    const m = await loadAssoc();
+    if (process.platform !== 'win32') return { supported: false, reason: 'Windows에서만 쓸 수 있어요', groups: [] };
+    const exe = assocExe();
+    const st = await m.assocStatus({ exe });
+    const groups = m.ASSOC_GROUPS.map((g) => ({ kind: g.kind, types: st.types.filter((t) => g.exts.includes(t.ext)) }));
+    return {
+      supported: true, packaged: !!exe, registered: st.registered, matches: st.matches, groups,
+      reason: exe ? null : '설치 프로그램으로 설치한 Office Kit에서만 기본 프로그램으로 정할 수 있어요 (지금은 개발 실행)',
+    };
+  }
+
+  /** 등록이 없거나 다른 경로를 가리키면 고쳐 쓴다 (기본 프로그램은 바꾸지 않는다) */
+  async function assocRepair() {
+    const exe = assocExe();
+    if (!exe) throw fail('설치 프로그램으로 설치한 Office Kit에서만 등록할 수 있어요');
+    const m = await loadAssoc();
+    await m.registerFileTypes({ exe });
+    return assocStatus();
+  }
+
+  /** Windows 설정 > 기본 앱 > Office Kit 쪽을 연다 (등록이 어긋나 있으면 먼저 고친다) */
+  async function assocOpenSettings() {
+    const m = await loadAssoc();
+    const st = await assocStatus();
+    if (st.packaged && (!st.registered || !st.matches)) await assocRepair();
+    await shell.openExternal(m.DEFAULT_APPS_URI);
+    return null;
   }
 
   async function hancomStatus() {
@@ -1014,13 +1183,15 @@ async function start() {
     // 응답이 먼저 가도록 다음 틱에 연다
     if (pendingFile) {
       const f = pendingFile; pendingFile = null;
-      setTimeout(() => openDocument(f).catch((err) => send('toast', { type: 'error', message: err.message })), 0);
+      setTimeout(() => openDocument(f, { autoEdit: true })
+        .then(() => { if (SMOKE_DIFF && current) copyFileSync(SMOKE_DIFF, current.path); })
+        .catch((err) => send('toast', { type: 'error', message: err.message })), 0);
     }
     return {
       version: app.getVersion(), packaged: app.isPackaged, platform: process.platform,
       exts: OPENABLE_EXTS, settings: publicSettings(), recent: settings.recent(), doc: docInfo(),
       editor: editorInfo(),
-      smoke: SMOKE ? { chat: SMOKE_CHAT, settings: SMOKE_SETTINGS, newdoc: SMOKE_NEWDOC, editor: SMOKE_EDITOR } : null, opening,
+      smoke: SMOKE ? { chat: SMOKE_CHAT, settings: SMOKE_SETTINGS, newdoc: SMOKE_NEWDOC, editor: SMOKE_EDITOR, diff: !!SMOKE_DIFF, tool: SMOKE_TOOL, batch: SMOKE_BATCH } : null, opening,
     };
   });
 
@@ -1038,9 +1209,9 @@ async function start() {
       ],
     });
     if (r.canceled || !r.filePaths[0]) return null;
-    return openDocument(r.filePaths[0]);
+    return openDocument(r.filePaths[0], { autoEdit: true });
   });
-  handle('doc:open', (p) => openDocument(p));
+  handle('doc:open', (p) => openDocument(p, { autoEdit: true }));
   handle('doc:newInfo', (opts) => newDocInfo(opts && typeof opts === 'object' ? opts : {}));
   handle('doc:newCheck', (args) => newDocCheck(args && typeof args === 'object' ? args : {}));
   handle('doc:pickFolder', (start) => pickFolder(start));
@@ -1051,6 +1222,18 @@ async function start() {
   }));
   handle('doc:restore', (args) => restore(args));
   handle('doc:versions', () => versions());
+  handle('doc:diff', (args) => diffVersion(args));
+  handle('pii:scan', () => piiScan());
+  handle('pii:mask', (args) => piiMask(args));
+  handle('batch:pick', (args) => batchPick(args && typeof args === 'object' ? args : {}));
+  handle('batch:pickOut', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'HWPX를 모을 폴더', properties: ['openDirectory', 'createDirectory'], defaultPath: current ? dirname(current.path) : app.getPath('documents') });
+    return r.canceled ? null : r.filePaths[0] ?? null;
+  });
+  handle('batch:scan', (args) => batchScan(args && typeof args === 'object' ? args : {}));
+  handle('batch:start', (args) => batchStart(args && typeof args === 'object' ? args : {}));
+  handle('batch:cancel', () => { if (batchRun) batchRun.cancelled = true; return null; });
+  handle('batch:saveReport', () => batchSaveReport());
   handle('doc:openInApp', () => openInProgram());
   handle('doc:edit', () => editDocument());
   handle('doc:savePdf', (args) => savePdf(args && typeof args === 'object' ? { step: ['pick', 'make'].includes(args.step) ? args.step : undefined } : {}));
@@ -1086,6 +1269,9 @@ async function start() {
     return { status, error, apps: { hancom: !!apps.hancom, word: !!apps.word, powerpoint: !!apps.powerpoint, excel: !!apps.excel, hancomSecurityModule: !!apps.hancomSecurityModule } };
   });
   handle('hancom:setup', (args) => hancomSetup(args));
+  handle('assoc:status', () => assocStatus());
+  handle('assoc:repair', () => assocRepair());
+  handle('assoc:openSettings', () => assocOpenSettings());
   handle('hancom:remove', async (args) => {
     if (args?.consent !== true) throw fail('동의가 필요합니다');
     const h = await loadHancom();
@@ -1210,13 +1396,19 @@ async function start() {
     ipcMain.on('smoke:ready', async (e, info = {}) => {
       if (!win || e.sender !== win.webContents) return;
       try {
+        // 열면 바로 편집 창 (OFFICEKIT_SMOKE_AUTOEDIT=1): 화면이 편집 창을 띄웠는지 (30초까지 기다림)
+        let autoEditor = null;
+        if (process.env.OFFICEKIT_SMOKE_AUTOEDIT === '1' && current) {
+          for (const end = Date.now() + 30_000; Date.now() < end && !editors?.isOpen(current.path);) await sleep(200);
+          autoEditor = { open: !!editors?.isOpen(current.path), windows: BrowserWindow.getAllWindows().length };
+        }
         const editor = SMOKE_EDITOR && info.ok !== false ? await smokeEditor() : null;
         const pdf = SMOKE_PDF && info.ok !== false ? await smokePdf() : null;
         await sleep(info.kind === 'pdf' ? 3000 : 900);
         const img = await capture(win);
         mkdirSync(dirname(SMOKE), { recursive: true });
         writeFileSync(SMOKE, img.toPNG());
-        console.log('[smoke]', JSON.stringify({ ...info, ...(editor ? { editor } : {}), ...(pdf ? { pdf } : {}), png: SMOKE, size: img.getSize() }));
+        console.log('[smoke]', JSON.stringify({ ...info, ...(autoEditor ? { autoEditor } : {}), ...(editor ? { editor } : {}), ...(pdf ? { pdf } : {}), png: SMOKE, size: img.getSize() }));
         clearTimeout(bail);
         app.exit(info.ok === false || editor?.ok === false || pdf?.ok === false ? 1 : 0);
       } catch (err) {
@@ -1318,6 +1510,9 @@ async function start() {
         { label: '직접 편집', accelerator: 'CmdOrCtrl+E', click: () => send('menu', 'edit') },
         { label: '새로고침', accelerator: 'F5', click: () => send('menu', 'refresh') },
         { type: 'separator' },
+        { label: '개인정보 찾아 가리기…', click: () => send('menu', 'pii') },
+        { label: '한글 → HWPX 일괄 변환…', click: () => send('menu', 'batch') },
+        { type: 'separator' },
         { label: '설정', accelerator: 'CmdOrCtrl+,', click: () => send('menu', 'settings') },
         { type: 'separator' },
         { label: '끝내기', role: 'quit' },
@@ -1340,7 +1535,7 @@ async function start() {
     const f = fileFromArgv(argv, cwd);
     if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
     if (!f) return;
-    if (rendererReady) openDocument(f).catch((err) => send('toast', { type: 'error', message: err.message }));
+    if (rendererReady) openDocument(f, { autoEdit: true }).catch((err) => send('toast', { type: 'error', message: err.message }));
     else pendingFile = f;
   });
 

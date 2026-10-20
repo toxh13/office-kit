@@ -46,6 +46,9 @@
     <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 9.5 3 2.5-3 2.5M12.5 15h4"/></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M10.5 10h.01M14 10h.01M17.5 10h.01M8 14h8"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4.5 19.5l1-4.2L15.8 5a2.1 2.1 0 0 1 3 0l.2.2a2.1 2.1 0 0 1 0 3L8.7 18.5z"/><path d="M13.8 7l3.2 3.2"/><path d="M13 19.5h6.5"/></symbol>
+    <symbol id="i-tools" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17l3 3 5.5-5.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.3-.6-.6-2.3z"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3.5 3.5l17 17"/><path d="M10.4 5.6A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16.5 16.5 0 0 1-3 3.7M6.7 7.2A16.5 16.5 0 0 0 2.5 12S6 18.5 12 18.5a9.3 9.3 0 0 0 4.3-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h14l-3.5-3.5"/><path d="M20 16H6l3.5 3.5"/></symbol>
   </svg>
 
   <div class="app" id="app">
@@ -78,6 +81,7 @@
         <button class="btn ghost" id="btn-folder" title="문서가 있는 폴더 열기" disabled><svg class="i"><use href="#i-folder"/></svg><span class="lbl">폴더 열기</span></button>
       </div>
       <span class="vsep" aria-hidden="true"></span>
+      <button class="icon-btn" id="btn-tools" title="도구 (개인정보 가리기 · HWPX 일괄 변환)" aria-label="도구" aria-haspopup="menu" aria-expanded="false" aria-controls="tools-pop"><svg class="i"><use href="#i-tools"/></svg></button>
       <button class="icon-btn" id="btn-toggle-chat" title="AI 대화창" aria-label="AI 대화창 열기/닫기" aria-pressed="true"><svg class="i"><use href="#i-panel"/></svg></button>
       <button class="icon-btn" id="btn-settings" title="설정 (Ctrl+,)" aria-label="설정"><svg class="i"><use href="#i-gear"/></svg></button>
     </header>
@@ -89,6 +93,11 @@
       </div>
       <ul class="ver-list" id="ver-list"></ul>
       <div class="pop-foot"><button class="link-btn" id="ver-open-backups">백업 폴더 열기</button></div>
+    </div>
+
+    <div class="popover tools-pop" id="tools-pop" role="menu" aria-label="도구" hidden>
+      <button class="tool-item" role="menuitem" id="tool-pii"><svg class="i"><use href="#i-eye-off"/></svg><span class="tool-text"><span class="tool-name">개인정보 찾아 가리기</span><span class="tool-desc">주민번호·전화·계좌 등을 찾아 가린 사본을 만들어요</span></span></button>
+      <button class="tool-item" role="menuitem" id="tool-batch"><svg class="i"><use href="#i-swap"/></svg><span class="tool-text"><span class="tool-name">한글 → HWPX 일괄 변환</span><span class="tool-desc">여러 HWP 파일을 HWPX로 바꾸고 결과를 확인해요</span></span></button>
     </div>
 
     <main class="workspace" id="workspace">
@@ -174,6 +183,76 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- 확인 창 -->
+  <!-- 개인정보 찾아 가리기 -->
+  <dialog class="dialog diff pii" id="dlg-pii" aria-labelledby="pii-title">
+    <div class="diff-head">
+      <h2 id="pii-title">개인정보 찾아 가리기</h2>
+      <p class="diff-sub" id="pii-sub"></p>
+      <div class="diff-stats" id="pii-stats"></div>
+      <button class="icon-btn close-x" id="pii-close" title="닫기 (Esc)" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="diff-body" id="pii-body"></div>
+    <div class="dialog-actions">
+      <span class="diff-foot-note" id="pii-note">원본은 그대로 두고 가린 사본을 만들어요. 그림 속 글자는 찾지 못해요.</span>
+      <button class="btn" id="pii-cancel">닫기</button>
+      <button class="btn primary" id="pii-mask"><svg class="i"><use href="#i-eye-off"/></svg>가린 사본 만들기</button>
+    </div>
+  </dialog>
+
+  <!-- 한글 → HWPX 일괄 변환 -->
+  <dialog class="dialog diff batch" id="dlg-batch" aria-labelledby="batch-title">
+    <div class="diff-head">
+      <h2 id="batch-title">한글 → HWPX 일괄 변환</h2>
+      <p class="diff-sub">HWP 파일을 HWPX로 바꾼 뒤 다시 열어 쪽 수·표·글이 원본과 같은지 확인해요. 원본은 그대로 둬요.</p>
+      <div class="diff-stats" id="batch-stats"></div>
+      <button class="icon-btn close-x" id="batch-close" title="닫기 (Esc)" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="diff-body" id="batch-body">
+      <div class="batch-setup" id="batch-setup">
+        <div class="batch-drop" id="batch-drop">
+          <div class="batch-sources" id="batch-sources"></div>
+          <div class="btn-row">
+            <button class="btn sm" id="batch-add-files"><svg class="i"><use href="#i-file"/></svg>파일 추가…</button>
+            <button class="btn sm" id="batch-add-folder"><svg class="i"><use href="#i-folder"/></svg>폴더 추가…</button>
+            <span class="help small">또는 파일·폴더를 여기로 끌어 놓으세요</span>
+          </div>
+        </div>
+        <label class="check-row"><input type="checkbox" id="batch-recursive" checked><span class="check-text"><span class="check-title">하위 폴더도 찾기</span></span></label>
+        <label class="check-row"><input type="checkbox" id="batch-overwrite"><span class="check-text"><span class="check-title">같은 이름의 HWPX가 있으면 덮어쓰기</span><span class="check-desc">끄면 이미 있는 HWPX는 건너뛰어요.</span></span></label>
+        <div class="choice-list compact">
+          <label class="choice"><input type="radio" name="batch-out" value="same" checked><span class="choice-body"><span class="choice-title">원본 옆에 저장</span><span class="choice-desc">같은 폴더에 같은 이름 .hwpx로 만들어요.</span></span></label>
+          <label class="choice"><input type="radio" name="batch-out" value="dir"><span class="choice-body"><span class="choice-title">다른 폴더에 모으기</span><span class="choice-desc" id="batch-outdir-desc">폴더 구조는 그대로 두고 한곳에 모아요.</span></span></label>
+        </div>
+      </div>
+      <div class="batch-run" id="batch-run" hidden>
+        <div class="batch-progress"><div class="batch-bar" id="batch-bar"></div></div>
+        <table class="diff-table batch-table"><thead><tr><th>결과</th><th>파일</th><th>메모</th></tr></thead><tbody id="batch-rows"></tbody></table>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <span class="diff-foot-note" id="batch-note"></span>
+      <button class="btn" id="batch-report" hidden>보고서 저장 (CSV)…</button>
+      <button class="btn" id="batch-cancel">닫기</button>
+      <button class="btn primary" id="batch-start" disabled><svg class="i"><use href="#i-swap"/></svg>변환 시작</button>
+    </div>
+  </dialog>
+
+  <!-- 바뀐 내용 (버전 이후 · AI 대화 전 이후) -->
+  <dialog class="dialog diff" id="dlg-diff" aria-labelledby="diff-title">
+    <div class="diff-head">
+      <h2 id="diff-title">바뀐 내용</h2>
+      <p class="diff-sub" id="diff-sub"></p>
+      <div class="diff-stats" id="diff-stats"></div>
+      <button class="icon-btn close-x" id="diff-close" title="닫기 (Esc)" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="diff-body" id="diff-body"></div>
+    <div class="dialog-actions">
+      <span class="diff-foot-note" id="diff-note">글만 비교해요 (서식·그림 변화는 나오지 않아요)</span>
+      <button class="btn" id="diff-cancel">닫기</button>
+      <button class="btn danger" id="diff-restore"><svg class="i"><use href="#i-restore"/></svg>이 버전으로 되돌리기</button>
+    </div>
+  </dialog>
+
   <dialog class="dialog confirm" id="dlg-confirm" aria-labelledby="confirm-title">
     <div class="confirm-wrap">
       <span class="confirm-icon" id="confirm-icon"><svg class="i"><use href="#i-info"/></svg></span>
@@ -257,6 +336,7 @@
         <h2 id="settings-title">설정</h2>
         <button class="nav-item active" data-tab="ai"><svg class="i"><use href="#i-sparkle"/></svg>AI</button>
         <button class="nav-item" data-tab="view"><svg class="i"><use href="#i-eye"/></svg>미리보기 · 화면</button>
+        <button class="nav-item" data-tab="open"><svg class="i"><use href="#i-file-open"/></svg>파일 열기</button>
         <button class="nav-item" data-tab="connect"><svg class="i"><use href="#i-plug"/></svg>외부 연결</button>
         <button class="nav-item" data-tab="hancom"><svg class="i"><use href="#i-shield"/></svg>한글 자동화</button>
         <div class="nav-foot" id="app-version"></div>
@@ -290,6 +370,22 @@
           <h3>원본 백업</h3>
           <p class="help">문서를 열 때·편집 창에서 저장하기 전·AI 대화 전·되돌리기 전 상태를 자동으로 복사해 둡니다 (문서마다 최근 30개). 상단의 <b>원래대로</b>(▾ 버전 목록)로 되돌릴 수 있어요.</p>
           <button class="btn sm" id="btn-open-backups"><svg class="i"><use href="#i-folder"/></svg>백업 폴더 열기</button>
+        </section>
+
+        <section class="settings-page" data-page="open" hidden>
+          <h3>문서를 열면</h3>
+          <div class="choice-list" id="open-choices">
+            <label class="choice"><input type="radio" name="openAction" value="edit"><span class="choice-body"><span class="choice-title"><svg class="i"><use href="#i-edit"/></svg>바로 편집 창 열기</span><span class="choice-desc">한글(HWP·HWPX)·Word(DOCX)·PowerPoint(PPTX)·Excel(XLSX) 문서를 열면 고칠 수 있는 편집 창이 바로 떠요. 다른 형식은 미리보기로 열어요.</span></span></label>
+            <label class="choice"><input type="radio" name="openAction" value="preview"><span class="choice-body"><span class="choice-title"><svg class="i"><use href="#i-eye"/></svg>미리보기만</span><span class="choice-desc">먼저 미리보기로 열고, 고칠 때 ‘직접 편집’(Ctrl+E)을 눌러요.</span></span></label>
+          </div>
+          <h3>기본 프로그램</h3>
+          <p class="help">Office Kit를 기본 프로그램으로 정하면 탐색기에서 문서를 두 번 눌렀을 때 Office Kit로 열려요. Windows는 앱이 기본 프로그램을 직접 바꾸지 못하게 하므로, 아래 단추로 Windows 설정을 열어 형식마다 <b>Office Kit</b>를 골라 주세요.</p>
+          <div class="assoc-list" id="assoc-list"></div>
+          <div class="btn-row">
+            <button class="btn primary" id="btn-assoc-settings"><svg class="i"><use href="#i-external"/></svg>Windows 기본 앱 설정 열기</button>
+            <button class="btn" id="btn-assoc-refresh"><svg class="i"><use href="#i-refresh"/></svg>다시 확인</button>
+          </div>
+          <p class="help small" id="assoc-note">한 가지 형식만 바꾸려면 탐색기에서 그 파일을 오른쪽 클릭 → <b>연결 프로그램</b> → <b>다른 앱 선택</b> → Office Kit → <b>항상</b>을 눌러도 돼요.</p>
         </section>
 
         <section class="settings-page" data-page="connect" hidden>

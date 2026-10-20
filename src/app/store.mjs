@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   provider: null,          // 'claude' | 'codex' | null(자동)
   models: {},              // AI별 모델 { claude: 'sonnet', codex: 'gpt-5' }. 없으면 기본 모델
   previewMode: 'auto',     // 'auto'(빠르게) | 'exact'(설치된 프로그램)
+  openAction: 'edit',      // 문서를 열면: 'edit'(편집 창도 바로 — 한글·docx·xlsx·pptx) | 'preview'(미리보기만)
   theme: 'system',         // 'system' | 'light' | 'dark'
   chatWidth: 400,
   chatCollapsed: false,

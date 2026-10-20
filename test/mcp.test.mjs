@@ -1,7 +1,7 @@
 // mcp.test.mjs — MCP 서버를 실제로 띄워(stdio) SDK 클라이언트로 도구를 호출한다.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -12,7 +12,7 @@ const CLI = join(ROOT, 'src', 'cli.mjs');
 // 서버가 등록하는 도구: 공통 office_* + 형식마다(src/mcp/tools/*.mjs) 살펴보기·편집 한 쌍.
 // 도구를 더하거나 빼면 여기도 고쳐야 한다 (빠지거나 늘어난 도구를 잡는다).
 const COMMON_TOOLS = ['office_status', 'office_info', 'office_read', 'office_fields', 'office_fill', 'office_replace',
-  'office_set_cells', 'office_convert', 'office_create', 'office_page_image'];
+  'office_set_cells', 'office_convert', 'office_create', 'office_page_image', 'office_find_pii', 'office_mask_pii', 'office_hwpx_batch'];
 const FORMATS = ['hwp', 'word', 'ppt', 'excel'];
 const TOOLS = [...COMMON_TOOLS, ...FORMATS.flatMap((f) => [`${f}_inspect`, `${f}_edit`])];
 const HANGUL = /[가-힣]/;
@@ -272,6 +272,33 @@ describe('저장 경로 제한 (AI가 아무 데나 쓰지 못하게)', () => {
       r = await run('office_read', { path: 'guard.docx' });
       assert.ok(!r.isError, '읽기는 막지 않음');
     } finally { await c.close(); }
+  });
+});
+
+describe('개인정보 · HWPX 일괄 변환', () => {
+  test('office_find_pii → office_mask_pii: 가린 사본, 원본 그대로', async () => {
+    await ok('office_create', { output: 'pii.docx', markdown: '# 명단\n\n홍길동 010-1234-5678, 900101-1234567\n\n메일 hong@example.com' });
+    const found = await ok('office_find_pii', { path: 'pii.docx' });
+    assert.match(found, /3가지/);
+    assert.match(found, /900101-1\*{6}/);
+    const masked = await ok('office_mask_pii', { path: 'pii.docx', types: ['rrn', 'mobile'] });
+    assert.match(masked, /pii_가림\.docx/);
+    assert.match(masked, /남지 않은 것을 확인/);
+    const read = await ok('office_read', { path: 'pii_가림.docx' });
+    assert.ok(read.includes('010-****-5678') && read.includes('hong@example.com') && !read.includes('900101-1234567'), read);
+    assert.match(await ok('office_read', { path: 'pii.docx' }), /900101-1234567/);
+    await fails('office_mask_pii', { path: 'pii.docx', output: 'pii.docx' }, /덮어쓰|이미 있는 파일/);
+  });
+
+  test('office_hwpx_batch: 폴더의 hwp → hwpx + 보고서', async () => {
+    mkdirSync(tmp.path('batch/sub'), { recursive: true });
+    copyFileSync(join(ROOT, 'examples', '신청서.hwp'), tmp.path('batch/a.hwp'));
+    copyFileSync(join(ROOT, 'examples', '신청서_채움.hwp'), tmp.path('batch/sub/b.hwp'));
+    const t = await ok('office_hwpx_batch', { paths: ['batch'], report: 'batch/결과.csv' });
+    assert.match(t, /2개: 같음 2/);
+    assert.ok(existsSync(tmp.path('batch/a.hwpx')) && existsSync(tmp.path('batch/sub/b.hwpx')));
+    assert.match(readFileSync(tmp.path('batch/결과.csv'), 'utf8'), /같음/);
+    assert.match(await ok('office_hwpx_batch', { paths: ['batch/a.hwp'] }), /건너뜀 1/);
   });
 });
 

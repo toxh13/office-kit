@@ -1,7 +1,10 @@
 ; installer.nsh — electron-builder NSIS 추가 설정
 ; 설치: 탐색기 오른쪽 클릭 메뉴에 "Office Kit로 열기"를 단다 (사용자별, HKCU).
 ;       SystemFileAssociations 아래에만 쓰므로 기본 연결 프로그램은 바뀌지 않는다.
-; 제거: 메뉴(와 함께 생긴 빈 키)를 지우고, 앱이 만든 명령줄 파일(office-kit.cmd)과 설치 파일 사본도 지운다.
+;       Office Kit를 '기본 프로그램' 후보로 등록한다: ProgID(OfficeKit.<확장자>) + OpenWithProgids + Capabilities
+;       + RegisteredApplications. 기본 프로그램은 사용자가 Windows 설정·'연결 프로그램'에서 고른다
+;       (src/setup/fileassoc.mjs registrationEntries 와 같은 키 — 앱이 키를 고쳐 쓸 때도 같은 것을 쓴다).
+; 제거: 메뉴·등록(과 함께 생긴 빈 키)을 지우고, 앱이 만든 명령줄 파일(office-kit.cmd)과 설치 파일 사본도 지운다.
 
 !ifndef OK_SFA ; 시험할 때만 다른 키로 바꿔 끼운다
   !define OK_SFA "Software\Classes\SystemFileAssociations"
@@ -34,6 +37,70 @@
   !insertmacro OfficeKitDeleteKeyIfEmpty "${OK_SFA}\.${EXT}"
 !macroend
 
+; ── 기본 프로그램 후보 (ProgID · Capabilities) ─────────────
+
+!ifndef OK_ROOT ; 시험할 때만 다른 키로 바꿔 끼운다
+  !define OK_ROOT "Software"
+!endif
+!define OK_CLASSES "${OK_ROOT}\Classes"
+!define OK_CAPS "${OK_ROOT}\OfficeKit\Capabilities"
+; Applications\<exe> 키는 매크로 안에서 쓴다 (APP_EXECUTABLE_FILENAME은 이 파일을 읽은 뒤에 정해질 수 있어 !define에 넣지 않는다)
+
+!macro OfficeKitRegisterType EXT DESC
+  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}" "" "${DESC}"
+  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}" "FriendlyTypeName" "${DESC}"
+  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
+  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}\Application" "ApplicationName" "Office Kit"
+  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
+  WriteRegStr HKCU "${OK_CLASSES}\.${EXT}\OpenWithProgids" "OfficeKit.${EXT}" ""
+  WriteRegStr HKCU "${OK_CAPS}\FileAssociations" ".${EXT}" "OfficeKit.${EXT}"
+  WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\SupportedTypes" ".${EXT}" ""
+!macroend
+
+!macro OfficeKitUnregisterType EXT DESC
+  DeleteRegKey HKCU "${OK_CLASSES}\OfficeKit.${EXT}"
+  DeleteRegValue HKCU "${OK_CLASSES}\.${EXT}\OpenWithProgids" "OfficeKit.${EXT}"
+  !insertmacro OfficeKitDeleteKeyIfEmpty "${OK_CLASSES}\.${EXT}\OpenWithProgids"
+  !insertmacro OfficeKitDeleteKeyIfEmpty "${OK_CLASSES}\.${EXT}"
+!macroend
+
+; 형식과 탐색기 '유형' 이름 (fileassoc.mjs ASSOC_TYPES 와 같게)
+!macro OfficeKitForEachType MACRO
+  !insertmacro ${MACRO} hwp "한글 문서"
+  !insertmacro ${MACRO} hwpx "한글 문서 (HWPX)"
+  !insertmacro ${MACRO} hwt "한글 서식 파일"
+  !insertmacro ${MACRO} docx "Word 문서"
+  !insertmacro ${MACRO} doc "Word 97-2003 문서"
+  !insertmacro ${MACRO} rtf "서식 있는 텍스트 문서"
+  !insertmacro ${MACRO} odt "ODF 텍스트 문서"
+  !insertmacro ${MACRO} pptx "PowerPoint 프레젠테이션"
+  !insertmacro ${MACRO} ppt "PowerPoint 97-2003 프레젠테이션"
+  !insertmacro ${MACRO} odp "ODF 프레젠테이션"
+  !insertmacro ${MACRO} xlsx "Excel 통합 문서"
+  !insertmacro ${MACRO} xls "Excel 97-2003 통합 문서"
+  !insertmacro ${MACRO} xlsm "Excel 매크로 사용 통합 문서"
+  !insertmacro ${MACRO} csv "CSV 파일"
+  !insertmacro ${MACRO} ods "ODF 스프레드시트"
+!macroend
+
+!macro OfficeKitRegisterApp
+  !insertmacro OfficeKitForEachType OfficeKitRegisterType
+  WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}" "FriendlyAppName" "Office Kit"
+  WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
+  WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
+  WriteRegStr HKCU "${OK_CAPS}" "ApplicationName" "Office Kit"
+  WriteRegStr HKCU "${OK_CAPS}" "ApplicationDescription" "한글·Word·PowerPoint·Excel 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램"
+  WriteRegStr HKCU "${OK_CAPS}" "ApplicationIcon" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
+  WriteRegStr HKCU "${OK_ROOT}\RegisteredApplications" "Office Kit" "${OK_CAPS}"
+!macroend
+
+!macro OfficeKitUnregisterApp
+  !insertmacro OfficeKitForEachType OfficeKitUnregisterType
+  DeleteRegKey HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}"
+  DeleteRegValue HKCU "${OK_ROOT}\RegisteredApplications" "Office Kit"
+  DeleteRegKey HKCU "${OK_ROOT}\OfficeKit"
+!macroend
+
 ; 지원 형식 (src/core/index.mjs 의 OPENABLE_EXTS 와 같게)
 !macro OfficeKitForEachExt MACRO
   !insertmacro ${MACRO} hwp
@@ -55,12 +122,17 @@
 
 !macro customInstall
   !insertmacro OfficeKitForEachExt OfficeKitAddVerb
+  !insertmacro OfficeKitRegisterApp
   ; 탐색기에 연결 정보가 바뀌었다고 알린다 (SHCNE_ASSOCCHANGED)
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 !macroend
 
 !macro customUnInstall
   !insertmacro OfficeKitForEachExt OfficeKitRemoveVerb
+  ; 기본 프로그램 등록은 진짜 제거일 때만 지운다 (업데이트 중에 지우면 Windows가 고른 기본 프로그램이 잠깐 끊긴다)
+  ${ifNot} ${isUpdated}
+    !insertmacro OfficeKitUnregisterApp
+  ${endIf}
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 
   ; 업데이트가 아니라 진짜 제거일 때만

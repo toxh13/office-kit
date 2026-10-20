@@ -215,6 +215,8 @@ export function systemPrompt({ filePath } = {}) {
       : '- 형식별 도구: 한글 hwp_inspect·hwp_edit, Word word_inspect·word_edit, PowerPoint ppt_inspect·ppt_edit, Excel excel_inspect·excel_edit',
     '- 고친 내용은 같은 파일에 저장한다(output 생략). 앱이 원본을 백업해 두고 미리보기를 새로 고친다.',
     '- 문서를 고친 뒤에는 office_page_image 로 바뀐 쪽을 이미지로 보고 결과를 확인한다.',
+    '- 개인정보(주민번호·전화·계좌 등)를 찾거나 가려 달라고 하면 office_find_pii 로 찾고 office_mask_pii 로 가린 사본을 따로 만든다 (원본은 그대로). '
+      + '한글 문서를 HWPX로 한꺼번에 바꿔 달라고 하면 office_hwpx_batch 를 쓴다.',
     '- 사용자가 요청하지 않은 내용은 바꾸지 않는다. 무엇을 바꿀지 애매하면 먼저 묻는다.',
     '- 답변은 짧은 한국어로 한다. 무엇을 바꿨는지 한두 문장으로 알린다.',
   ].join('\n');
@@ -294,6 +296,7 @@ const TOOL_LABEL = {
   office_create: '새 문서 만들기', office_page_image: '쪽 이미지로 확인', hwp_edit: '한글 문서 편집',
   hwp_inspect: '문서 구조 살펴보기', word_inspect: '문서 구조 살펴보기', ppt_inspect: '문서 구조 살펴보기', excel_inspect: '문서 구조 살펴보기',
   word_edit: 'Word 편집', ppt_edit: '슬라이드 편집', excel_edit: '시트 편집',
+  office_find_pii: '개인정보 찾기', office_mask_pii: '개인정보 가린 사본', office_hwpx_batch: 'HWPX 일괄 변환',
 };
 
 /** mcp__office-kit__office_read → office_read */

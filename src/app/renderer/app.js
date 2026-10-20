@@ -84,6 +84,9 @@
     office_convert: ['변환 중', '형식 바꾸기'],
     office_create: ['새 문서 만드는 중', '새 문서 만들기'],
     office_page_image: ['결과 확인 중', '결과 확인'],
+    office_find_pii: ['개인정보 찾는 중', '개인정보 찾기'],
+    office_mask_pii: ['개인정보 가리는 중', '개인정보 가린 사본'],
+    office_hwpx_batch: ['HWPX로 바꾸는 중', 'HWPX 일괄 변환'],
     hwp_edit: ['한글 편집 중', '한글 편집'],
     word_edit: ['Word 편집 중', 'Word 편집'],
     ppt_edit: ['슬라이드 편집 중', '슬라이드 편집'],
@@ -355,6 +358,7 @@
       renderTopbar();
       renderStatus();
       refreshPreview({ ifChanged: true, reason: 'reopen' });
+      if (doc.autoEdit) autoEdit(doc);
       return;
     }
     state.doc = doc;
@@ -379,6 +383,13 @@
     el.preview.hidden = false;
     if (doc.backupError) toast(doc.backupError, { type: 'warn' });
     refreshPreview({ reason: 'open' });
+    if (doc.autoEdit) autoEdit(doc);
+  }
+
+  /** 설정 '문서를 열면: 바로 편집 창 열기' — main이 doc:opened에 autoEdit를 붙여 보낸다. 편집기 묶음이 없으면 미리보기만 */
+  function autoEdit(doc) {
+    if (!isEditable(doc) || editorKindInfo(doc.path)?.available === false) return;
+    actEdit();
   }
 
   function updateDoc(doc) {
@@ -855,6 +866,292 @@
     }
   }
 
+  // ── 바뀐 내용 (버전 이후 · AI 대화 전 이후) ──────────
+
+  const DIFF_STAT = { changed: ['바뀜', 'warn'], added: ['더함', 'on'], removed: ['지움', 'err'] };
+
+  /** 글자 단위로 바뀐 곳을 표시한 문단 */
+  function segText(segs, side) {
+    return segs.filter((s) => s.t === '=' || s.t === side).map((s) => (s.t === '=' ? document.createTextNode(s.s) : h(side === '-' ? 'del' : 'ins', { text: s.s })));
+  }
+  const lineText = (t) => (t.trim() ? t : h('span', { class: 'diff-empty-line', text: '(빈 줄)' }));
+  const diffLine = (cls, sign, ...kids) => h('div', { class: `diff-line ${cls}` }, h('span', { class: 'diff-sign', text: sign }), h('span', { class: 'diff-text' }, ...kids));
+
+  function diffTextNodes(d) {
+    return d.hunks.map((hk) => h('div', { class: 'diff-hunk' },
+      hk.where ? h('div', { class: 'diff-where', text: hk.where }) : null,
+      ...hk.before.map((t) => diffLine('ctx', '', t)),
+      ...hk.items.flatMap((it) => (it.type === 'mod'
+        ? [diffLine('mod del', '−', ...segText(it.segs, '-')), diffLine('mod add', '+', ...segText(it.segs, '+'))]
+        : it.type === 'del' ? [diffLine('del', '−', lineText(it.old))] : [diffLine('add', '+', lineText(it.new))])),
+      ...hk.after.map((t) => diffLine('ctx', '', t))));
+  }
+
+  function diffCellNodes(d) {
+    const out = [];
+    if (d.sheetsAdded.length) out.push(h('p', { class: 'help', text: `새 시트: ${d.sheetsAdded.join(', ')}` }));
+    if (d.sheetsRemoved.length) out.push(h('p', { class: 'help', text: `없어진 시트: ${d.sheetsRemoved.join(', ')}` }));
+    if (d.cells.length) {
+      out.push(h('table', { class: 'diff-table' },
+        h('thead', {}, h('tr', {}, h('th', { text: '칸' }), h('th', { text: '전' }), h('th', { text: '후' }))),
+        h('tbody', {}, ...d.cells.map((c) => h('tr', {},
+          h('td', { class: 'addr', text: `${c.sheet}!${c.cell}` }),
+          h('td', { class: c.old ? 'old' : '', text: c.old || '(빈칸)' }),
+          h('td', { class: c.new ? 'new' : '', text: c.new || '(빈칸)' }))))));
+    }
+    return out;
+  }
+
+  /** file: 버전(백업) 파일 이름. 그 버전 → 지금 사이에 바뀐 글을 보여 준다 */
+  async function showDiff(file, { label = '이 버전', time = null, ai = false } = {}) {
+    const d0 = state.doc;
+    if (!d0) return;
+    const dlg = $('#dlg-diff');
+    const body = $('#diff-body');
+    $('#diff-title').textContent = ai ? 'AI가 바꾼 내용' : '바뀐 내용';
+    $('#diff-sub').textContent = `${label}${time ? ` (${whenText(time)})` : ''} → 지금`;
+    $('#diff-stats').replaceChildren();
+    body.replaceChildren(h('div', { class: 'diff-msg' }, spinner(), ' 비교하는 중…'));
+    const restoreBtn = $('#diff-restore');
+    restoreBtn.disabled = true;
+    restoreBtn.lastChild.textContent = ai ? '이 대화 전으로 되돌리기' : '이 버전으로 되돌리기';
+    restoreBtn.onclick = () => { dlg.close(); actRestore(file); };
+    if (!dlg.open) dlg.showModal();
+    let d;
+    try { d = await call(K.doc.diff({ file })); } catch (err) {
+      body.replaceChildren(h('div', { class: 'diff-msg' }, h('div', { class: 'inline-error', text: err.message })));
+      if (err.code === 'NO_VERSION') return;
+      restoreBtn.disabled = false;
+      return;
+    }
+    // 그 사이 다른 문서를 열었으면 그리지 않는다 (같은 문서의 정보가 새로 고쳐진 것은 괜찮다)
+    if (!dlg.open || !state.doc || pathKey(state.doc.path) !== pathKey(d0.path)) return;
+    if (!ai) $('#diff-sub').textContent = `${label} (${whenText(d.time)}) → 지금`;
+    $('#diff-stats').replaceChildren(...Object.entries(DIFF_STAT).filter(([k]) => d.stats[k] > 0)
+      .map(([k, [txt, cls]]) => h('span', { class: `pill ${cls}`, text: `${txt} ${d.stats[k]}${d.kind === 'cells' ? '칸' : '곳'}` })));
+    restoreBtn.disabled = false;
+    if (d.same) {
+      body.replaceChildren(h('div', { class: 'diff-msg', text: '바뀐 글이 없어요. 서식·그림만 바뀌었거나 같은 내용이에요.' }));
+      return;
+    }
+    const nodes = d.kind === 'cells' ? diffCellNodes(d) : diffTextNodes(d);
+    if (d.truncated) nodes.push(h('p', { class: 'help', text: '바뀐 곳이 많아 앞부분만 보여요.' }));
+    if (d.approximate) nodes.unshift(h('p', { class: 'help', text: '너무 많이 바뀌어서 대략 비교했어요.' }));
+    body.replaceChildren(...nodes);
+    body.scrollTop = 0;
+  }
+
+  // ── 도구 메뉴 ────────────────────────────────────────
+
+  function closeTools() {
+    const pop = $('#tools-pop');
+    if (pop.hidden) return;
+    pop.hidden = true;
+    $('#btn-tools').setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleTools() {
+    const pop = $('#tools-pop');
+    const btn = $('#btn-tools');
+    if (!pop.hidden) { closeTools(); return; }
+    closeVersions();
+    $('#tool-pii').disabled = !state.doc;
+    $('#tool-pii').title = state.doc ? '' : '문서를 먼저 열어 주세요';
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect();
+    pop.style.top = `${Math.round(r.bottom + 6)}px`;
+    pop.style.left = `${Math.round(Math.max(12, Math.min(r.right - pop.offsetWidth, window.innerWidth - pop.offsetWidth - 12)))}px`;
+    btn.setAttribute('aria-expanded', 'true');
+    ($('#tools-pop .tool-item:not(:disabled)'))?.focus();
+  }
+
+  // ── 개인정보 찾아 가리기 ─────────────────────────────
+
+  const pii = { items: [], busy: false };
+
+  async function openPii() {
+    closeTools();
+    if (!state.doc) { toast('문서를 먼저 열어 주세요.', { type: 'info' }); return; }
+    const d0 = state.doc;
+    const dlg = $('#dlg-pii');
+    const body = $('#pii-body');
+    const btn = $('#pii-mask');
+    $('#pii-sub').textContent = d0.name;
+    $('#pii-stats').replaceChildren();
+    $('#pii-note').textContent = '원본은 그대로 두고 가린 사본을 만들어요. 그림 속 글자는 찾지 못해요.';
+    btn.hidden = false;
+    btn.disabled = true;
+    body.replaceChildren(h('div', { class: 'diff-msg' }, spinner(), ' 찾는 중…'));
+    if (!dlg.open) dlg.showModal();
+    let r;
+    try { r = await call(K.pii.scan()); } catch (err) {
+      body.replaceChildren(h('div', { class: 'diff-msg' }, h('div', { class: 'inline-error', text: err.message })));
+      return;
+    }
+    if (!dlg.open || !state.doc || pathKey(state.doc.path) !== pathKey(d0.path)) return;
+    pii.items = r.items.map((it) => ({ ...it, on: true }));
+    if (!pii.items.length) {
+      body.replaceChildren(h('div', { class: 'diff-msg', text: `개인정보를 찾지 못했어요 (글자 ${r.chars.toLocaleString()}자 확인). 그림 속 글자나 띄어 쓴 번호는 찾지 못하니 직접 확인해 주세요.` }));
+      return;
+    }
+    const counts = {};
+    for (const it of pii.items) counts[it.label] = (counts[it.label] ?? 0) + it.count;
+    $('#pii-stats').replaceChildren(...Object.entries(counts).map(([k, n]) => h('span', { class: 'pill warn', text: `${k} ${n}` })));
+    $('#pii-note').textContent = `가린 사본: ${baseName(r.output)} (원본 옆)`;
+    const all = h('input', { type: 'checkbox', checked: true, 'aria-label': '모두 고르기' });
+    const boxes = pii.items.map((it) => {
+      const cb = h('input', { type: 'checkbox', checked: true, 'aria-label': `${it.label} ${it.value} 가리기` });
+      cb.addEventListener('change', () => { it.on = cb.checked; sync(); });
+      return cb;
+    });
+    const sync = () => {
+      const n = pii.items.filter((x) => x.on).length;
+      all.checked = n === pii.items.length;
+      all.indeterminate = n > 0 && n < pii.items.length;
+      btn.disabled = !n || pii.busy;
+      btn.lastChild.textContent = n ? `가린 사본 만들기 (${n}가지)` : '가린 사본 만들기';
+    };
+    all.addEventListener('change', () => { pii.items.forEach((it, i) => { it.on = all.checked; boxes[i].checked = all.checked; }); sync(); });
+    body.replaceChildren(h('table', { class: 'diff-table' },
+      h('thead', {}, h('tr', {}, h('th', {}, all), h('th', { text: '종류' }), h('th', { text: '찾은 값' }), h('th', { text: '가린 모양' }), h('th', { text: '앞뒤 글' }))),
+      h('tbody', {}, ...pii.items.map((it, i) => h('tr', { class: 'pii-row' },
+        h('td', {}, boxes[i]),
+        h('td', { text: it.count > 1 ? `${it.label} ×${it.count}` : it.label }),
+        h('td', { class: 'val', text: it.value }),
+        h('td', { class: 'masked', text: it.masked }),
+        h('td', { class: 'ctx', text: it.context }))))));
+    sync();
+  }
+
+  async function actPiiMask() {
+    const values = pii.items.filter((x) => x.on).map((x) => x.value);
+    if (!values.length || pii.busy) return;
+    const btn = $('#pii-mask');
+    pii.busy = true;
+    btn.disabled = true;
+    setBusy('pii', '가린 사본 만드는 중…');
+    let r;
+    try { r = await call(K.pii.mask({ values })); } catch (err) { showError(err); return; } finally {
+      pii.busy = false;
+      clearBusy('pii');
+      btn.disabled = false;
+    }
+    btn.hidden = true;
+    const left = r.remaining.length;
+    $('#pii-stats').replaceChildren(h('span', { class: `pill ${left ? 'warn' : 'on'}`, text: left ? `남은 것 ${left}가지` : '모두 가림' }));
+    $('#pii-body').replaceChildren(h('div', { class: 'pii-result' },
+      h('p', { text: `가린 사본을 만들었어요: ${baseName(r.output)}` }),
+      h('p', { class: 'help', text: `${r.items.reduce((n, it) => n + it.count, 0)}곳을 가렸어요. 원본은 그대로예요.` }),
+      left ? h('div', { class: 'warn-note' }, icon('alert'), h('span', { text: `가리지 못하고 남은 것: ${r.remaining.map((x) => x.value).join(', ')} — 글자가 여러 조각으로 나뉘어 저장된 경우예요. 사본을 열어 직접 고쳐 주세요.` })) : null,
+      h('div', { class: 'btn-row' },
+        h('button', { class: 'btn primary', text: '사본 열기', onclick: () => { $('#dlg-pii').close(); openPath(r.output); } }),
+        h('button', { class: 'btn', text: '폴더에서 보기', onclick: () => call(K.shell.showItem(r.output)).catch(showError) }))));
+    $('#pii-note').textContent = '사본을 열어 가려진 모양을 꼭 확인해 주세요.';
+  }
+
+  // ── 한글 → HWPX 일괄 변환 ────────────────────────────
+
+  const batch = { sources: [], outDir: '', running: false, done: false, scanSeq: 0, count: 0 };
+  const BATCH_PILL = { ok: ['같음', 'on'], check: ['확인 필요', 'warn'], skipped: ['건너뜀', 'off'], fail: ['실패', 'err'] };
+
+  function openBatch() {
+    closeTools();
+    const dlg = $('#dlg-batch');
+    if (!batch.running && batch.done) resetBatch();
+    renderBatchSetup();
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function resetBatch() {
+    batch.done = false;
+    $('#batch-setup').hidden = false;
+    $('#batch-run').hidden = true;
+    $('#batch-rows').replaceChildren();
+    $('#batch-bar').style.width = '0';
+    $('#batch-stats').replaceChildren();
+    $('#batch-report').hidden = true;
+    $('#batch-start').hidden = false;
+    $('#batch-cancel').textContent = '닫기';
+  }
+
+  function batchAdd(paths) {
+    const have = new Set(batch.sources.map(pathKey));
+    for (const p of paths) if (p && !have.has(pathKey(p))) { batch.sources.push(p); have.add(pathKey(p)); }
+    renderBatchSetup();
+  }
+
+  async function renderBatchSetup() {
+    $('#batch-sources').replaceChildren(...batch.sources.map((p) => h('span', { class: 'batch-src', title: p },
+      h('span', { text: p }),
+      h('button', { class: 'icon-btn sm', 'aria-label': `${baseName(p)} 빼기`, onclick: () => { batch.sources = batch.sources.filter((x) => x !== p); renderBatchSetup(); } }, icon('x')))));
+    const outDir = $('input[name="batch-out"][value="dir"]').checked;
+    $('#batch-outdir-desc').textContent = batch.outDir ? batch.outDir : '폴더 구조는 그대로 두고 한곳에 모아요.';
+    const start = $('#batch-start');
+    if (!batch.sources.length) { start.disabled = true; start.lastChild.textContent = '변환 시작'; $('#batch-note').textContent = ''; return; }
+    const seq = ++batch.scanSeq;
+    $('#batch-note').textContent = '파일 세는 중…';
+    let r;
+    try { r = await call(K.batch.scan({ inputs: batch.sources, recursive: $('#batch-recursive').checked })); } catch (err) { $('#batch-note').textContent = err.message; return; }
+    if (seq !== batch.scanSeq) return;
+    batch.count = r.count;
+    $('#batch-note').textContent = r.count ? `HWP 파일 ${r.count.toLocaleString()}개${r.truncated ? ' (너무 많아 앞부분만)' : ''}` : 'HWP 파일이 없어요';
+    start.disabled = !r.count || (outDir && !batch.outDir);
+    start.lastChild.textContent = r.count ? `변환 시작 (${r.count.toLocaleString()}개)` : '변환 시작';
+  }
+
+  async function actBatchStart() {
+    if (batch.running || !batch.count) return;
+    const outDir = $('input[name="batch-out"][value="dir"]').checked ? batch.outDir : '';
+    batch.running = true;
+    $('#batch-setup').hidden = true;
+    $('#batch-run').hidden = false;
+    $('#batch-rows').replaceChildren();
+    $('#batch-bar').style.width = '0';
+    $('#batch-start').hidden = true;
+    $('#batch-cancel').textContent = '멈추기';
+    $('#batch-note').textContent = '바꾸는 중…';
+    setBusy('batch', 'HWPX로 바꾸는 중…');
+    let r = null;
+    try {
+      r = await call(K.batch.start({ inputs: batch.sources, recursive: $('#batch-recursive').checked, overwrite: $('#batch-overwrite').checked, outDir }));
+    } catch (err) { showError(err); } finally {
+      batch.running = false;
+      batch.done = true;
+      clearBusy('batch');
+      $('#batch-cancel').textContent = '닫기';
+    }
+    if (!r) { $('#batch-note').textContent = ''; return; }
+    const s = r.summary;
+    $('#batch-bar').style.width = '100%';
+    $('#batch-stats').replaceChildren(...['ok', 'check', 'skipped', 'fail'].filter((k) => s[k]).map((k) => h('span', { class: `pill ${BATCH_PILL[k][1]}`, text: `${BATCH_PILL[k][0]} ${s[k]}` })));
+    $('#batch-note').textContent = s.cancelled ? `멈췄어요 (${r.results.length}/${s.total}개 처리)` : `${s.total}개 끝났어요${s.check ? ' · ‘확인 필요’는 열어서 원본과 견줘 보세요' : ''}`;
+    $('#batch-report').hidden = !r.results.length;
+  }
+
+  function onBatchProgress(ev) {
+    if (!ev?.result) return;
+    const x = ev.result;
+    const [txt, cls] = BATCH_PILL[x.status] ?? [x.status, 'off'];
+    const open = x.status === 'ok' || x.status === 'check'
+      ? h('button', { class: 'link-btn', text: baseName(x.out), title: `${x.out} 열기`, onclick: () => { $('#dlg-batch').close(); openPath(x.out); } })
+      : h('span', { text: baseName(x.src), title: x.src });
+    const dir = x.src.slice(0, x.src.length - baseName(x.src).length).replace(/[\\/]$/, '');
+    $('#batch-rows').append(h('tr', {},
+      h('td', {}, h('span', { class: `pill ${cls}`, text: txt })),
+      h('td', { class: 'file', title: x.src }, open, h('span', { class: 'dir', text: dir })),
+      h('td', { class: 'memo', text: (x.notes ?? []).join(', ') || (x.pages ? `${x.pages[1]}쪽 · 표 ${x.tables?.[1] ?? 0}개` : '') })));
+    $('#batch-bar').style.width = `${Math.round(((ev.index + 1) / ev.total) * 100)}%`;
+    // 끝난 뒤 늦게 온 진행 알림이 결과 문구를 덮지 않게
+    if (batch.running) $('#batch-note').textContent = `${ev.index + 1} / ${ev.total}`;
+    const rows = $('#batch-rows').parentElement.parentElement;
+    rows.scrollTop = rows.scrollHeight;
+  }
+
+  async function actBatchCancel() {
+    if (batch.running) { await call(K.batch.cancel()).catch(() => {}); $('#batch-note').textContent = '지금 파일까지 하고 멈춰요…'; return; }
+    $('#dlg-batch').close();
+  }
+
   // ── 버전 목록 (원래대로 ▾) ───────────────────────────
 
   function closeVersions() {
@@ -877,7 +1174,9 @@
         h('span', { class: 'ver-time', text: whenText(x.time) }),
         x.file === v.undo ? h('span', { class: 'ver-tag', text: '마지막 변경 전 (원래대로 버튼)' }) : null),
       x.current ? h('span', { class: 'ver-now', text: '지금 상태' })
-        : h('button', { class: 'btn sm', text: '이 버전으로 되돌리기', onclick: () => actRestore(x.file) }));
+        : h('span', { class: 'ver-btns' },
+          h('button', { class: 'btn sm ghost', text: '바뀐 내용', title: '이 버전 이후 바뀐 글 보기', onclick: () => { closeVersions(); showDiff(x.file, { label: versionLabel(x), time: x.time }); } }),
+          h('button', { class: 'btn sm', text: '되돌리기', title: '이 버전으로 되돌리기', onclick: () => actRestore(x.file) })));
     $('#ver-list').replaceChildren(...(v.versions.length ? v.versions.map(item) : [h('li', { class: 'ver-empty', text: '아직 남긴 버전이 없어요' })]));
     const r = btn.getBoundingClientRect();
     pop.hidden = false;
@@ -1088,6 +1387,14 @@
     if (item.done && !item.error && !item.canceled && !item.parts.some((p) => p.type === 'text' && p.text.trim())) {
       nodes.push(h('div', { class: 'msg-note', text: '작업을 마쳤어요.' }));
     }
+    if (item.changed) {
+      const ch = item.changed;
+      const here = () => state.doc && pathKey(state.doc.path) === pathKey(ch.path);
+      nodes.push(h('div', { class: 'msg-change' },
+        h('span', { class: 'msg-change-text' }, icon('check'), '이 대화에서 문서를 고쳤어요'),
+        h('button', { class: 'btn sm', text: '바뀐 내용 보기', onclick: () => { if (here()) showDiff(ch.before, { label: 'AI 대화 전', ai: true }); } }),
+        h('button', { class: 'btn sm ghost', text: '이 대화 전으로 되돌리기', onclick: () => { if (here()) actRestore(ch.before); } })));
+    }
     body.replaceChildren(...nodes);
   }
 
@@ -1269,6 +1576,8 @@
         break;
       case 'end':
         msg.done = true;
+        // AI가 이 대화에서 문서를 고쳤다 → 바뀐 내용 보기 · 이 대화 전으로 되돌리기
+        if (ev.changed && typeof ev.before === 'string') msg.changed = { before: ev.before, path: ev.path };
         for (const p of msg.parts) if (p.type === 'tool' && p.state === 'run') p.state = msg.canceled ? 'stop' : 'ok';
         if (chat.chatId === ev.chatId) chat.chatId = null;
         chat.busy = false;
@@ -1338,7 +1647,7 @@
         { type: 'tool', id: '2', tool: 'office_fill', name: '칸 채우기', state: 'ok' },
         { type: 'tool', id: '3', tool: 'office_replace', name: '찾아 바꾸기', state: 'ok' },
         { type: 'text', text: '**담당자** 칸에 `김민지`를 넣었어요.\n\n- 표의 금액을 모두 **만 원** 단위로 맞췄어요 (2곳)\n- 나머지 서식은 그대로 두었어요\n\n왼쪽 미리보기에서 바뀐 부분을 확인해 보세요.' },
-      ] },
+      ], changed: { before: '', path: state.doc.path } },
       { role: 'user', text: '결과 한번 확인해 줘' },
       { role: 'assistant', done: false, status: '결과 확인 중…', parts: [
         { type: 'tool', id: '4', tool: 'office_page_image', name: '쪽 이미지로 확인', state: 'run' },
@@ -1650,12 +1959,14 @@
     if (tab === 'ai') return renderProviderChoices(true);
     if (tab === 'connect') return loadIntegrations();
     if (tab === 'hancom') return loadHancom();
+    if (tab === 'open') return loadAssoc();
     return Promise.resolve();
   }
 
   function renderSettingsView() {
     const s = state.settings;
     $$('input[name="previewMode"]', el.settings).forEach((r) => { r.checked = r.value === (s.previewMode ?? 'auto'); });
+    $$('input[name="openAction"]', el.settings).forEach((r) => { r.checked = r.value === (s.openAction ?? 'edit'); });
     $$('#theme-seg button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.theme === (s.theme ?? 'system'))));
     renderModelInputs();
     $('#app-version').textContent = state.version ? `Office Kit ${state.version}` : '';
@@ -1774,6 +2085,45 @@
         h('div', { class: 'int-name' }, it.name, pill),
         h('div', { class: 'int-desc', text: st?.error || (st?.detail && st.connected ? st.detail : it.desc), title: st?.detail || null })),
       btn);
+  }
+
+  // ── 파일 열기 · 기본 프로그램 ─────────────────────────
+
+  async function loadAssoc() {
+    const list = $('#assoc-list');
+    const btn = $('#btn-assoc-settings');
+    list.replaceChildren(h('div', { class: 'assoc-row' }, h('div', { class: 'loading-line' }, spinner(), '확인하는 중…')));
+    let st;
+    try { st = await call(K.assoc.status()); } catch (err) {
+      list.replaceChildren(h('div', { class: 'assoc-row' }, h('div', { class: 'inline-error', text: err.message })));
+      return;
+    }
+    btn.disabled = !st.supported || !st.packaged;
+    btn.title = st.reason ?? '';
+    if (!st.supported) { list.replaceChildren(h('div', { class: 'assoc-row' }, h('div', { class: 'help', text: st.reason }))); return; }
+    const rows = st.groups.map((g) => h('div', { class: 'assoc-row' },
+      h('span', { class: 'assoc-kind', text: g.kind }),
+      h('span', { class: 'assoc-types' }, ...g.types.map((t) => h('span', {
+        class: `assoc-type${t.isDefault ? ' on' : ''}`,
+        title: t.isDefault ? `${t.desc}(.${t.ext})를 Office Kit로 열어요` : `${t.desc}(.${t.ext})는 다른 프로그램으로 열려요`,
+      }, t.isDefault ? icon('check') : null, `.${t.ext}`)))));
+    const n = st.groups.reduce((a, g) => a + g.types.filter((t) => t.isDefault).length, 0);
+    const head = h('div', { class: 'assoc-row' },
+      h('span', { class: 'assoc-kind', text: '지금' }),
+      h('span', { class: 'int-desc', text: !st.packaged ? st.reason
+        : !st.registered || !st.matches ? '기본 프로그램 후보 등록이 빠져 있어요. 아래 단추를 누르면 다시 등록하고 Windows 설정을 열어요.'
+          : n ? `초록색 형식은 Office Kit로 열려요 (${n}개).` : '아직 Office Kit로 여는 형식이 없어요.' }));
+    list.replaceChildren(head, ...rows);
+  }
+
+  async function actAssocSettings() {
+    const btn = $('#btn-assoc-settings');
+    btn.disabled = true;
+    try {
+      await call(K.assoc.openSettings());
+      toast('Windows 설정에서 바꿀 형식을 눌러 Office Kit를 고른 뒤, 여기서 ‘다시 확인’을 눌러 주세요.', { type: 'info', timeout: 10000 });
+    } catch (err) { showError(err); } finally { btn.disabled = false; }
+    loadAssoc();
   }
 
   async function loadHancom() {
@@ -1974,6 +2324,8 @@
       const files = [...(e.dataTransfer.files ?? [])];
       if (!files.length) return;
       const paths = files.map((f) => K.pathForFile(f)).filter(Boolean);
+      // 일괄 변환 창이 열려 있으면 파일·폴더를 변환 목록에 넣는다
+      if ($('#dlg-batch').open) { if (!batch.running) batchAdd(paths); return; }
       const ok = paths.find((p) => state.exts.includes(extOf(p)));
       if (!ok) {
         const ext = extOf(paths[0] ?? files[0].name);
@@ -2000,6 +2352,28 @@
     }
     if (state.smoke.settings) {
       try { await openSettings(state.smoke.settings); } catch {}
+      await sleep(300);
+    }
+    if (state.smoke.tool === 'pii' || state.smoke.tool === 'pii-mask') {
+      await openPii();
+      if (state.smoke.tool === 'pii-mask') await actPiiMask();
+      await sleep(300);
+    }
+    if (state.smoke.tool === 'batch') {
+      openBatch();
+      if (state.smoke.batch) {
+        batchAdd([state.smoke.batch]);
+        for (let i = 0; i < 50 && !batch.count; i++) await sleep(100);
+        await actBatchStart();
+      }
+      await sleep(300);
+    }
+    if (state.smoke.diff) {
+      try {
+        const v = await call(K.doc.versions());
+        const first = v.versions.find((x) => x.reason === 'open');
+        if (first) await showDiff(first.file, { label: versionLabel(first), time: first.time });
+      } catch (err) { console.error('[smoke] diff', err?.message ?? err); }
       await sleep(300);
     }
     // '직접 편집' 단추를 누를 수 있는지도 함께 (편집 창 형식 확인용)
@@ -2080,6 +2454,36 @@
     $$('.nav-item', el.settings).forEach((b) => b.addEventListener('click', () => selectTab(b.dataset.tab)));
     $('#settings-close').addEventListener('click', () => el.settings.close());
     el.settings.addEventListener('click', (e) => { if (e.target === el.settings) el.settings.close(); });
+    $$('input[name="openAction"]', el.settings).forEach((r) => r.addEventListener('change', () => { if (r.checked) saveSettings({ openAction: r.value }); }));
+    $('#btn-assoc-settings').addEventListener('click', actAssocSettings);
+    $('#diff-close').addEventListener('click', () => $('#dlg-diff').close());
+    $('#btn-tools').addEventListener('click', (e) => { e.stopPropagation(); toggleTools(); });
+    $('#tool-pii').addEventListener('click', openPii);
+    $('#tool-batch').addEventListener('click', openBatch);
+    document.addEventListener('click', (e) => { if (!$('#tools-pop').hidden && !e.target.closest('#tools-pop, #btn-tools')) closeTools(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#tools-pop').hidden) { e.preventDefault(); closeTools(); $('#btn-tools').focus(); } });
+    $('#pii-close').addEventListener('click', () => $('#dlg-pii').close());
+    $('#pii-cancel').addEventListener('click', () => $('#dlg-pii').close());
+    $('#pii-mask').addEventListener('click', actPiiMask);
+    $('#batch-close').addEventListener('click', () => { if (!batch.running) $('#dlg-batch').close(); });
+    $('#dlg-batch').addEventListener('cancel', (e) => { if (batch.running) e.preventDefault(); });
+    $('#batch-cancel').addEventListener('click', actBatchCancel);
+    $('#batch-start').addEventListener('click', actBatchStart);
+    $('#batch-report').addEventListener('click', async () => {
+      try { const r = await call(K.batch.saveReport()); if (r?.output) toast(`보고서를 저장했어요: ${baseName(r.output)}`, { type: 'success', action: { label: '폴더에서 보기', run: () => call(K.shell.showItem(r.output)).catch(showError) } }); } catch (err) { showError(err); }
+    });
+    $('#batch-add-files').addEventListener('click', async () => { try { batchAdd(await call(K.batch.pick({ kind: 'files' }))); } catch (err) { showError(err); } });
+    $('#batch-add-folder').addEventListener('click', async () => { try { batchAdd(await call(K.batch.pick({ kind: 'folder' }))); } catch (err) { showError(err); } });
+    $('#batch-recursive').addEventListener('change', () => renderBatchSetup());
+    $$('input[name="batch-out"]').forEach((r) => r.addEventListener('change', async () => {
+      if (r.value === 'dir' && r.checked && !batch.outDir) {
+        try { batch.outDir = (await call(K.batch.pickOut())) ?? ''; } catch (err) { showError(err); }
+        if (!batch.outDir) $('input[name="batch-out"][value="same"]').checked = true;
+      }
+      renderBatchSetup();
+    }));
+    $('#diff-cancel').addEventListener('click', () => $('#dlg-diff').close());
+    $('#btn-assoc-refresh').addEventListener('click', () => loadAssoc());
     $$('input[name="previewMode"]', el.settings).forEach((r) => r.addEventListener('change', async () => {
       if (!r.checked) return;
       if (await saveSettings({ previewMode: r.value }) && state.doc) {
@@ -2129,7 +2533,10 @@
       else if (cmd === 'edit') { if (state.doc) actEdit(); }
       else if (cmd === 'refresh') { if (state.doc) refreshPreview({ reason: 'manual' }); }
       else if (cmd === 'settings') openSettings('ai');
+      else if (cmd === 'pii') openPii();
+      else if (cmd === 'batch') openBatch();
     });
+    K.on.batchProgress(onBatchProgress);
     K.on.toast((t) => {
       toast(String(t?.message ?? ''), { type: t?.type ?? 'info' });
       // 확인용 캡처: 인수로 받은 파일을 못 열었으면 알림이 뜬 화면을 찍고 실패로 끝낸다

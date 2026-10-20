@@ -13,6 +13,8 @@ import {
 } from '../core/index.mjs';
 import { PLACEHOLDER } from '../core/officefile.mjs';
 import { pageImage } from '../core/render.mjs';
+import { PII_TYPES, scanDocument, maskDocument, maskedPathFor } from '../core/pii.mjs';
+import { collectHwpFiles, convertHwpBatch, outputFor, writeBatchReport, BATCH_STATUS_KO } from '../core/batch.mjs';
 import { register as registerHwp } from './tools/hwp.mjs';
 import { register as registerWord } from './tools/word.mjs';
 import { register as registerPpt } from './tools/ppt.mjs';
@@ -400,6 +402,76 @@ export function createServer() {
         { type: 'text', text: `${basename(full)} ${r.page}/${r.pages}쪽 (엔진: ${r.engine}${r.width ? `, ${r.width}×${r.height}px` : ''})` },
       ],
     };
+  }));
+
+  const piiTypes = z.array(z.enum(Object.keys(PII_TYPES))).optional()
+    .describe(`찾을 종류 (생략하면 모두): ${Object.entries(PII_TYPES).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+
+  server.registerTool('office_find_pii', {
+    title: '개인정보 찾기',
+    description: '문서에서 개인정보(주민·외국인등록번호, 휴대전화·전화번호, 이메일, 카드번호, 계좌번호(계좌·은행 같은 말이 앞에 있을 때), '
+      + '여권번호, 운전면허번호)를 글자 규칙으로 찾는다. 인터넷·AI 없이 동작하고 파일을 바꾸지 않는다. '
+      + '같은 값은 한 번만, 몇 번 나오는지(count)와 가릴 모양(masked)을 함께 돌려준다. 그림 속 글자는 찾지 못한다.',
+    inputSchema: { path: pathSchema(), types: piiTypes },
+    annotations: { readOnlyHint: true },
+  }, tool(async ({ path, types }) => {
+    const full = mustExist(path);
+    const r = await scanDocument(full, { types });
+    if (!r.items.length) return text(`개인정보를 찾지 못했어요 (${basename(full)}, 글자 ${r.chars}자 확인)`);
+    return text(`${basename(full)}에서 ${r.items.length}가지(모두 ${r.total}번) 찾음\n${json(r.items.map(({ label, value, masked, count, context }) => ({ label, value, masked, count, context })))}`);
+  }));
+
+  server.registerTool('office_mask_pii', {
+    title: '개인정보 가린 사본 만들기',
+    description: '문서의 개인정보를 가린 사본을 만든다 (예: 900101-1234567 → 900101-1******, 010-1234-5678 → 010-****-5678). '
+      + '원본은 바꾸지 않고 output(생략하면 원본 옆 "<이름>_가림.<확장자>")에 원본과 같은 형식으로 저장한 뒤, 사본을 다시 읽어 남은 것(remaining)을 알려 준다. '
+      + 'values로 가릴 값만 고를 수 있다 (office_find_pii의 value). 한글·Word·PowerPoint·Excel(xlsx)은 프로그램 없이 된다.',
+    inputSchema: {
+      path: pathSchema(),
+      output: z.string().optional().describe('저장할 경로 (원본과 같은 형식, 원본과 다른 이름). 생략하면 "<이름>_가림.<확장자>"'),
+      types: piiTypes,
+      values: z.array(z.string().min(1)).optional().describe('가릴 값만 고르기 (생략하면 찾은 것 모두)'),
+      overwrite: overwriteSchema,
+    },
+    annotations: { destructiveHint: false },
+  }, tool(async ({ path, output, types, values, overwrite = false }) => {
+    const full = mustExist(path);
+    const out = outPath(output ?? maskedPathFor(full), { allow: new Set([extOf(full)]), overwrite });
+    if (samePath(out, full)) throw new Error('원본에 바로 덮어쓰지 않아요. 다른 이름을 지정하세요');
+    const r = await maskDocument(full, { output: out, types, values });
+    const lines = r.items.map((it) => `- ${it.label}: ${it.value} → ${it.masked} (${it.count}곳)`);
+    const left = r.remaining.length
+      ? `\n주의: 가리지 못하고 남은 것 ${r.remaining.length}가지 — ${r.remaining.map((x) => x.value).join(', ')} (글자가 여러 조각으로 나뉘어 저장된 경우 등. 직접 확인하세요)`
+      : '\n확인: 가린 사본을 다시 읽어 고른 개인정보가 남지 않은 것을 확인함';
+    return text(`가린 사본 저장: ${r.output}\n${lines.join('\n')}${left}`);
+  }));
+
+  server.registerTool('office_hwpx_batch', {
+    title: '한글 → HWPX 일괄 변환',
+    description: '여러 한글(.hwp) 문서를 HWPX로 한꺼번에 바꾸고, 바꾼 파일을 다시 열어 쪽 수·표 수·글이 원본과 같은지 확인한다. '
+      + 'paths에 파일이나 폴더를 준다 (폴더는 하위 폴더까지). 결과는 원본 옆 같은 이름 .hwpx (outDir를 주면 그 폴더에 하위 구조 그대로). '
+      + '원본은 바꾸지 않고, 같은 이름 .hwpx가 이미 있으면 overwrite=true일 때만 덮어쓴다. report에 .csv 경로를 주면 결과 보고서를 쓴다. '
+      + '한컴오피스+자동화 연결이 있으면 한컴으로, 없으면 내장 엔진(rhwp)으로 바꾼다.',
+    inputSchema: {
+      paths: z.array(z.string().min(1)).min(1).max(200).describe('바꿀 .hwp 파일이나 폴더 경로들'),
+      outDir: z.string().optional().describe('결과를 모을 폴더 (생략하면 원본 옆)'),
+      overwrite: overwriteSchema,
+      report: z.string().optional().describe('결과 보고서(.csv)를 쓸 경로 (선택)'),
+    },
+    annotations: { destructiveHint: false },
+  }, tool(async ({ paths, outDir, overwrite = false, report }) => {
+    const { items, truncated } = collectHwpFiles(paths.map(abs));
+    if (!items.length) throw new Error('바꿀 한글(.hwp) 파일을 찾지 못했어요');
+    const dir = outDir ? abs(outDir) : undefined;
+    // 저장할 곳이 모두 허락된 폴더 안인지 먼저 확인 (하나라도 밖이면 시작하지 않는다)
+    for (const it of items) outPath(outputFor(it, dir), { allow: new Set(['hwpx']), overwrite: true });
+    const reportPath = report ? outPath(report, { allow: new Set(['csv']), overwrite: true }) : null;
+    const r = await convertHwpBatch(items, { outDir: dir, overwrite });
+    if (reportPath) writeBatchReport(reportPath, r.results);
+    const s = r.summary;
+    const lines = r.results.map((x) => `- [${BATCH_STATUS_KO[x.status]}] ${x.src} → ${x.out}${x.notes?.length ? ` (${x.notes.join(', ')})` : ''}`);
+    return text(`한글 → HWPX ${s.total}개: 같음 ${s.ok}, 확인 필요 ${s.check}, 건너뜀 ${s.skipped}, 실패 ${s.fail}${truncated ? ' (파일이 많아 앞부분만)' : ''}`
+      + `${reportPath ? `\n보고서: ${reportPath}` : ''}\n${lines.join('\n')}`);
   }));
 
   // 형식별 전용 도구 (src/mcp/tools/*.mjs)

@@ -389,3 +389,37 @@ describe('COM inspect / edit — OFFICEKIT_COM_TESTS=1 일 때만', { skip: !COM
     assert.equal(wb.getWorksheet('매출').getCell('A2').value, '2월', '매출 큰 순서');
   });
 });
+
+// ── HWPX 일괄 변환 · 개인정보 ──────────────────────────────
+
+describe('hwpx · pii', () => {
+  test('hwpx: 폴더의 hwp → hwpx, 보고서, 다시 하면 건너뜀', async () => {
+    copyFileSync(join(ROOT, 'examples', '신청서.hwp'), tmp.path('일괄.hwp'));
+    let r = await cli(['hwpx', tmp.path('일괄.hwp'), '--report', '결과.csv']);
+    ok(r);
+    assert.match(r.stdout, /\[1\/1\] 같음/);
+    assert.match(r.stdout, /완료: 같음 1/);
+    assert.ok(existsSync(tmp.path('일괄.hwpx')));
+    assert.match(readFileSync(tmp.path('결과.csv'), 'utf8'), /같음/);
+    r = await cli(['hwpx', tmp.path('일괄.hwp')]);
+    ok(r);
+    assert.match(r.stdout, /건너뜀 1/);
+    fails(await cli(['hwpx', tmp.path('없는폴더')]), /찾지 못했습니다/);
+  });
+
+  test('pii: 찾기 → --mask 가린 사본', async () => {
+    await createDocument(tmp.path('연락처.docx'), '# 연락처\n\n홍길동 010-1234-5678 / hong@example.com');
+    let r = await cli(['pii', '연락처.docx']);
+    ok(r);
+    assert.match(r.stdout, /휴대전화 {2}010-1234-5678 → 010-\*{4}-5678/);
+    assert.match(r.stdout, /이메일/);
+    r = await cli(['pii', '연락처.docx', '--mask', '--types', 'mobile']);
+    ok(r);
+    assert.match(r.stdout, /가린 사본: .*연락처_가림\.docx/);
+    assert.match(r.stdout, /남은 것이 없습니다/);
+    const t = await cli(['text', '연락처_가림.docx']);
+    assert.match(t.stdout, /010-\*{4}-5678/);
+    assert.match(t.stdout, /hong@example\.com/);
+    fails(await cli(['pii', '연락처.docx', '--types', 'xyz']), /알 수 없는 종류/);
+  });
+});
