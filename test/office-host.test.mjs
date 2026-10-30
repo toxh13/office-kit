@@ -700,8 +700,11 @@ test('office-preload.cjs: window.officeKitOffice만, editor:* 채널로', async 
   const api = exposed.officeKitOffice;
   assert.deepEqual(Object.keys(api).sort(), [
     'close', 'discardDraft', 'download', 'getDocument', 'log', 'onCommand', 'onExternalChange', 'onRequestClose',
-    'print', 'readDraft', 'reportDirty', 'save', 'saveAs', 'state',
+    'panel', 'print', 'readDraft', 'reportDirty', 'save', 'saveAs', 'state',
   ]);
+  api.panel();
+  assert.deepEqual(sent.at(-1), ['editor:panel'], "'AI · 도구' 단추 → main에 옆 창을 부탁");
+  sent.length = 0;
   const bytes = new Uint8Array([1, 2]);
   await api.getDocument();
   await api.readDraft();

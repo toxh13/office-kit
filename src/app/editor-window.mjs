@@ -357,7 +357,7 @@ function safeFileName(name, fallback) {
  * @param {{ maxBytes?: number, fontsTimeoutMs?: number, printIntervalMs?: number }} [o.limits]  시험용 한도 (기본 512MB, 글꼴 준비 20초, 인쇄 간격 3초)
  */
 export function createEditorManager({
-  app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange,
+  app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange, onPanel, onClosed,
   dirs, officeState, fonts: fontsModule, fixups: fixupsModule, nativeTheme, icon, testHooks = false, userName,
   log = (...a) => console.log('[editor]', ...a), limits = {},
 } = {}) {
@@ -546,6 +546,9 @@ export function createEditorManager({
     });
   }
 
+  // 편집 창의 'AI · 도구' 단추 → main이 그 문서의 옆 창(AI 대화·버전·도구)을 이 창 옆에 띄운다
+  on('editor:panel', (entry) => { try { onPanel?.(entry.path, entry.win); } catch (err) { log('onPanel 오류:', err); } });
+
   handle('editor:get-document', async (entry) => {
     const st = statOf(entry.path);
     if (!st) throw fail(`문서를 찾을 수 없습니다: ${basename(entry.path)}`, 'NOT_FOUND');
@@ -564,6 +567,8 @@ export function createEditorManager({
     const ext = extOf(entry.path);
     const base = {
       kind: entry.kind, name: basename(entry.path), ext, size: buf.length, mtimeMs: st.mtimeMs, readOnly: st.readOnly,
+      // 옛 형식(doc·xls·ppt …)을 바꿔 연 문서: 원본 이름과 처음 저장할 자리 (저장하면 새 형식으로 따로 저장)
+      convertedFrom: entry.convertedFrom ? basename(entry.convertedFrom) : null,
       bytes: new Uint8Array(buf), // 복사본 (Buffer 풀의 다른 내용이 함께 가지 않게)
     };
     if (entry.kind !== 'office') {
@@ -598,10 +603,35 @@ export function createEditorManager({
   handle('editor:save', async (entry, bytes, opts) => {
     if (entry.kind === 'office') {
       if (opts?.reason === 'auto') return saveDraft(entry, bytes);
+      if (entry.convertedFrom) return saveConverted(entry, bytes);
       return saveTo(entry, entry.path, bytes, extOf(entry.path));
     }
     return saveTo(entry, entry.path, bytes, extOf(entry.path) === 'hwpx' ? 'hwpx' : 'hwp');
   });
+
+  /**
+   * 옛 형식에서 바꿔 연 문서의 첫 저장: 원본 옆 '<이름>.<새 형식>'(있으면 고르게)으로 저장하고, 그 파일을 편집하는 창이 된다.
+   * 원본(doc·xls …)은 그대로. 임시 사본(userData/converted)은 지운다
+   */
+  async function saveConverted(entry, bytes) {
+    const ext = extOf(entry.path);
+    checkBytes(entry, bytes, ext);
+    const from = entry.convertedFrom;
+    const stem = basename(from).replace(/\.[^.]+$/, '');
+    let suggest = join(dirname(from), `${stem}.${ext}`);
+    for (let i = 2; existsSync(suggest); i++) suggest = join(dirname(from), `${stem} (${i}).${ext}`);
+    const target = await askTarget(entry, { title: `새 형식(.${ext})으로 저장 — 원본 ${basename(from)}은 그대로 둡니다`, defaultPath: suggest, ext, filterName: `${TYPE_NAMES[ext]} (.${ext})` });
+    if (!target) return { canceled: true };
+    const other = entries.get(keyOf(target));
+    if (other && other !== entry) throw fail('그 문서는 다른 편집 창에서 열려 있습니다. 다른 이름을 고르세요.', 'IN_USE');
+    const temp = entry.path;
+    const res = await saveTo(entry, target, bytes, ext);
+    entry.convertedFrom = null; // 제목을 새 파일 이름으로 (rekey가 제목을 고친다)
+    rekey(entry, target);
+    if (!entry.draftPending) removeDraft(temp);
+    try { rmSync(dirname(temp), { recursive: true, force: true }); } catch {}
+    return res;
+  }
 
   handle('editor:save-as', async (entry, bytes, ext) => {
     const office = entry.kind === 'office';
@@ -996,7 +1026,10 @@ export function createEditorManager({
   // ── 창 ───────────────────────────────────────────────
 
   const labelOfEntry = (entry) => labelOf(entry.kind, extOf(entry.path));
-  function titleOf(entry) { return `${entry.dirty ? '* ' : ''}${basename(entry.path)} - ${labelOfEntry(entry)} (Office Kit)`; }
+  function titleOf(entry) {
+    const name = entry.convertedFrom ? `${basename(entry.convertedFrom)} → .${extOf(entry.path)}` : basename(entry.path);
+    return `${entry.dirty ? '* ' : ''}${name} - ${labelOfEntry(entry)} (Office Kit)`;
+  }
   function updateTitle(entry) { if (entry.win && !entry.win.isDestroyed()) entry.win.setTitle(titleOf(entry)); }
 
   function focus(entry) {
@@ -1211,7 +1244,10 @@ export function createEditorManager({
       for (const [id, p] of pending) if (p.entry === entry) { clearTimeout(p.timer); pending.delete(id); p.resolve(null); }
       // 정상 닫기 → 복구 사본을 지운다. 단 '복구 / 버리기'에 아직 답하지 않았으면 남긴다 (다음에 열 때 다시 묻는다)
       if (office && entry.cleanClose && !entry.draftPending) removeDraft(entry.path);
+      // 옛 형식에서 바꿔 연 임시 사본은 저장하지 않고 닫으면 지운다 (원본은 그대로)
+      if (entry.convertedFrom) { try { rmSync(dirname(entry.path), { recursive: true, force: true }); } catch {} }
       entry.win = null;
+      try { onClosed?.(entry.path); } catch (err) { log('onClosed 오류:', err); }
     });
 
     wc.loadURL(hostUrl(entry.kind)).catch((err) => log('편집 창을 열지 못했습니다:', err?.message ?? err));
@@ -1249,7 +1285,7 @@ export function createEditorManager({
      * Office: 암호 문서·옛 형식·손상·512MB 넘음은 창을 열기 전에 한국어 오류 (code ENCRYPTED·OLD_FORMAT·BAD_FORMAT·TOO_BIG).
      * notice: Office 편집 창이 많이 열렸을 때 메모리 안내 (없으면 null)
      */
-    async openEditor(path) {
+    async openEditor(path, { convertedFrom = null } = {}) {
       const { path: p, kind } = editablePath(path);
       const ok = available(kind);
       const existing = entries.get(keyOf(p));
@@ -1271,6 +1307,7 @@ export function createEditorManager({
         path: p, key: keyOf(p), kind, win: null, dirty: false, known: null, saving: false, drafting: false,
         allowClose: false, cleanClose: false, closing: null, watcher: null, watchTimer: null,
         draftPending: false, printing: false, lastPrintAt: 0, printAllowed: false,
+        convertedFrom: typeof convertedFrom === 'string' && convertedFrom ? resolve(convertedFrom) : null,
       };
       entries.set(entry.key, entry);
       try { createWindow(entry); } catch (err) { entries.delete(entry.key); throw err; }

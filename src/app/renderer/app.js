@@ -590,6 +590,7 @@
 
   async function refreshPreview({ ifChanged = false, reason = 'manual' } = {}) {
     if (!state.doc) return;
+    if (state.panel) return;
     const path = state.doc.path;
     if (state.rendering && pathKey(state.rendering) === pathKey(path)) {
       // 이미 그리는 중이면 끝난 뒤 한 번 더
@@ -975,6 +976,21 @@
     if (d.approximate) nodes.unshift(h('p', { class: 'help', text: '너무 많이 바뀌어서 대략 비교했어요.' }));
     body.replaceChildren(...nodes);
     body.scrollTop = 0;
+  }
+
+  // ── 옆 창 (편집 창의 'AI · 도구') ─────────────────────
+  // main이 panel 이벤트로 알린다: 편집 창 옆 좁은 창 → 미리보기 없이 AI 대화·버전·도구만
+
+  function onPanel(ev) {
+    const on = !!ev?.on;
+    if (state.panel === on) return;
+    state.panel = on;
+    $('#app').classList.toggle('panel-mode', on);
+    closeTools();
+    closeVersions();
+    // 옆 창에서 나와 전체 창이 되면 미리 보지 못한 미리보기를 그린다
+    if (!on && state.doc && !state.preview) refreshPreview({ reason: 'open' });
+    if (on) setTimeout(() => el.prompt?.focus(), 50);
   }
 
   // ── 도구 메뉴 ────────────────────────────────────────
@@ -2499,6 +2515,8 @@
     $('#btn-assoc-settings').addEventListener('click', actAssocSettings);
     $('#diff-close').addEventListener('click', () => $('#dlg-diff').close());
     $('#btn-tools').addEventListener('click', (e) => { e.stopPropagation(); toggleTools(); });
+    $('#btn-panel-full').addEventListener('click', () => call(K.panel.full()).catch(showError));
+    $('#btn-panel-close').addEventListener('click', () => call(K.panel.close()).catch(showError));
     $('#tool-pii').addEventListener('click', openPii);
     $('#tool-batch').addEventListener('click', openBatch);
     document.addEventListener('click', (e) => { if (!$('#tools-pop').hidden && !e.target.closest('#tools-pop, #btn-tools')) closeTools(); });
@@ -2578,6 +2596,7 @@
       else if (cmd === 'batch') openBatch();
     });
     K.on.batchProgress(onBatchProgress);
+    K.on.panel(onPanel);
     K.on.toast((t) => {
       toast(String(t?.message ?? ''), { type: t?.type ?? 'info' });
       // 확인용 캡처: 인수로 받은 파일을 못 열었으면 알림이 뜬 화면을 찍고 실패로 끝낸다

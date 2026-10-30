@@ -118,10 +118,15 @@ function makeFakeElectron({ userData, documents }) {
     loadURL(u) { return this.webContents.loadURL(u); }
     setTitle(t) { this.title = t; }
     getTitle() { return this.title; }
-    show() {} focus() {} restore() {} maximize() {} moveTop() {} removeMenu() {}
+    show() { this.visible = true; } hide() { this.visible = false; } focus() {} restore() {} maximize() {} unmaximize() {} moveTop() {} removeMenu() {}
+    isVisible() { return this.visible !== false; }
     isMinimized() { return false; }
     isMaximized() { return false; }
-    getNormalBounds() { return { x: 0, y: 0, width: 1200, height: 800 }; }
+    getNormalBounds() { return { ...this.getBounds() }; }
+    getBounds() { return { ...(this.bounds ?? { x: 0, y: 0, width: 1200, height: 800 }) }; }
+    setBounds(b) { this.bounds = { ...this.getBounds(), ...b }; }
+    setMinimumSize(w, h) { this.minSize = [w, h]; }
+    getMinimumSize() { return this.minSize ?? [1000, 680]; }
   }
 
   const ipcMain = {
@@ -168,7 +173,10 @@ function makeFakeElectron({ userData, documents }) {
       showErrorBox(title, text) { fake.errorBox = `${title}: ${text}`; },
     },
     nativeTheme: { shouldUseDarkColors: false, themeSource: 'system' },
-    screen: { getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }] },
+    screen: {
+      getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
+      getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+    },
     session: {
       defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, setSpellCheckerDictionaryDownloadURL(u) { fake.defaultDictionaryUrl = u; } },
       fromPartition: (p) => { if (!partitions.has(p)) partitions.set(p, makeSession(p)); return partitions.get(p); },
@@ -249,6 +257,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   Object.assign(process.env, {
     OFFICEKIT_USER_DATA: ud, OFFICEKIT_EDITOR_VENDOR: vendor, OFFICEKIT_AI_MODULE: aiModule, OFFICEKIT_TEST_WS: join(base, 'ws'),
     OFFICEKIT_OFFICE_FONTS_MODULE: fontsModule,
+    // 이 시험은 주 창에서 문서를 여는 흐름을 본다 (탐색기에서 연 문서의 '문서 창 방식'은 끈다)
+    OFFICEKIT_DOC_WINDOW: '0',
   });
   for (const k of ['OFFICEKIT_SMOKE', 'OFFICEKIT_SMOKE_EDITOR', 'OFFICEKIT_EDITOR_TEST']) delete process.env[k];
   process.argv = [process.argv[0], docPath];
@@ -846,6 +856,58 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.ok, true, r.error);
     recent = JSON.parse(readFileSync(join(ud, 'settings.json'), 'utf8')).recent;
     assert.equal(recent[0].path, pdf);
+  });
+
+  await t.test("편집 창의 'AI · 도구' → 주 창이 그 문서의 옆 창이 되어 편집 창 오른쪽에 붙고, 닫으면 보통 주 창으로", async () => {
+    officeWin.setBounds({ x: 100, y: 50, width: 1700, height: 900 });
+    fake.emit('editor:panel', officeWin.webContents);
+    const on = await until(() => lastSent('panel', (d) => d.on === true));
+    assert.equal(on.path, docxPath);
+    assert.ok(await until(() => lastSent('doc:opened', (d) => d?.path === docxPath)), '옆 창은 그 문서를 연다');
+    const pb = mainWin.getBounds();
+    const eb = officeWin.getBounds();
+    assert.equal(pb.width, 420, '좁은 옆 창');
+    assert.equal(pb.x, eb.x + eb.width, '편집 창 바로 오른쪽');
+    assert.ok(eb.x + eb.width + pb.width <= 1920, '자리가 없으면 편집 창을 줄인다');
+    assert.deepEqual(mainWin.getMinimumSize(), [320, 480]);
+    // 처음부터 주 창을 쓰던 경우(Office Kit를 직접 실행): 옆 창을 닫으면 보통 주 창으로 돌아온다 (숨기지 않음)
+    assert.equal((await call('panel:close')).ok, true);
+    assert.ok(await until(() => lastSent('panel', (d) => d.on === false)));
+    assert.equal(mainWin.isVisible(), true);
+    assert.deepEqual(mainWin.getMinimumSize(), [1000, 680]);
+  });
+
+  await t.test('탐색기에서 연 옛 형식(csv) → 새 형식(xlsx)으로 바꿔 편집 창, 첫 저장은 원본 옆 새 파일 (원본 그대로)', async () => {
+    const csv = join(docs, '명단.csv');
+    writeFileSync(csv, '이름,점수\n홍길동,90\n김영희,85\n', 'utf8');
+    const csvBefore = readFileSync(csv);
+    process.env.OFFICEKIT_DOC_WINDOW = '1';
+    const before = fake.windows.length;
+    try { fake.app.emit('second-instance', {}, [process.execPath, csv], docs); } finally { delete process.env.OFFICEKIT_DOC_WINDOW; process.env.OFFICEKIT_DOC_WINDOW = '0'; }
+    assert.ok(await until(() => fake.windows.slice(before).some((w) => /명단\.csv → \.xlsx - 표 편집/.test(w.getTitle())), 20_000), fake.windows.map((w) => w.getTitle()).join(' | '));
+    const w = fake.windows.slice(before).find((x) => /명단\.csv/.test(x.getTitle()));
+    const c = (ch, ...a) => fake.invokeFrom(w.webContents, ch, ...a);
+    const d = await c('editor:get-document');
+    assert.equal(d.ok, true, d.error);
+    assert.equal(d.value.ext, 'xlsx');
+    assert.equal(d.value.convertedFrom, '명단.csv');
+    const temp = (await import('node:path')).dirname(join(ud, 'converted'));
+    void temp;
+    // 첫 저장: 원본 옆 '명단.xlsx'를 고르게 하고, 그 파일을 편집하는 창이 된다
+    const target = join(docs, '명단.xlsx');
+    fake.saveDialogAnswers.push({ canceled: false, filePath: target });
+    const r = await c('editor:save', new Uint8Array(d.value.bytes), { reason: 'user' });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.value.name, '명단.xlsx');
+    assert.ok(existsSync(target));
+    assert.deepEqual(readFileSync(csv), csvBefore, '원본 csv는 그대로');
+    assert.equal(w.getTitle(), '명단.xlsx - 표 편집 (Office Kit)');
+    assert.deepEqual(readdirSync(join(ud, 'converted')), [], '임시 사본은 지운다');
+    // 두 번째 저장은 그 파일에 바로
+    const r2 = await c('editor:save', new Uint8Array(readFileSync(target)), { reason: 'user' });
+    assert.equal(r2.ok, true, r2.error);
+    assert.equal(r2.value.name, '명단.xlsx');
+    w.close();
   });
 
   let closeAsked = 0;

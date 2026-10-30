@@ -17,6 +17,7 @@
     <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5"/><path d="M12 16.3v.2"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.5 4 4L18.5 7.5"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.7v.2"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5l1.6 4.4 4.4 1.6-4.4 1.6L12 15.5l-1.6-4.4L6 9.5l4.4-1.6z"/><path d="M18.5 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></symbol>
   </svg>
 
   <div class="frame">
@@ -26,6 +27,7 @@
       <span class="state-badge" id="doc-state" data-state="loading">불러오는 중</span>
       <span class="state-badge" id="doc-readonly" data-state="readonly" hidden>읽기 전용</span>
       <span class="spacer"></span>
+      <button class="btn ghost" id="btn-panel" type="button" title="AI 대화 · 버전 · 개인정보 같은 도구를 옆에 열기"><svg class="i"><use href="#i-sparkle"/></svg><span>AI · 도구</span></button>
       <button class="btn primary" id="btn-save" type="button" title="저장 (Ctrl+S)" disabled><svg class="i"><use href="#i-save"/></svg><span>저장</span></button>
       <div class="menu-wrap">
         <button class="btn ghost" id="btn-save-as" type="button" title="다른 이름으로 저장 (Ctrl+Shift+S)" aria-haspopup="menu" aria-expanded="false" aria-controls="save-as-menu" disabled><svg class="i"><use href="#i-save-as"/></svg><span>다른 이름으로 저장</span><svg class="i caret"><use href="#i-chevron-down"/></svg></button>

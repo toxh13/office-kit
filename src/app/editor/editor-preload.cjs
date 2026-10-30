@@ -48,4 +48,6 @@ contextBridge.exposeInMainWorld('officeKitEditor', {
   log: (message) => ipcRenderer.send('editor:log', String(message ?? '').slice(0, 2000)),
   /** 창 닫기 (저장 안 한 변경이 있으면 main이 확인창을 띄운다) */
   close: () => ipcRenderer.send('editor:close'),
+  /** 'AI · 도구' 단추: 이 문서의 옆 창(AI 대화·버전·도구)을 연다 */
+  panel: () => ipcRenderer.send('editor:panel'),
 });

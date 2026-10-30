@@ -297,6 +297,7 @@ function wireUi() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   window.addEventListener('blur', closeMenu);
   $('btn-close').addEventListener('click', () => api?.close());
+  $('btn-panel').addEventListener('click', () => api?.panel?.());
   $('btn-failure-close').addEventListener('click', () => api?.close());
 }
 

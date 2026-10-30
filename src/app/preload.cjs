@@ -86,6 +86,12 @@ contextBridge.exposeInMainWorld('officeKit', {
     saveReport: invoke('batch:saveReport'),
   },
 
+  // 옆 창 (편집 창 옆의 AI·도구 창): 전체 창으로 · 닫기
+  panel: {
+    full: invoke('panel:full'),
+    close: invoke('panel:close'),
+  },
+
   // 기본 프로그램: 상태(형식마다 Office Kit로 여는지) · 등록 고치기 · Windows 기본 앱 설정 열기
   assoc: {
     status: invoke('assoc:status'),
@@ -113,6 +119,8 @@ contextBridge.exposeInMainWorld('officeKit', {
     menu: subscribe('menu'),
     toast: subscribe('toast'),
     batchProgress: subscribe('batch:progress'),
+    /** 옆 창 모드 { on } */
+    panel: subscribe('panel'),
   },
 
   /** 확인용 캡처 신호 (OFFICEKIT_SMOKE일 때만 main이 듣는다) */

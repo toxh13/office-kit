@@ -136,6 +136,101 @@ export async function assocStatus({ exe, root = 'Software', read = readStatusRaw
   return summarizeStatus(await read({ root, caps: capsKey(root) }), exe);
 }
 
+// ── Office Kit가 아닌 프로그램으로 열기 ────────────────────
+// Office Kit가 그 형식의 기본 프로그램이면 '프로그램에서 열기'가 Office Kit 자신을 다시 연다 → 다른 프로그램을 찾는다.
+// 1) Windows가 지금 쓰는 열기 명령(AssocQueryString)이 Office Kit가 아니면 그것, 2) 아니면 그 형식을 여는 다른 ProgID
+//    (HKCR\.<확장자> 기본값, OpenWithProgids — OfficeKit.*·AppX* 제외)의 열기 명령. 스크립트는 ASCII만
+const OTHER_PS = String.raw`
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+Add-Type @"
+using System; using System.Text; using System.Runtime.InteropServices;
+public static class OkAssoc {
+  [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+  static extern uint AssocQueryString(uint f, uint s, string a, string x, StringBuilder o, ref uint n);
+  public static string Cmd(string a) { uint n = 2048; var sb = new StringBuilder(2048); return AssocQueryString(0, 1, a, null, sb, ref n) == 0 ? sb.ToString() : ""; }
+}
+"@
+$ext = '.' + $env:OK_EXT
+$cr = [Microsoft.Win32.Registry]::ClassesRoot
+function CmdOf($progId) {
+  $s = $cr.OpenSubKey("$progId\shell"); $verb = 'open'
+  if ($s) { $d = [string]$s.GetValue(''); if ($d) { $verb = $d } }
+  $k = $cr.OpenSubKey("$progId\shell\$verb\command"); if (-not $k) { $k = $cr.OpenSubKey("$progId\shell\open\command") }
+  if ($k) { return [string]$k.GetValue('') } ; return ''
+}
+$eff = [OkAssoc]::Cmd($ext)
+$list = New-Object System.Collections.ArrayList
+$ids = New-Object System.Collections.ArrayList
+$e = $cr.OpenSubKey($ext)
+if ($e) { $d = [string]$e.GetValue(''); if ($d) { [void]$ids.Add($d) } }
+$ow = $cr.OpenSubKey("$ext\OpenWithProgids")
+if ($ow) { foreach ($n in $ow.GetValueNames()) { if (-not $ids.Contains($n)) { [void]$ids.Add($n) } } }
+foreach ($id in $ids) {
+  if ($id -like 'OfficeKit.*' -or $id -like 'AppX*') { continue }
+  $c = CmdOf $id
+  if ($c -and $c -notmatch 'Office Kit\.exe') { [void]$list.Add([ordered]@{ id = $id; command = $c }) }
+}
+$o = [ordered]@{ effective = $eff; candidates = @($list) }
+$o | ConvertTo-Json -Compress
+`;
+
+// 다른 프로그램을 고를 때 먼저 볼 ProgID (설치된 오피스·한컴·PDF 뷰어). 목록에 없는 것은 레지스트리 순서대로
+const PREFERRED_PROGIDS = [/^Word\./i, /^Excel\./i, /^PowerPoint\./i, /^Hwp\.Document/i, /^MSEdgePDF/i, /^AcroExch/i, /^Acrobat/i,
+  /^ChromePDF|^ChromeHTML/i, /^HWord\./i, /^HCell\./i, /^HShow\./i];
+
+/** otherOpenCommand가 읽은 것 { effective, candidates: [{ id, command }] } → 쓸 명령 | null */
+export function pickOpenCommand(raw) {
+  const eff = String(raw?.effective ?? '');
+  if (eff && !/Office Kit\.exe/i.test(eff) && !/OpenWith\.exe/i.test(eff)) return eff;
+  const list = [].concat(raw?.candidates ?? []).filter((c) => c && c.command && !/Office Kit\.exe/i.test(c.command));
+  const rank = (id) => { const i = PREFERRED_PROGIDS.findIndex((re) => re.test(String(id))); return i < 0 ? PREFERRED_PROGIDS.length : i; };
+  list.sort((a, b) => rank(a.id) - rank(b.id));
+  return list[0]?.command ?? null;
+}
+
+/**
+ * 그 형식을 Office Kit 말고 다른 프로그램으로 여는 명령 (예: "C:\...\Hwp.exe" "%1") → 문자열 | null
+ */
+export async function otherOpenCommand(ext, { timeoutMs = 20_000 } = {}) {
+  const enc = Buffer.from(OTHER_PS, 'utf16le').toString('base64');
+  return new Promise((done) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc],
+      { env: { ...process.env, OK_EXT: String(ext).replace(/^\./, '') }, windowsHide: true, timeout: timeoutMs, encoding: 'utf8' },
+      (err, stdout) => {
+        if (err) { done(null); return; }
+        try { done(pickOpenCommand(JSON.parse(String(stdout).trim().replace(/^\uFEFF/, '')))); } catch { done(null); }
+      });
+  });
+}
+
+/**
+ * 열기 명령 글 → { file, args } (args는 한 줄 그대로 — Windows 명령줄 규칙으로 넘긴다).
+ * %1·%L·%l은 파일 경로로, %*·%2~%9 같은 나머지 자리는 지운다. %ProgramFiles% 같은 환경 변수는 풀어 준다
+ */
+export function parseOpenCommand(command, file, env = process.env) {
+  let s = String(command ?? '').trim();
+  if (!s) return null;
+  s = s.replace(/%([A-Za-z_][A-Za-z0-9_()]*)%/g, (m, name) => {
+    const k = Object.keys(env).find((x) => x.toLowerCase() === name.toLowerCase());
+    return k ? env[k] : m;
+  });
+  let exe; let rest;
+  if (s.startsWith('"')) {
+    const end = s.indexOf('"', 1);
+    if (end < 0) return null;
+    exe = s.slice(1, end); rest = s.slice(end + 1);
+  } else {
+    // 따옴표 없는 경로에 빈칸이 있으면 (예: %ProgramFiles%\x\y.exe) .exe까지를 실행 파일로 본다 (Windows도 그렇게 찾는다)
+    const m = /^(.*?\.(?:exe|com|bat|cmd))(?=\s|$)(.*)$/is.exec(s) ?? /^(\S+)(.*)$/s.exec(s);
+    exe = m[1]; rest = m[2];
+  }
+  let used = false;
+  rest = rest.replace(/%[1Ll]/g, () => { used = true; return file; }).replace(/%[*2-9]/g, '').trim();
+  if (!used) rest = `${rest} "${file}"`.trim();
+  return { file: exe, args: rest };
+}
+
 /** 등록하기(고쳐 쓰기). 기본 프로그램은 바꾸지 않는다 → 쓴 값 개수 */
 export async function registerFileTypes({ exe, root = 'Software', run = regExe } = {}) {
   if (!exe) throw new Error('실행 파일 경로가 필요합니다');

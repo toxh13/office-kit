@@ -1,6 +1,6 @@
 {
   "name": "office-kit",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "한글(HWP/HWPX)·Word·PowerPoint·Excel 문서를 열고, 확인하고, AI 대화로 수정하는 데스크톱 도구",
   "type": "module",
   "main": "src/app/main.mjs",

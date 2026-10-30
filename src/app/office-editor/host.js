@@ -848,7 +848,9 @@ function startPage() {
           state.savedAt = Date.now();
           clearTimeout(state.graceTimer);
           state.graceTimer = setTimeout(refresh, SAVED_GRACE_MS + 50);
-          if (as && result?.name) { state.doc = { ...state.doc, name: result.name, ext: result.ext ?? state.doc.ext }; setDocInfo(state.doc); }
+          // 다른 이름으로 저장, 또는 옛 형식에서 바꿔 연 문서의 첫 저장(새 이름) → 이름을 바꿔 보인다
+          if (result?.name && (as || result.name !== state.doc?.name)) { state.doc = { ...state.doc, name: result.name, ext: result.ext ?? state.doc.ext, convertedFrom: null }; setDocInfo(state.doc); }
+          if (state.banner === 'converted') hideBanner('converted');
           if (state.banner === 'save-error' || state.banner === 'missing' || state.banner === 'changed' || state.banner === 'draft') hideBanner();
           if (result?.warning) showBanner('save-warning', String(result.warning), [closeAction('save-warning')]);
           toast(as ? `다른 이름으로 저장했습니다: ${result?.name ?? ''}` : '저장했습니다');
@@ -1151,6 +1153,7 @@ function startPage() {
   function wireUi() {
     $('btn-save').addEventListener('click', () => { void save(); });
     $('btn-about').addEventListener('click', () => openAbout());
+    $('btn-panel')?.addEventListener('click', () => api?.panel?.());
     $('about-close').addEventListener('click', () => $('about').close());
     $('btn-failure-close').addEventListener('click', () => api?.close());
     $('btn-failure-about').addEventListener('click', () => openAbout());
@@ -1222,6 +1225,10 @@ function startPage() {
     if (!doc.available) { fail(doc.reason || '편집기 파일이 없습니다.'); return; }
     if (!(doc.bytes instanceof Uint8Array) || typeof doc.appUrl !== 'string') { fail('문서를 받지 못했습니다.'); return; }
     if (doc.draft) offerDraft(doc.draft);
+    // 옛 형식(doc·xls·ppt …)을 바꿔 연 문서: 저장하면 새 형식으로 따로 저장된다고 알린다
+    else if (doc.convertedFrom) {
+      showBanner('converted', `‘${doc.convertedFrom}’을(를) 고칠 수 있게 .${doc.ext} 형식으로 바꿔 열었어요. 저장하면 원본 옆에 새 .${doc.ext} 파일로 따로 저장되고, 원본은 그대로예요.`, [closeAction('converted')], 'info');
+    }
     // 글꼴 목록을 만들지 못함 (편집은 됨): 복구 띠가 있으면 알림으로만
     if (typeof doc.fontsWarning === 'string' && doc.fontsWarning) {
       if (state.banner) toast(doc.fontsWarning, 'info');

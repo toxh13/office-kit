@@ -66,6 +66,13 @@ async function start() {
   let win = null;
   let current = null;       // 열린 문서 { path, backup, stat, renderedStat, quietUntil }
   let pendingFile = null;   // 창이 준비되기 전에 받은 파일
+  // 문서 창 방식: 탐색기에서 문서를 열면(두 번 누르기·연결 프로그램) 그 문서의 편집 창만 띄운다 (Word처럼).
+  // 주 창은 숨겨 두고, 편집 창의 'AI · 도구'를 누르면 그 옆에 좁은 '옆 창'으로 보인다. 마지막 편집 창을 닫으면 끝난다.
+  // hubPrimary: 사용자가 Office Kit 자체를 실행했다 (주 창이 처음부터 보임) → 주 창을 닫으면 앱이 끝난다 (예전처럼)
+  let hubPrimary = true;
+  let panelOf = null;       // 옆 창이 붙어 있는 편집 창 (BrowserWindow)
+  let hubBounds = null;     // 옆 창이 되기 전 주 창 크기 (전체 창으로 돌아갈 때)
+  let appQuitting = false;
   let rendererReady = false;
 
   // ── 선택 모듈 (다른 사람이 함께 만드는 중일 수 있어 없으면 기능만 끈다) ──
@@ -589,22 +596,44 @@ async function start() {
     return { opened: true };
   }
 
+  /**
+   * 연결 프로그램으로 열기 — 단 Office Kit 자신은 빼고 (Office Kit가 그 형식의 기본 프로그램이면 자기를 다시 열게 되므로).
+   * 다른 프로그램이 없으면 Windows '연결 프로그램' 고르기 창을 띄운다
+   */
+  async function openOutside(p) {
+    if (process.platform !== 'win32') { const e = await shell.openPath(p); if (e) throw fail(`프로그램에서 열지 못했습니다: ${e}`); return; }
+    const m = await loadAssoc();
+    const cmd = await m.otherOpenCommand(extOf(p));
+    const run = cmd ? m.parseOpenCommand(cmd, p) : null;
+    const { spawn } = await import('node:child_process');
+    const launch = (file, args, verbatim) => new Promise((done, bad) => {
+      try {
+        const child = spawn(file, args, { detached: true, stdio: 'ignore', windowsHide: false, windowsVerbatimArguments: verbatim });
+        child.once('error', bad);
+        child.once('spawn', () => { child.unref(); done(); });
+      } catch (err) { bad(err); }
+    });
+    if (run) {
+      try { await launch(run.file, [run.args], true); return; } catch (err) { console.error('[open-outside]', err?.message ?? err); }
+    }
+    // 다른 프로그램을 못 찾음 → '연결 프로그램' 고르기
+    await launch('rundll32.exe', ['shell32.dll,OpenAs_RunDLL', p], false);
+  }
+
   async function openInProgram() {
     const doc = needDoc();
     const ext = extOf(doc.path);
     const apps = await com.probe().catch(() => ({}));
     // 한글은 보안 모듈이 없으면 COM 대신 연결 프로그램으로 연다 (허용 창에서 멈추지 않게)
     if (com.comAppFor(ext) === 'hwp' && !apps.hancomSecurityModule) {
-      const err = await shell.openPath(doc.path);
-      if (err) throw fail(`프로그램에서 열지 못했습니다: ${err}`);
+      await openOutside(doc.path);
       return { via: 'shell' };
     }
     try {
       const r = await core.openInApp(doc.path);
       return { via: 'app', readOnly: !!r?.readOnly, readOnlyReason: r?.readOnlyReason ?? null };
     } catch (err) {
-      const e2 = await shell.openPath(doc.path);
-      if (e2) throw fail(`프로그램에서 열지 못했습니다: ${err.message}`);
+      try { await openOutside(doc.path); } catch { throw fail(`프로그램에서 열지 못했습니다: ${err.message}`); }
       return { via: 'shell' };
     }
   }
@@ -801,6 +830,8 @@ async function start() {
       onSaved: (p) => editorSaved(p),
       onDownloaded: (p) => editorDownloaded(p),
       onDirtyChange: () => pushEditorState(),
+      onPanel: (p, ew) => { showPanel(p, ew).catch((err) => console.error('[panel]', err)); },
+      onClosed: () => setTimeout(editorClosed, 0),
     });
   } catch (err) {
     editorLoadError = err?.message ?? String(err);
@@ -939,6 +970,186 @@ async function start() {
     }
     pushEditorState();
     return { path: r.path, kind: r.kind ?? kind, reused: !!r.reused, notice: typeof r.notice === 'string' && r.notice ? r.notice : null };
+  }
+
+  // ── 문서 창 (Word처럼) ───────────────────────────────
+
+  /** 옛 형식 → 편집기로 열 새 형식 (설치된 Word·Excel·PowerPoint가 바꾼다. csv는 Office Kit가 직접) */
+  const CONVERT_FOR_EDIT = { doc: 'docx', rtf: 'docx', odt: 'docx', xls: 'xlsx', xlsm: 'xlsx', ods: 'xlsx', csv: 'xlsx', ppt: 'pptx', odp: 'pptx' };
+  const wantsDocWindow = (p) => settings.get('openAction') !== 'preview' && OPENABLE_EXTS.includes(extOf(p))
+    && (!!editorKind(p) || !!CONVERT_FOR_EDIT[extOf(p)]);
+
+  /** 주 창을 (옆 창이 아닌) 보통 창으로 보인다 */
+  function showHub() {
+    if (!win) return;
+    leavePanel();
+    if (win.isMinimized()) win.restore();
+    win.show(); win.focus();
+  }
+
+  /** 주 창에서 문서 열기 (창이 준비 전이면 준비되면 연다) */
+  function openInHub(p) {
+    showHub();
+    if (rendererReady) return openDocument(p).catch((err) => send('toast', { type: 'error', message: err.message }));
+    pendingFile = p;
+    return null;
+  }
+
+  /** 문서를 열 때 하는 일 (주 창의 openDocument와 같게): 처음 연 상태 버전, 최근 목록 */
+  function noteOpened(p) {
+    const k = key(p);
+    try {
+      const made = keepVersion(p, 'open');
+      if (!backupExists(restorePoints.get(k))) restorePoints.set(k, made);
+    } catch (err) { console.error('[doc] 백업', err?.message ?? err); }
+    if (!SMOKE) {
+      try { settings.addRecent(p); } catch {}
+      try { app.addRecentDocument(p); } catch {}
+    }
+  }
+
+  // 옛 형식을 바꾸는 동안 띄우는 작은 창 (주 창이 숨어 있어 아무것도 안 보이지 않게)
+  function busyWindow(text) {
+    const w = new BrowserWindow({ width: 380, height: 96, frame: false, resizable: false, skipTaskbar: false, alwaysOnTop: true, show: false,
+      title: 'Office Kit', icon: APP_ICON, backgroundColor: nativeTheme.shouldUseDarkColors ? '#1d2027' : '#ffffff',
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false } });
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const dark = nativeTheme.shouldUseDarkColors;
+    w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset="utf-8"><body style="margin:0;font:13.5px 'Malgun Gothic',sans-serif;display:flex;align-items:center;gap:12px;height:100vh;padding:0 22px;box-sizing:border-box;color:${dark ? '#e6e8ec' : '#1f2328'};background:${dark ? '#1d2027' : '#fff'};border:1px solid ${dark ? '#333842' : '#d0d5dd'}"><b style="color:#3b5bdb">Office Kit</b><span>${esc(text)}</span>`)}`).catch(() => {});
+    w.once('ready-to-show', () => { if (!w.isDestroyed()) w.show(); });
+    return { close: () => { try { if (!w.isDestroyed()) w.destroy(); } catch {} } };
+  }
+
+  /** 옛 형식 → userData/converted/<…>/<이름>.<새 형식> (원본은 그대로) */
+  async function convertForEditing(p, to) {
+    const ext = extOf(p);
+    const dir = join(userData, 'converted', `${Date.now()}-${randomUUID().slice(0, 8)}`);
+    mkdirSync(dir, { recursive: true });
+    const out = join(dir, `${basename(p).replace(/\.[^.]+$/, '')}.${to}`);
+    try {
+      if (ext === 'csv') {
+        const doc = await core.readDocument(p, { engine: 'file' });
+        const { default: ExcelJS } = await import('exceljs');
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet(basename(p).replace(/\.[^.]+$/, '').slice(0, 31) || 'Sheet1');
+        for (const row of doc.sheets?.[0]?.rows ?? []) ws.addRow(row.map((v) => (v !== '' && /^-?\d+(\.\d+)?$/.test(v) && v.length < 16 ? Number(v) : v)));
+        await wb.xlsx.writeFile(out);
+        return out;
+      }
+      if (!(await com.comAvailableFor(ext))) {
+        throw fail(`.${ext} 문서를 고치려면 ${kindOf(p)} 프로그램이 필요해요 (새 형식으로 바꿔 열어야 해서). 미리보기로 열게요.`, 'NEED_APP');
+      }
+      // 프로그램(COM)은 MSIX 앱 안에서 가상화된 폴더를 못 보므로 임시 폴더에 받은 뒤 옮긴다
+      const work = mkdtempSync(join(tmpdir(), 'officekit-convert-'));
+      try {
+        const tmpOut = join(work, `doc.${to}`);
+        await core.convertDocument(p, tmpOut);
+        copyFileSync(tmpOut, out);
+      } finally { try { rmSync(work, { recursive: true, force: true }); } catch {} }
+      return out;
+    } catch (err) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+      throw err;
+    }
+  }
+
+  /**
+   * 문서 창으로 열기 (탐색기에서 연 문서): 편집 창만 띄운다. 편집할 수 없는 문서(PDF·암호 문서 등)는 주 창에서 연다
+   */
+  async function openAsDocument(p) {
+    p = docPath(p);
+    const ext = extOf(p);
+    const kind = editorKind(p);
+    try {
+      if (!editors) throw fail(`편집 창 기능을 불러오지 못했습니다: ${editorLoadError}`, 'EDITOR_MISSING');
+      if (kind) {
+        if (!editors.available(kind).available) throw fail('편집기가 없어 미리보기로 엽니다', 'EDITOR_MISSING');
+        if (kind === 'hwp' && !editors.isOpen(p)) {
+          const bad = hwpOpenProblem(p);
+          if (bad) throw fail(bad.message, bad.code);
+        }
+        noteOpened(p);
+        await editors.openEditor(p);
+        return { path: p, mode: 'editor' };
+      }
+      const to = CONVERT_FOR_EDIT[ext];
+      if (!to) return openInHub(p);
+      if (!editors.available('office').available) throw fail('편집기가 없어 미리보기로 엽니다', 'EDITOR_MISSING');
+      noteOpened(p);
+      const busy = busyWindow(`‘${basename(p)}’를 고칠 수 있게 바꾸는 중…`);
+      let tmp;
+      try { tmp = await convertForEditing(p, to); } finally { busy.close(); }
+      await editors.openEditor(tmp, { convertedFrom: p });
+      return { path: p, mode: 'converted' };
+    } catch (err) {
+      // 편집 창으로 못 열면 주 창에서 미리보기로 (이유를 알린다)
+      console.error('[doc-window]', err?.message ?? err);
+      await openInHub(p);
+      setTimeout(() => send('toast', { type: 'warn', message: err?.message ?? String(err) }), 400);
+      return { path: p, mode: 'hub' };
+    }
+  }
+
+  /** 편집 창이 닫힌 뒤: 주 창이 숨어 있거나 옆 창뿐이고 편집 창이 하나도 없으면 끝낸다 (Word처럼) */
+  function editorClosed() {
+    pushEditorState();
+    if (!win || win.isDestroyed() || appQuitting) return;
+    const left = editors?.list().length ?? 0;
+    if (panelOf && (panelOf.isDestroyed() || left === 0)) {
+      panelOf = null;
+      if (!hubPrimary) { win.hide(); leavePanel(); }
+    }
+    if (left === 0 && !hubPrimary && !win.isVisible()) app.quit();
+  }
+
+  const PANEL_W = 420;
+
+  /** 편집 창 옆에 옆 창(AI 대화·버전·도구)을 붙인다 */
+  async function showPanel(p, ew) {
+    if (!win || win.isDestroyed() || !ew || ew.isDestroyed()) return;
+    if (!current || !samePath(current.path, p)) {
+      if (!rendererReady) return;
+      await openDocument(p);
+    }
+    if (!win.isVisible() || !panelOf) {
+      if (win.isVisible() && !panelOf && !win.isMinimized()) hubBounds = win.getNormalBounds();
+    }
+    send('panel', { on: true, path: p });
+    win.setMinimumSize(320, 480);
+    if (win.isMaximized()) win.unmaximize();
+    if (ew.isMaximized()) ew.unmaximize();
+    const wa = screen.getDisplayMatching(ew.getBounds()).workArea;
+    let eb = ew.getBounds();
+    // 오른쪽에 자리가 없으면 편집 창을 줄인다
+    if (eb.x + eb.width + PANEL_W > wa.x + wa.width) {
+      const width = Math.max(720, wa.x + wa.width - PANEL_W - eb.x);
+      const x = Math.max(wa.x, Math.min(eb.x, wa.x + wa.width - PANEL_W - width));
+      eb = { ...eb, x, width };
+      ew.setBounds(eb);
+    }
+    win.setBounds({ x: eb.x + eb.width, y: eb.y, width: PANEL_W, height: eb.height });
+    win.show(); win.focus();
+    panelOf = ew;
+    if (!ew.__okPanelFollow) {
+      ew.__okPanelFollow = true;
+      const follow = () => {
+        if (panelOf !== ew || ew.isDestroyed() || !win || win.isDestroyed() || !win.isVisible() || ew.isMinimized()) return;
+        const b = ew.getBounds();
+        win.setBounds({ x: b.x + b.width, y: b.y, width: win.getBounds().width, height: b.height });
+      };
+      ew.on('move', follow);
+      ew.on('resize', follow);
+    }
+  }
+
+  /** 옆 창 모드 끝 (주 창 크기를 되돌린다) */
+  function leavePanel() {
+    if (!win || win.isDestroyed()) return;
+    const was = !!panelOf || win.getMinimumSize()[0] < 1000;
+    panelOf = null;
+    send('panel', { on: false });
+    win.setMinimumSize(1000, 680);
+    if (was) win.setBounds(hubBounds ?? initialBounds());
   }
 
   // ── AI 대화 ──────────────────────────────────────────
@@ -1259,6 +1470,17 @@ async function start() {
   handle('batch:saveReport', () => batchSaveReport());
   handle('doc:openInApp', () => openInProgram());
   handle('doc:openInWord', () => openPdfInWord());
+  handle('panel:full', () => { showHub(); return null; });
+  handle('panel:close', () => {
+    // 옆 창 닫기: Office Kit를 직접 실행해 쓰던 주 창이면 보통 주 창으로 돌아온다.
+    // 탐색기에서 문서를 열어 시작했으면 숨긴다 (편집 창은 그대로). 편집 창이 하나도 없으면 끝낸다
+    if (!win) return null;
+    if (hubPrimary) { showHub(); return null; }
+    win.hide();
+    leavePanel();
+    if (!hubPrimary && !(editors?.list().length)) app.quit();
+    return null;
+  });
   handle('doc:edit', () => editDocument());
   handle('doc:savePdf', (args) => savePdf(args && typeof args === 'object' ? { step: ['pick', 'make'].includes(args.step) ? args.step : undefined } : {}));
   handle('doc:showInFolder', () => { shell.showItemInFolder(needDoc().path); return null; });
@@ -1464,7 +1686,7 @@ async function start() {
     } catch { return false; }
   }
 
-  function createWindow() {
+  function createWindow({ hidden = false } = {}) {
     const saved = SMOKE ? null : settings.get('window');
     win = new BrowserWindow({
       ...initialBounds(), minWidth: 1000, minHeight: 680, title: 'Office Kit', show: false,
@@ -1480,7 +1702,7 @@ async function start() {
       },
     });
     if (saved?.maximized) win.maximize();
-    win.once('ready-to-show', () => { win.show(); if (SMOKE) win.focus(); });
+    win.once('ready-to-show', () => { if (!hidden) win.show(); if (SMOKE) win.focus(); });
 
     const wc = win.webContents;
     // 새 창·이동 막기: 웹 주소는 기본 브라우저로
@@ -1510,6 +1732,14 @@ async function start() {
     // 주 창을 닫으면 편집 창도 닫는다. 저장 안 한 편집 창은 저장 / 저장 안 함 / 취소를 묻고, 취소하면 주 창도 그대로 둔다
     let editorsClosed = false; let closingEditors = null;
     win.on('close', (e) => {
+      // 문서 창 방식(탐색기에서 열어 시작)에서는 주 창·옆 창을 닫아도 편집 창은 그대로 둔다 → 숨기기만
+      if (!hubPrimary && !appQuitting && editors?.list().length) {
+        e.preventDefault();
+        win.hide();
+        leavePanel();
+        return;
+      }
+      if (panelOf) leavePanel();
       if (!editorsClosed && editors?.list().length) {
         e.preventDefault();
         closingEditors ??= editors.closeAll()
@@ -1554,10 +1784,23 @@ async function start() {
   // ── 시작 ─────────────────────────────────────────────
 
   pendingFile = fileFromArgv(process.argv);
+  // 탐색기에서 편집할 수 있는 문서로 시작 → 문서 창 방식 (주 창은 숨김). 확인용 캡처는 OFFICEKIT_SMOKE_DOCWINDOW=1일 때만
+  // OFFICEKIT_DOC_WINDOW=0: 끈다 (시험용)
+  const docWindowStart = !!pendingFile && process.env.OFFICEKIT_DOC_WINDOW !== '0' && (!SMOKE || process.env.OFFICEKIT_SMOKE_DOCWINDOW === '1')
+    && (() => { try { return wantsDocWindow(pendingFile) && statSync(pendingFile).isFile(); } catch { return false; } })();
+  const launchDoc = docWindowStart ? pendingFile : null;
+  if (docWindowStart) { hubPrimary = false; pendingFile = null; }
+
+  app.on('before-quit', () => { appQuitting = true; });
 
   app.on('second-instance', (_e, argv, cwd) => {
     const f = fileFromArgv(argv, cwd);
-    if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    // 탐색기에서 연 문서 → 그 문서의 편집 창만 (주 창은 건드리지 않는다)
+    if (f && wantsDocWindow(f) && !SMOKE && process.env.OFFICEKIT_DOC_WINDOW !== '0') {
+      openAsDocument(f).catch((err) => { showHub(); send('toast', { type: 'error', message: err.message }); });
+      return;
+    }
+    if (win) { if (win.isMinimized()) win.restore(); leavePanel(); win.show(); win.focus(); }
     if (!f) return;
     if (rendererReady) openDocument(f, { autoEdit: true }).catch((err) => send('toast', { type: 'error', message: err.message }));
     else pendingFile = f;
@@ -1588,5 +1831,6 @@ async function start() {
   // 오래 안 연 문서의 자동 저장 사본(Office)·쓰다 남은 임시 파일 정리
   try { cleanOfficeDrafts(); } catch (err) { console.error('[editor] 자동 저장 사본 정리 실패:', err?.message ?? err); }
   buildMenu();
-  createWindow();
+  createWindow({ hidden: docWindowStart });
+  if (launchDoc) openAsDocument(launchDoc).catch((err) => { showHub(); send('toast', { type: 'error', message: err.message }); });
 }

@@ -68,3 +68,24 @@ test('실제 레지스트리: 시험용 키에 등록 → 다시 읽기 (한글 
   }
   await assert.rejects(unregisterForTest({ root: 'Software' }));
 });
+
+test('Office Kit가 기본 프로그램이면 다른 프로그램으로 열기 (프로그램에서 열기가 자기를 다시 열지 않게)', async () => {
+  const { pickOpenCommand, parseOpenCommand } = await import('../src/setup/fileassoc.mjs');
+  const r = String.raw;
+  const ok = r`"C:\Users\a\AppData\Local\Programs\Office Kit\Office Kit.exe" "%1"`;
+  // Windows가 쓰는 명령이 Office Kit가 아니면 그대로
+  assert.equal(pickOpenCommand({ effective: r`"C:\Hnc\Hwp.exe" "%1"`, candidates: [] }), r`"C:\Hnc\Hwp.exe" "%1"`);
+  // Office Kit면 다른 후보 중 이름난 프로그램 먼저 (Word > 한컴 > 그 밖)
+  assert.equal(pickOpenCommand({ effective: ok, candidates: [
+    { id: 'LibreOffice.Docx', command: r`"C:\LO\swriter.exe" -o "%1"` },
+    { id: 'HWord.Document.docx.130', command: r`"C:\Hnc\Hword.exe" "%1"` },
+    { id: 'Word.Document.12', command: r`"C:\Office\WINWORD.EXE" /n "%1"` },
+  ] }), r`"C:\Office\WINWORD.EXE" /n "%1"`);
+  assert.equal(pickOpenCommand({ effective: r`C:\Windows\system32\OpenWith.exe "%1"`, candidates: [{ id: 'X', command: ok }] }), null);
+  // 명령 → 실행 파일과 인수 (%1 → 경로, 나머지 자리 지움, 환경 변수 풀기)
+  assert.deepEqual(parseOpenCommand(r`"C:\Hnc\Hwp.exe" "%1"`, r`D:\문서\a b.hwp`), { file: r`C:\Hnc\Hwp.exe`, args: r`"D:\문서\a b.hwp"` });
+  assert.deepEqual(parseOpenCommand(r`%PF%\Viewer.exe /open "%1" %*`, r`D:\x.pdf`, { PF: r`C:\Program Files` }), { file: r`C:\Program Files\Viewer.exe`, args: r`/open "D:\x.pdf"` },
+    '따옴표 없는 경로에 빈칸이 있어도 .exe까지가 실행 파일');
+  assert.deepEqual(parseOpenCommand(r`"%PF%\Viewer.exe" /open "%1" %*`, r`D:\x.pdf`, { PF: r`C:\Program Files` }), { file: r`C:\Program Files\Viewer.exe`, args: r`/open "D:\x.pdf"` });
+  assert.deepEqual(parseOpenCommand(r`"C:\a\b.exe"`, r`D:\x.pdf`), { file: r`C:\a\b.exe`, args: r`"D:\x.pdf"` }, '%1이 없으면 끝에 붙인다');
+});

@@ -355,6 +355,20 @@ kbd {
   .actions .btn.edit-btn { padding: 0; width: 34px; }
 }
 
+/* ── 옆 창 (편집 창의 'AI · 도구') ──────────────────── */
+/* 편집 창 옆에 붙은 좁은 창: 미리보기 없이 AI 대화·버전·도구만 */
+.panel-only { display: none; }
+.app.panel-mode .panel-only { display: inline-grid; }
+.app.panel-mode .brand, .app.panel-mode #btn-open, .app.panel-mode #btn-new, .app.panel-mode #btn-close-doc, .app.panel-mode .engine-badge,
+.app.panel-mode #btn-edit, .app.panel-mode #btn-refresh, .app.panel-mode #btn-openapp, .app.panel-mode #btn-pdf, .app.panel-mode #btn-folder,
+.app.panel-mode #btn-toggle-chat, .app.panel-mode #btn-collapse-chat, .app.panel-mode .statusbar .st:not(.busy):not(.ready),
+.app.panel-mode .viewer, .app.panel-mode .splitter { display: none !important; }
+.app.panel-mode .workspace, .app.panel-mode.chat-collapsed .workspace { grid-template-columns: 0 0 minmax(0, 1fr); }
+.app.panel-mode .chat, .app.panel-mode.chat-collapsed .chat { display: flex; }
+.app.panel-mode .topbar { padding-left: 10px; gap: 2px; }
+.app.panel-mode .docinfo { min-width: 0; flex: 1; }
+.app.panel-mode .actions .btn .lbl { display: none; }
+
 /* ── 작업 영역 ─────────────────────────────────────── */
 
 .workspace {
