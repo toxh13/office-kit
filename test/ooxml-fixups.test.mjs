@@ -91,11 +91,14 @@ describe('pptx — 마스터마다 자기 테마 (필수)', () => {
     u8.set(PPTX, 4);
     const view = u8.subarray(4, 4 + PPTX.length); // 더 큰 버퍼 안의 일부 (IPC로 오는 모양)
     const ab = PPTX.buffer.slice(PPTX.byteOffset, PPTX.byteOffset + PPTX.length);
-    const want = (await fixOoxml(PPTX, 'pptx')).bytes;
+    // 새로 넣는 부분에는 지금 시각이 적히므로 (초가 바뀌면 바이트가 달라진다) 바이트가 아니라 풀어 본 내용을 견준다
+    const want = await unzip((await fixOoxml(PPTX, 'pptx')).bytes);
     for (const [input, ext] of [[view, '.PPTX'], [ab, 'Pptx']]) {
       const r = await fixOoxml(input, ext);
       assert.equal(r.changed, true, ext);
-      assert.ok(r.bytes.equals(want), ext);
+      const got = await unzip(r.bytes);
+      assert.deepEqual(got.names, want.names, ext);
+      for (const n of want.parts.keys()) assert.ok(got.part(n)?.equals(want.part(n)), `${ext}: ${n}`);
     }
     await assert.rejects(fixOoxml('nope', 'pptx'), TypeError);
   });
