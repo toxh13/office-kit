@@ -73,6 +73,7 @@ async function start() {
   let panelOf = null;       // 옆 창이 붙어 있는 편집 창 (BrowserWindow)
   let hubBounds = null;     // 옆 창이 되기 전 주 창 크기 (전체 창으로 돌아갈 때)
   let appQuitting = false;
+  let hubMaximizeLater = false; // 숨긴 채 시작한 주 창: 처음 보일 때 최대화 (저장된 창 상태)
   let rendererReady = false;
 
   // ── 선택 모듈 (다른 사람이 함께 만드는 중일 수 있어 없으면 기능만 끈다) ──
@@ -985,6 +986,7 @@ async function start() {
     leavePanel();
     if (win.isMinimized()) win.restore();
     win.show(); win.focus();
+    if (hubMaximizeLater) { hubMaximizeLater = false; win.maximize(); }
   }
 
   /** 주 창에서 문서 열기 (창이 준비 전이면 준비되면 연다) */
@@ -1701,7 +1703,9 @@ async function start() {
         backgroundThrottling: !SMOKE,
       },
     });
-    if (saved?.maximized) win.maximize();
+    // 숨긴 채 시작하면(문서 창 방식) 최대화는 처음 보일 때 한다 — maximize()는 숨긴 창도 보이게 한다
+    if (saved?.maximized && !hidden) win.maximize();
+    else if (saved?.maximized) hubMaximizeLater = true;
     win.once('ready-to-show', () => { if (!hidden) win.show(); if (SMOKE) win.focus(); });
 
     const wc = win.webContents;
