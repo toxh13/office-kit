@@ -211,7 +211,9 @@ export function systemPrompt({ filePath } = {}) {
     '- 글자만 바꾸거나 칸을 채울 때는 office_replace / office_fill (엑셀 셀 값은 office_set_cells)을 쓴다.',
     '- 그 밖의 변경(스타일·서식, 문단·표·그림 넣기, 슬라이드·노트·차트, 시트 등)은 형식별 편집(…_edit)에 작업을 순서대로 모아 한 번에 보낸다. '
       + '하나라도 실패하면 아무것도 저장되지 않으니, 오류를 읽고 작업을 고쳐 다시 보낸다.',
-    own ? `- 이 문서의 형식별 도구: ${own[0]}_inspect → ${own[0]}_edit (${own[1]})${own[2] ? `. ${own[2]}` : ''}`
+    KIND[ext] === 'PDF' ? '- 이 문서는 PDF다. office_read로 글자를 읽고(쪽마다 "--- 쪽 n ---"), 표·그림·스캔본은 office_page_image로 쪽 그림을 보고 답한다. '
+      + 'PDF 자체는 고칠 수 없다 — 고쳐 달라고 하면 그렇다고 알리고, 원본 문서를 고치거나 내용을 새 문서(office_create)로 옮기는 방법을 권한다.'
+      : own ? `- 이 문서의 형식별 도구: ${own[0]}_inspect → ${own[0]}_edit (${own[1]})${own[2] ? `. ${own[2]}` : ''}`
       : '- 형식별 도구: 한글 hwp_inspect·hwp_edit, Word word_inspect·word_edit, PowerPoint ppt_inspect·ppt_edit, Excel excel_inspect·excel_edit',
     '- 고친 내용은 같은 파일에 저장한다(output 생략). 앱이 원본을 백업해 두고 미리보기를 새로 고친다.',
     '- 문서를 고친 뒤에는 office_page_image 로 바뀐 쪽을 이미지로 보고 결과를 확인한다.',

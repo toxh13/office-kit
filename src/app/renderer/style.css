@@ -43,6 +43,7 @@
   --k-ppt: #cf4a21;
   --k-xls: #1d7a45;
   --k-etc: #6b7280;
+  --k-pdf: #c62828;
   --chat-w: 400px;
   --topbar-h: 52px;
   --status-h: 28px;
@@ -87,6 +88,7 @@
     --k-ppt: #f08a62;
     --k-xls: #4fbf7f;
     --k-etc: #9ca3af;
+    --k-pdf: #ef6b6b;
   }
 }
 
@@ -226,6 +228,7 @@ kbd {
 .k-ppt { --kc: var(--k-ppt); }
 .k-xls { --kc: var(--k-xls); }
 .k-etc { --kc: var(--k-etc); }
+.k-pdf { --kc: var(--k-pdf); }
 
 .actions { display: flex; align-items: center; gap: 2px; flex: none; }
 
@@ -434,6 +437,7 @@ kbd {
 .file-tile.k-ppt { --tile: #cf4a21; }
 .file-tile.k-xls { --tile: #1d7a45; }
 .file-tile.k-etc { --tile: #6b7280; }
+.file-tile.k-pdf { --tile: #c62828; font-size: 10px; letter-spacing: -0.02em; }
 .recent-text { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .recent-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-dir { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }

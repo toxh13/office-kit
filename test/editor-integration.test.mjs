@@ -831,7 +831,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(fake.dialogs.length, d1);
   });
 
-  await t.test('Office 내려받기(PDF 등) → 열 수 있는 형식이면 최근 목록에 (PDF는 넣지 않음)', async () => {
+  await t.test('Office 내려받기(PDF 등) → 열 수 있는 형식이면 최근 목록에 (PDF도 이제 열 수 있음)', async () => {
     const w = fake.windows.at(-1); // 다섯째.docx
     const dl = (...a) => fake.invokeFrom(w.webContents, 'editor:download', ...a);
     const odt = join(docs, '내보낸 문서.odt');
@@ -845,7 +845,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     r = await dl('내보낸 문서.pdf', new Uint8Array(Buffer.from('%PDF-1.7\n%%EOF\n')), 'application/pdf');
     assert.equal(r.ok, true, r.error);
     recent = JSON.parse(readFileSync(join(ud, 'settings.json'), 'utf8')).recent;
-    assert.equal(recent.some((x) => x.path === pdf), false);
+    assert.equal(recent[0].path, pdf);
   });
 
   let closeAsked = 0;

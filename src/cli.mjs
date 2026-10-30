@@ -460,7 +460,8 @@ const COMMANDS = {
     if (opt.json) return print(JSON.stringify(i, null, 2));
     print(`이름: ${i.name}`);
     print(`종류: ${i.kind} (.${i.format}), ${i.size.toLocaleString()}바이트`);
-    if (i.pages !== undefined) print(`쪽: ${i.pages}, 표: ${i.tables}, 누름틀: ${i.fields?.length ? i.fields.join(', ') : '없음'}`);
+    if (i.pages !== undefined && i.tables === undefined) print(`쪽: ${i.pages}${i.scanned ? ' (글자가 거의 없음 — 스캔한 PDF일 수 있음)' : ''}`);
+    else if (i.pages !== undefined) print(`쪽: ${i.pages}, 표: ${i.tables}, 누름틀: ${i.fields?.length ? i.fields.join(', ') : '없음'}`);
     print(`프로그램 엔진: ${i.appAvailable ? '가능' : '불가'}, 파일 엔진: ${i.fileEngine ? '가능' : '불가'}`);
   },
 

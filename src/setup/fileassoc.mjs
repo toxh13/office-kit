@@ -16,6 +16,7 @@ export const ASSOC_TYPES = {
   docx: 'Word 문서', doc: 'Word 97-2003 문서', rtf: '서식 있는 텍스트 문서', odt: 'ODF 텍스트 문서',
   pptx: 'PowerPoint 프레젠테이션', ppt: 'PowerPoint 97-2003 프레젠테이션', odp: 'ODF 프레젠테이션',
   xlsx: 'Excel 통합 문서', xls: 'Excel 97-2003 통합 문서', xlsm: 'Excel 매크로 사용 통합 문서', csv: 'CSV 파일', ods: 'ODF 스프레드시트',
+  pdf: 'PDF 문서',
 };
 
 /** 설정 화면에 묶어 보일 순서 */
@@ -24,6 +25,7 @@ export const ASSOC_GROUPS = [
   { kind: 'Word', exts: ['docx', 'doc', 'rtf', 'odt'] },
   { kind: 'PowerPoint', exts: ['pptx', 'ppt', 'odp'] },
   { kind: 'Excel', exts: ['xlsx', 'xls', 'xlsm', 'csv', 'ods'] },
+  { kind: 'PDF', exts: ['pdf'] },
 ];
 
 const FILE_EXTS_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts';
@@ -59,7 +61,7 @@ export function registrationEntries(exe, { root = 'Software' } = {}) {
   put(`${cls}\\Applications\\${APP_NAME}.exe\\DefaultIcon`, '', icon);
   put(`${cls}\\Applications\\${APP_NAME}.exe\\shell\\open\\command`, '', openCommand(exe));
   put(caps, 'ApplicationName', APP_NAME);
-  put(caps, 'ApplicationDescription', '한글·Word·PowerPoint·Excel 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램');
+  put(caps, 'ApplicationDescription', '한글·Word·PowerPoint·Excel·PDF 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램');
   put(caps, 'ApplicationIcon', icon);
   put(`${root}\\RegisteredApplications`, APP_NAME, caps);
   return out;

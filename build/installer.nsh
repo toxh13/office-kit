@@ -81,6 +81,7 @@
   !insertmacro ${MACRO} xlsm "Excel 매크로 사용 통합 문서"
   !insertmacro ${MACRO} csv "CSV 파일"
   !insertmacro ${MACRO} ods "ODF 스프레드시트"
+  !insertmacro ${MACRO} pdf "PDF 문서"
 !macroend
 
 !macro OfficeKitRegisterApp
@@ -89,7 +90,7 @@
   WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
   WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
   WriteRegStr HKCU "${OK_CAPS}" "ApplicationName" "Office Kit"
-  WriteRegStr HKCU "${OK_CAPS}" "ApplicationDescription" "한글·Word·PowerPoint·Excel 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램"
+  WriteRegStr HKCU "${OK_CAPS}" "ApplicationDescription" "한글·Word·PowerPoint·Excel·PDF 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램"
   WriteRegStr HKCU "${OK_CAPS}" "ApplicationIcon" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
   WriteRegStr HKCU "${OK_ROOT}\RegisteredApplications" "Office Kit" "${OK_CAPS}"
 !macroend
@@ -118,6 +119,7 @@
   !insertmacro ${MACRO} xlsm
   !insertmacro ${MACRO} csv
   !insertmacro ${MACRO} ods
+  !insertmacro ${MACRO} pdf
 !macroend
 
 !macro customInstall

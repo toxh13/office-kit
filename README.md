@@ -37,7 +37,7 @@
 | 바로 가기 | 바탕화면 · 시작 메뉴 "Office Kit" |
 | 오른쪽 클릭 메뉴 | 문서 파일에 **"Office Kit로 열기"** (기본 연결 프로그램은 그대로) |
 | 기본 프로그램 후보 | Windows 설정 → 앱 → 기본 앱, 탐색기 "연결 프로그램"에 Office Kit가 나온다. 기본 프로그램으로 정하는 것은 사용자가 고른다 (아래 "기본 프로그램으로 정하기") |
-| 대상 형식 | hwp hwpx hwt · docx doc rtf odt · pptx ppt odp · xlsx xls xlsm csv ods |
+| 대상 형식 | hwp hwpx hwt · docx doc rtf odt · pptx ppt odp · xlsx xls xlsm csv ods · pdf |
 
 지우기: 설정 → 앱 → "Office Kit" 제거. 오른쪽 클릭 메뉴·기본 프로그램 후보 등록·명령줄 파일도 함께 지워진다.
 
@@ -142,6 +142,13 @@ AI는 먼저 구조를 살펴보고(`…_inspect`) 번호를 확인한 뒤 고�
 - 프로그램으로 만든 PDF는 기억해 두고 파일(크기·수정 시각)이 그대로면 다시 쓴다 → 다시 열 때 바로 보인다. 처음 만들 때는 걸린 시간을 상태 막대에 보여 준다.
 - Excel은 미리보기·AI 쪽 그림(`office_page_image`)에서 **시트마다 한 쪽 너비**에 맞춘다 (넓은 표·차트가 여러 쪽으로 잘리지 않게). 임시 사본에서만 바꾸고 파일의 인쇄 설정은 그대로다 — **PDF로 저장**은 문서의 인쇄 설정대로.
 - 미리보기(내장 엔진)는 표 다음 문단을 표의 바깥 아래 여백만큼 띄운다 (한글과 같게, 파일은 그대로).
+
+### PDF 열기
+- PDF도 끌어 놓기·파일 열기·탐색기(Office Kit로 열기, 기본 프로그램)로 연다. 내장 PDF 뷰어로 보이고, 인터넷·프로그램 없이 글자를 읽는다 (`unpdf`, pdf.js).
+- AI 대화로 요약·정리·질문을 할 수 있다. 글자가 거의 없는 스캔본은 AI가 쪽 그림을 보고 답한다.
+- **개인정보 찾기**는 되지만, PDF는 글자를 바꿀 수 없어 가린 사본은 만들지 않는다. **바뀐 내용 보기**(두 버전 글 비교)도 된다.
+- PDF 자체는 앱 안에서 고칠 수 없다. **Word로 고치기**를 누르면 Word가 PDF를 편집할 수 있는 문서로 바꿔 연다 (Word가 묻는 확인 창에서 ‘확인’. 모양이 조금 달라질 수 있음). Word 설정은 바꾸지 않는다.
+- 명령줄 `office-kit text 문서.pdf` · `info` · `pii`, MCP `office_read` · `office_info` · `office_page_image` · `office_find_pii`에서도 PDF를 읽는다.
 
 ### PDF로 저장
 상단 **PDF로 저장**, AI에게 "PDF로 저장해줘", MCP `office_convert`, 명령줄 `office-kit convert 보고서.hwp 보고서.pdf` 모두 같은 규칙이다.

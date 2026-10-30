@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('officeKit', {
     // 버전 이후 바뀐 글 { file } → { kind: 'text'|'cells', hunks|cells, stats, same, time, reason }
     diff: invoke('doc:diff'),
     openInApp: invoke('doc:openInApp'),
+    // PDF를 Word 창에서 열기 (Word가 편집할 수 있는 문서로 바꾼다 — 확인 창은 사용자가 누른다)
+    openInWord: invoke('doc:openInWord'),
     savePdf: invoke('doc:savePdf'),
     showInFolder: invoke('doc:showInFolder'),
     // 편집 창 열기 (한글 → 한글 편집, docx·xlsx·pptx → 문서·표·슬라이드 편집. 이미 열려 있으면 앞으로)

@@ -59,15 +59,17 @@
   const KIND_BY_EXT = {
     hwp: '한글', hwpx: '한글', hwt: '한글', docx: 'Word', doc: 'Word', rtf: 'Word', odt: 'Word',
     pptx: 'PowerPoint', ppt: 'PowerPoint', odp: 'PowerPoint', xlsx: 'Excel', xls: 'Excel', xlsm: 'Excel', csv: 'Excel', ods: 'Excel',
+    pdf: 'PDF',
   };
   const KIND_STYLE = {
     한글: { cls: 'k-hwp', letter: '한' }, Word: { cls: 'k-word', letter: 'W' },
     PowerPoint: { cls: 'k-ppt', letter: 'P' }, Excel: { cls: 'k-xls', letter: 'X' },
+    PDF: { cls: 'k-pdf', letter: 'PDF' },
   };
   const kindStyle = (kind) => KIND_STYLE[kind] ?? { cls: 'k-etc', letter: '?' };
 
   const ENGINE_LABEL = {
-    rhwp: '내장 엔진 (rhwp)', file: '내장 엔진', word: 'Microsoft Word', excel: 'Microsoft Excel',
+    rhwp: '내장 엔진 (rhwp)', file: '내장 엔진', pdf: 'PDF 뷰어', word: 'Microsoft Word', excel: 'Microsoft Excel',
     ppt: 'PowerPoint', powerpoint: 'PowerPoint', hwp: '한컴오피스', hancom: '한컴오피스',
   };
   const ENGINE_SHORT = { rhwp: '내장 엔진', file: '내장 엔진', word: 'Word 변환', excel: 'Excel 변환', ppt: 'PowerPoint 변환', powerpoint: 'PowerPoint 변환', hwp: '한컴 변환', hancom: '한컴 변환' };
@@ -403,6 +405,10 @@
     const d = state.doc;
     el.docinfo.hidden = !d;
     for (const id of ['btn-refresh', 'btn-openapp', 'btn-pdf', 'btn-folder']) $(`#${id}`).disabled = !d;
+    // PDF 문서는 이미 PDF다
+    const isPdf = !!d && extOf(d.path) === 'pdf';
+    $('#btn-pdf').disabled = !d || isPdf;
+    $('#btn-pdf').title = isPdf ? '이미 PDF 문서예요' : 'PDF로 저장';
     const restore = $('#btn-restore');
     restore.disabled = !d || !d.backup || !!state.restoring;
     restore.title = d?.backup ? '마지막 변경 전으로 되돌리기 (옆 ▾: 버전 목록)' : '이 문서의 백업이 없어요';
@@ -477,6 +483,15 @@
     const d = state.doc;
     const b = el.btnEdit;
     const ok = isEditable(d);
+    // PDF: 앱 안에서는 못 고치므로 Word로 열어 고치게 한다 (Word가 PDF를 편집 가능한 문서로 바꾼다)
+    const pdf = !!d && extOf(d.path) === 'pdf';
+    b.querySelector('.lbl').textContent = pdf ? 'Word로 고치기' : '직접 편집';
+    if (pdf) {
+      b.hidden = false; b.disabled = false;
+      b.classList.remove('active');
+      b.title = 'Word에서 PDF를 편집할 수 있는 문서로 바꿔 열어요 (모양이 조금 달라질 수 있어요). 고친 뒤 Word에서 .docx나 PDF로 저장하세요.';
+      return;
+    }
     b.disabled = !ok;
     // 편집 창으로 열 수 없는 형식(옛 형식 doc·xls·ppt, csv, odt …)에서는 숨겨 문서 이름 자리를 넓힌다 (문서가 없을 때는 안내용으로 보인다)
     b.hidden = !!d && !ok;
@@ -518,6 +533,7 @@
 
   /** p: 열려던 문서 경로 */
   function editorError(err, p = state.doc?.path) {
+    if (err.code === 'PDF_EDIT') { toast(err.message, { type: 'info', timeout: 9000 }); return null; }
     if (err.code === 'EDITOR_MISSING') { setEditorAvailable(p, false, err.message); renderEditButton(); return showEditorMissing(err.message, p); }
     if (OPEN_IN_APP_CODES.has(err.code)) {
       toast(err.message, { type: 'info', action: { label: '프로그램에서 열기', run: actOpenInApp } });
@@ -527,8 +543,28 @@
     return null;
   }
 
+  async function actPdfInWord() {
+    const d = state.doc;
+    if (!d) return;
+    const yes = await confirmDialog({
+      title: 'Word로 열어 고칠까요?',
+      body: [
+        'Word가 PDF를 편집할 수 있는 문서로 바꿔서 열어요. Word가 묻는 확인 창에서 ‘확인’을 눌러 주세요.',
+        '표·그림이 많은 PDF는 모양이 조금 달라질 수 있어요. 원본 PDF는 그대로 두고, 고친 뒤 Word에서 ‘다른 이름으로 저장’으로 .docx나 PDF로 저장하세요.',
+      ],
+      ok: 'Word로 열기',
+    });
+    if (!yes || state.doc !== d) return;
+    setBusy('edit', 'Word 여는 중…');
+    try {
+      await call(K.doc.openInWord());
+      toast('Word에서 열고 있어요. 확인 창이 뜨면 ‘확인’을 눌러 주세요.', { type: 'info', timeout: 8000 });
+    } catch (err) { showError(err); } finally { clearBusy('edit'); }
+  }
+
   async function actEdit() {
     if (!state.doc) return;
+    if (extOf(state.doc.path) === 'pdf') { actPdfInWord(); return; }
     const p = state.doc.path;
     const label = editorLabel(p) ?? '편집';
     setBusy('edit', state.doc.editor?.open ? `${label} 창 여는 중…` : `${label}기 여는 중…`);
@@ -998,6 +1034,8 @@
     for (const it of pii.items) counts[it.label] = (counts[it.label] ?? 0) + it.count;
     $('#pii-stats').replaceChildren(...Object.entries(counts).map(([k, n]) => h('span', { class: 'pill warn', text: `${k} ${n}` })));
     $('#pii-note').textContent = `가린 사본: ${baseName(r.output)} (원본 옆)`;
+    const pdfOnly = extOf(d0.path) === 'pdf';
+    if (pdfOnly) $('#pii-note').textContent = 'PDF는 글자를 바꿀 수 없어 찾기만 돼요. 가린 사본은 한글·Word·PowerPoint·Excel 문서에서 만들 수 있어요.';
     const all = h('input', { type: 'checkbox', checked: true, 'aria-label': '모두 고르기' });
     const boxes = pii.items.map((it) => {
       const cb = h('input', { type: 'checkbox', checked: true, 'aria-label': `${it.label} ${it.value} 가리기` });
@@ -1008,8 +1046,8 @@
       const n = pii.items.filter((x) => x.on).length;
       all.checked = n === pii.items.length;
       all.indeterminate = n > 0 && n < pii.items.length;
-      btn.disabled = !n || pii.busy;
-      btn.lastChild.textContent = n ? `가린 사본 만들기 (${n}가지)` : '가린 사본 만들기';
+      btn.disabled = !n || pii.busy || pdfOnly;
+      btn.lastChild.textContent = n && !pdfOnly ? `가린 사본 만들기 (${n}가지)` : '가린 사본 만들기';
     };
     all.addEventListener('change', () => { pii.items.forEach((it, i) => { it.on = all.checked; boxes[i].checked = all.checked; }); sync(); });
     body.replaceChildren(h('table', { class: 'diff-table' },
@@ -1301,6 +1339,7 @@
     Word: ['이 문서 요약해줘', '제목 스타일 정리해줘', '목차 넣어줘', '맞춤법 고쳐줘'],
     PowerPoint: ['발표자 노트 달아줘', '슬라이드 하나 추가해줘', '이 발표 요약해줘', 'PDF로 저장해줘'],
     Excel: ['차트 만들어줘', '머리글 굵게 하고 틀 고정해줘', '이 표 요약해줘', 'PDF로 저장해줘'],
+    PDF: ['이 문서 요약해줘', '중요한 날짜·금액만 뽑아줘', '표 내용 정리해줘', '개인정보가 있는지 찾아줘'],
   };
   const SUGGESTS_DEFAULT = ['이 문서 요약해줘', '맞춤법 고쳐줘', '표 내용 정리해줘', 'PDF로 저장해줘'];
   const suggestsFor = (doc) => SUGGESTS[doc?.kind] ?? SUGGESTS_DEFAULT;
@@ -1322,7 +1361,9 @@
       log.replaceChildren(h('div', { class: 'chat-welcome' },
         h('div', { class: 'w-icon' }, icon('sparkle')),
         h('h3', { text: '무엇을 도와드릴까요?' }),
-        h('p', { text: `「${state.doc.name}」 문서를 읽고 고쳐 드려요. 바꾼 내용은 왼쪽 미리보기에 바로 반영되고, 언제든 원래대로 되돌릴 수 있어요.` }),
+        h('p', { text: state.doc.kind === 'PDF'
+          ? `「${state.doc.name}」 문서를 읽고 요약·정리해 드려요. PDF는 내용을 바꿀 수는 없어요.`
+          : `「${state.doc.name}」 문서를 읽고 고쳐 드려요. 바꾼 내용은 왼쪽 미리보기에 바로 반영되고, 언제든 원래대로 되돌릴 수 있어요.` }),
         loginWarning(),
         h('div', { class: 'suggests' }, ...suggestsFor(state.doc).map((s) => h('button', { class: 'suggest', onclick: () => sendPrompt(s) }, icon('sparkle'), s)))));
     } else {

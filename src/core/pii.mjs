@@ -174,6 +174,7 @@ export async function maskDocument(path, { output, types, values } = {}) {
   output = resolve(output ?? maskedPathFor(path));
   if (output.toLowerCase() === path.toLowerCase()) throw new Error('원본에 바로 덮어쓰지 않아요. 다른 이름으로 저장하세요');
   if (extOf(output) !== extOf(path)) throw new Error(`가린 사본은 원본과 같은 형식(.${extOf(path)})으로 저장해요`);
+  if (extOf(path) === 'pdf') throw new Error('PDF는 글자를 바꿀 수 없어 가린 사본을 만들 수 없어요 (찾기만 됩니다). 원본 문서(한글·Word 등)에서 가린 뒤 PDF로 저장하세요');
   const scan = await scanDocument(path, { types });
   const pick = values ? scan.items.filter((it) => values.includes(it.value)) : scan.items;
   if (!pick.length) throw new Error('가릴 개인정보가 없어요');

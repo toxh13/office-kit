@@ -234,7 +234,7 @@ export function createServer() {
 
   server.registerTool('office_read', {
     title: '문서 읽기',
-    description: '문서(hwp, hwpx, docx, pptx, xlsx 등)의 글자를 읽는다. 긴 문서는 max_chars만큼 잘라 주고 전체 길이와 다음 offset을 알려주므로, '
+    description: '문서(hwp, hwpx, docx, pptx, xlsx, pdf 등)의 글자를 읽는다. PDF는 쪽마다 "--- 쪽 n ---"으로 나누고, 글자가 없는 스캔본이면 office_page_image로 쪽 그림을 본다. 긴 문서는 max_chars만큼 잘라 주고 전체 길이와 다음 offset을 알려주므로, '
       + "'다음: offset=N'이 보이면 그 offset으로 다시 호출해 나머지를 읽는다. 첫 부분(offset=0)에는 표·시트·슬라이드 구조 요약도 붙는다.",
     inputSchema: {
       path: pathSchema(),
@@ -255,8 +255,9 @@ export function createServer() {
       `${basename(full)} — ${doc.kind} (엔진: ${doc.engine})`,
       `글자 ${offset}~${end} / 전체 ${total}자${more ? ` — 아직 남음. 다음: offset=${end}` : doc.truncated ? '' : ' (끝까지 읽음)'}`,
     ];
+    if (doc.scanned) lines.push('(이 PDF는 글자가 거의 없습니다 — 스캔한 문서일 수 있습니다. office_page_image로 쪽 그림을 보고 읽으세요)');
     // 엑셀 프로그램으로 읽은 큰 시트는 앞부분만 온다
-    if (doc.truncated) {
+    if (doc.truncated && doc.sheets) {
       lines.push(`(잘림: 문서가 커서 일부만 읽었습니다 — ${(doc.sheets ?? []).filter((s) => s.truncated)
         .map((s) => `시트 ${s.name}: 전체 ${s.totalRows}행×${s.totalCols}열 중 ${s.rows.length}행×${widthOf(s.rows)}열`).join(', ')})`);
     }

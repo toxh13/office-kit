@@ -9,6 +9,7 @@ import { readDocx, readPptx, readXlsx, readCsv, replaceInFile, placeholders, set
 import { comCall, comAppFor, comAvailableFor, probe } from './com.mjs';
 import { createDocument, parseMarkdown } from './create.mjs';
 import { hwpToPdf, hwpPdfStatus, HWP_PDF_NOTE } from './hwppdf.mjs';
+import { readPdf } from './pdffile.mjs';
 
 export { createDocument, parseMarkdown, probe, Hwp, hwpPdfStatus, HWP_PDF_NOTE };
 
@@ -16,9 +17,9 @@ export { createDocument, parseMarkdown, probe, Hwp, hwpPdfStatus, HWP_PDF_NOTE }
 const HWP_EXTS = new Set(['hwp', 'hwpx', 'hwt']);
 export const isHwp = (ext) => HWP_EXTS.has(ext);
 // 프로그램 없이 읽을 수 있는 형식 / 고칠 수 있는 형식
-const READ_EXTS = new Set([...HWP_EXTS, 'docx', 'pptx', 'xlsx', 'csv']);
+const READ_EXTS = new Set([...HWP_EXTS, 'docx', 'pptx', 'xlsx', 'csv', 'pdf']);
 const WRITE_EXTS = new Set([...HWP_EXTS, 'docx', 'pptx', 'xlsx']);
-export const OPENABLE_EXTS = ['hwp', 'hwpx', 'hwt', 'docx', 'doc', 'rtf', 'odt', 'pptx', 'ppt', 'odp', 'xlsx', 'xls', 'xlsm', 'csv', 'ods'];
+export const OPENABLE_EXTS = ['hwp', 'hwpx', 'hwt', 'docx', 'doc', 'rtf', 'odt', 'pptx', 'ppt', 'odp', 'xlsx', 'xls', 'xlsm', 'csv', 'ods', 'pdf'];
 
 // 프로그램별로 저장(변환)할 수 있는 형식 — office.ps1과 같게
 export const SAVE_TARGETS = {
@@ -32,7 +33,7 @@ const RHWP_TARGETS = ['hwp', 'hwpx', 'hwt', 'hml'];
 export const extOf = (p) => extname(p).slice(1).toLowerCase();
 
 const KIND = { hwp: '한글', hwpx: '한글', hwt: '한글', docx: 'Word', doc: 'Word', rtf: 'Word', odt: 'Word',
-  pptx: 'PowerPoint', ppt: 'PowerPoint', odp: 'PowerPoint', xlsx: 'Excel', xls: 'Excel', xlsm: 'Excel', csv: 'Excel', ods: 'Excel' };
+  pptx: 'PowerPoint', ppt: 'PowerPoint', odp: 'PowerPoint', xlsx: 'Excel', xls: 'Excel', xlsm: 'Excel', csv: 'Excel', ods: 'Excel', pdf: 'PDF' };
 export const kindOf = (p) => KIND[extOf(p)] ?? '알 수 없음';
 
 const HANCOM_NO_MODULE = '한컴오피스는 있지만 자동화 보안 모듈이 등록되지 않아 한글 프로그램으로 작업할 수 없습니다. '
@@ -120,6 +121,10 @@ export async function readDocument(path, opts = {}) {
     try { return { engine: 'rhwp', kind: '한글', text: h.text(), tables: h.tables().map((t) => h.readTable(t)), pages: h.pageCount }; }
     finally { h.close(); }
   }
+  if (ext === 'pdf') {
+    const r = await readPdf(path);
+    return { engine: 'pdf', kind: 'PDF', text: r.text, pages: r.pages, ...(r.scanned ? { scanned: true } : {}), ...(r.truncated ? { truncated: true } : {}) };
+  }
   const r = await { docx: readDocx, pptx: readPptx, xlsx: readXlsx, csv: readCsv }[ext](path);
   return { engine: 'file', kind: kindOf(path), ...r };
 }
@@ -135,6 +140,10 @@ export async function documentInfo(path) {
     const h = Hwp.open(path);
     try { Object.assign(info, { pages: h.pageCount, tables: h.tables().length, fields: h.fields().map((f) => f.name) }); }
     finally { h.close(); }
+  }
+  if (ext === 'pdf') {
+    const r = await readPdf(path);
+    Object.assign(info, { pages: r.pages, scanned: r.scanned });
   }
   return info;
 }
@@ -337,6 +346,13 @@ export async function previewPdf(path, output) {
 export async function renderPreview(path, outDir, { mode = 'auto', maxPages = 40 } = {}) {
   path = mustExist(path);
   const ext = extOf(path);
+  // PDF는 그대로 내장 PDF 뷰어로 (사본 — 보는 동안 원본을 잡고 있지 않게)
+  if (ext === 'pdf') {
+    mkdirSync(outDir, { recursive: true });
+    const file = join(outDir, `${basename(path)}.${Date.now()}.pdf`);
+    copyFileSync(path, file);
+    return { kind: 'pdf', file, engine: 'pdf' };
+  }
   const appOk = await comAvailableFor(ext);
   const hwp = HWP_EXTS.has(ext);
   if (appOk && (mode === 'exact' || !hwp)) {

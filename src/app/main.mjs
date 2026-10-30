@@ -571,6 +571,24 @@ async function start() {
     }
   }
 
+  /**
+   * PDF를 Word 창에서 연다. Word가 'PDF를 편집 가능한 문서로 변환' 확인 창을 띄우므로 자동(COM)으로는 하지 않고,
+   * Word를 그냥 실행해 사용자가 확인하게 한다 (Word 설정은 바꾸지 않는다). Start-Process가 App Paths로 winword를 찾는다
+   */
+  async function openPdfInWord() {
+    const doc = needDoc();
+    if (extOf(doc.path) !== 'pdf') throw fail('PDF 문서만 Word로 바꿔 열 수 있어요');
+    const apps = await com.probe().catch(() => ({}));
+    if (!apps.word) throw fail('Word가 설치돼 있지 않아 PDF를 고칠 수 없어요. 원본 문서를 고친 뒤 PDF로 다시 저장해 주세요.');
+    const ps = "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; Start-Process -FilePath 'winword.exe' -ArgumentList ('\"' + $env:OK_FILE + '\"')";
+    const enc = Buffer.from(ps, 'utf16le').toString('base64');
+    const { execFile } = await import('node:child_process');
+    await new Promise((done, bad) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', enc],
+      { env: { ...process.env, OK_FILE: doc.path }, windowsHide: true, timeout: 30_000 },
+      (err) => (err ? bad(fail(`Word를 열지 못했어요: ${String(err.message).trim().split(/\r?\n/)[0]}`)) : done())));
+    return { opened: true };
+  }
+
   async function openInProgram() {
     const doc = needDoc();
     const ext = extOf(doc.path);
@@ -596,6 +614,7 @@ async function start() {
   let pdfTarget = null;
   async function savePdf({ step } = {}) {
     const doc = needDoc();
+    if (extOf(doc.path) === 'pdf') throw fail('이미 PDF 문서예요');
     if (step === 'make') {
       const t = pdfTarget;
       pdfTarget = null;
@@ -895,6 +914,9 @@ async function start() {
   async function editDocument() {
     const doc = needDoc();
     const kind = editorKind(doc.path);
+    if (!kind && extOf(doc.path) === 'pdf') {
+      throw fail('PDF는 앱 안에서 바로 고칠 수 없어요. 글자를 고치려면 원본 문서(한글·Word 등)를 열어 고친 뒤 PDF로 다시 저장해 주세요. AI 대화로 내용을 묻거나 요약하는 것은 PDF에서도 돼요.', 'PDF_EDIT');
+    }
     if (!kind) {
       const ext = extOf(doc.path);
       throw fail(`${kindOf(doc.path)} 문서(.${ext || '확장자 없음'})는 앱 안에서 직접 편집할 수 없어요. 직접 편집은 한글(HWP·HWPX)·Word(DOCX)·Excel(XLSX)·PowerPoint(PPTX) 문서만 돼요. ‘프로그램에서 열기’로 고쳐 주세요.`, 'UNSUPPORTED');
@@ -1206,6 +1228,7 @@ async function start() {
         { name: 'Word', extensions: all.filter((e) => kindOf(`a.${e}`) === 'Word') },
         { name: 'PowerPoint', extensions: all.filter((e) => kindOf(`a.${e}`) === 'PowerPoint') },
         { name: 'Excel', extensions: all.filter((e) => kindOf(`a.${e}`) === 'Excel') },
+        { name: 'PDF', extensions: ['pdf'] },
       ],
     });
     if (r.canceled || !r.filePaths[0]) return null;
@@ -1235,6 +1258,7 @@ async function start() {
   handle('batch:cancel', () => { if (batchRun) batchRun.cancelled = true; return null; });
   handle('batch:saveReport', () => batchSaveReport());
   handle('doc:openInApp', () => openInProgram());
+  handle('doc:openInWord', () => openPdfInWord());
   handle('doc:edit', () => editDocument());
   handle('doc:savePdf', (args) => savePdf(args && typeof args === 'object' ? { step: ['pick', 'make'].includes(args.step) ? args.step : undefined } : {}));
   handle('doc:showInFolder', () => { shell.showItemInFolder(needDoc().path); return null; });
