@@ -164,6 +164,7 @@ export function register(server, ctx) {
     },
     annotations: { destructiveHint: true },
   }, tool(async ({ path, operations, output, overwrite = false, engine = 'auto' }) => {
+    ctx.guardFormulas?.(operations, 'excel_edit');
     const full = excelPath(path);
     const out = outPath(output, { source: full, allow: ALLOW, overwrite });
     const r = await excelEdit(full, operations, { output: out, engine });

@@ -715,6 +715,11 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
 
   await t.test('Office 저장(reason user) → 형식 확인·고치기·백업·쓰기, 복구 사본 지움, 미리보기 알림', async () => {
+    // 사용자가 누르거나 친 것이 없으면 편집기 틀이 원본을 저장하지 못한다
+    const sneaky = await officeCall('editor:save', new Uint8Array(editedDocx), { reason: 'user' });
+    assert.equal(sneaky.ok, false);
+    assert.equal(sneaky.code, 'NO_USER_ACTION');
+    officeWin.webContents.emit('input-event', {}, { type: 'mouseDown' });
     const r = await officeCall('editor:save', new Uint8Array(editedDocx), { reason: 'user' });
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.name, '메모.docx');
@@ -884,6 +889,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   await t.test('Office 내려받기(PDF 등) → 열 수 있는 형식이면 최근 목록에 (PDF도 이제 열 수 있음)', async () => {
     const w = fake.windows.at(-1); // 다섯째.docx
     const dl = (...a) => fake.invokeFrom(w.webContents, 'editor:download', ...a);
+    assert.equal((await dl('몰래.pdf', new Uint8Array(Buffer.from('%PDF-1.7\n%%EOF\n')), 'application/pdf')).code, 'NO_USER_ACTION', '사용자 조작 없이 내려받기 창을 띄우지 못한다');
+    w.webContents.emit('input-event', {}, { type: 'keyDown' });
     const odt = join(docs, '내보낸 문서.odt');
     fake.saveDialogAnswers.push({ canceled: false, filePath: odt });
     let r = await dl('내보낸 문서.odt', new Uint8Array(readFileSync(docxPath)), 'application/vnd.oasis.opendocument.text');
@@ -936,6 +943,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     // 첫 저장: 원본 옆 '명단.xlsx'를 고르게 하고, 그 파일을 편집하는 창이 된다
     const target = join(docs, '명단.xlsx');
     fake.saveDialogAnswers.push({ canceled: false, filePath: target });
+    w.webContents.emit('input-event', {}, { type: 'mouseDown' });
     const r = await c('editor:save', new Uint8Array(d.value.bytes), { reason: 'user' });
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.name, '명단.xlsx');

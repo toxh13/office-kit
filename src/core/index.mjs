@@ -1,7 +1,7 @@
 // index.mjs — 형식과 설치된 프로그램을 보고 엔진을 골라 문서 작업을 한다.
 //   app  엔진: 설치된 한컴/Word/PowerPoint/Excel (원본 그대로, PDF 가능, 느림)
 //   file 엔진: rhwp·ZIP/XML·exceljs (프로그램 불필요, 빠름). 한글→PDF는 rhwp 명령줄 프로그램(hwppdf.mjs)
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, basename, join, resolve } from 'node:path';
 import { Hwp } from './hwp.mjs';
@@ -46,6 +46,21 @@ function mustExist(path) {
 
 const samePath = (a, b) => (process.platform === 'win32' ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b));
 
+// ── 인터넷에서 받은 파일 (Windows '웹에서 받은 파일' 표시, Zone.Identifier) ──────────
+// Word·Excel·PowerPoint를 COM으로 열면 보호된 보기를 거치지 않는다 → 인터넷(3)·제한(4) 영역 파일은 자동으로 열지 않는다
+/** 파일의 보안 영역: 0 내 컴퓨터 · 1 인트라넷 · 2 신뢰 · 3 인터넷 · 4 제한 (표시가 없으면 0) */
+export function securityZone(path) {
+  if (process.platform !== 'win32') return 0;
+  try {
+    const t = readFileSync(`${resolve(path)}:Zone.Identifier`, 'utf8');
+    const m = /ZoneId\s*=\s*(\d)/i.exec(t);
+    return m ? Number(m[1]) : 0;
+  } catch { return 0; }
+}
+export const isFromInternet = (path) => securityZone(path) >= 3;
+export const UNTRUSTED_APP_MESSAGE = '인터넷에서 받은 문서라 안전을 위해 Office 프로그램으로 자동으로 열지 않습니다 (자동으로 열면 보호된 보기를 거치지 않아요). '
+  + '믿을 수 있는 문서면 파일 속성에서 \'차단 해제\'를 고른 뒤 다시 하거나, \'프로그램에서 열기\'로 보호된 보기에서 확인하세요.';
+
 // 프로그램 엔진을 못 쓰는 이유
 async function noAppReason(path, write) {
   const ext = extOf(path);
@@ -64,6 +79,11 @@ async function pickEngine(path, { engine = 'auto', write = false } = {}) {
   if (engine === 'file') {
     if (!fileOk) throw new Error(`.${ext}는 프로그램 없이 ${write ? '고칠' : '다룰'} 수 없습니다`);
     return 'file';
+  }
+  // 인터넷에서 받은 파일: 프로그램(COM)으로 열지 않고 파일 엔진으로 (파일 엔진으로 못 하면 거절)
+  if (!HWP_EXTS.has(ext) && isFromInternet(path)) {
+    if (engine !== 'app' && fileOk) return 'file';
+    throw new Error(UNTRUSTED_APP_MESSAGE);
   }
   // 파일 엔진으로 읽을 수 있으면 프로그램 확인(PowerShell)도 하지 않는다
   if (engine !== 'app' && !write && fileOk) return 'file';
@@ -353,8 +373,13 @@ export async function renderPreview(path, outDir, { mode = 'auto', maxPages = 40
     copyFileSync(path, file);
     return { kind: 'pdf', file, engine: 'pdf' };
   }
-  const appOk = await comAvailableFor(ext);
   const hwp = HWP_EXTS.has(ext);
+  // 인터넷에서 받은 Word·Excel·PowerPoint 문서는 프로그램으로 미리 그리지 않는다 (보호된 보기 없이 열리므로)
+  const untrusted = !hwp && isFromInternet(path);
+  const appOk = !untrusted && await comAvailableFor(ext);
+  if (untrusted && !READ_EXTS.has(ext)) {
+    return { kind: 'text', engine: 'file', docKind: kindOf(path), text: '', note: '인터넷에서 받은 옛 형식 문서라 안전을 위해 미리보기를 만들지 않았어요. \'프로그램에서 열기\'를 누르면 보호된 보기로 열려요.' };
+  }
   if (appOk && (mode === 'exact' || !hwp)) {
     mkdirSync(outDir, { recursive: true });
     const file = join(outDir, `${basename(path)}.${Date.now()}.pdf`);
@@ -378,7 +403,7 @@ export async function renderPreview(path, outDir, { mode = 'auto', maxPages = 40
     } finally { h.close(); }
   }
   const doc = await readDocument(path);
-  return { ...doc, kind: 'text', docKind: doc.kind };
+  return { ...doc, kind: 'text', docKind: doc.kind, ...(untrusted ? { note: '인터넷에서 받은 문서라 안전을 위해 글자 미리보기로 보여요 (Office 프로그램으로 그리지 않음).' } : {}) };
 }
 
 /** 설치된 프로그램 창으로 열기 (사람이 직접 확인·편집) */

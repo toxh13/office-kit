@@ -17,8 +17,9 @@ on:
         type: boolean
         default: true
 
+# 기본은 읽기만. Release를 올리는 release 잡에만 쓰기 권한을 준다 (시험 잡의 서드파티 코드가 토큰을 쓰지 못하게)
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,8 +30,10 @@ jobs:
     name: 시험 (npm test)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
@@ -38,7 +41,7 @@ jobs:
       # 한글→PDF 시험(test/hwp-pdf.test.mjs)에 rhwp.exe가 필요하다: 고정 크기·SHA-256으로 받아 vendor/rhwp-cli에 넣는다.
       # 받은 zip은 고정 값 파일(빌드 스크립트)의 해시를 키로 캐시 — 고정 값을 올리면 새로 받는다
       - name: rhwp 명령줄 받은 파일 캐시
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: tmp/rhwp-cli-build/download
           key: rhwp-cli-${{ hashFiles('scripts/build-rhwp-cli.mjs') }}
@@ -73,7 +76,7 @@ jobs:
       # filex ui.zip(약 100MB)·lock 파일: 키 = 고정 값 파일(pins.mjs)의 해시 — 고정 값을 올리면 새로 받는다
       - name: Office 편집기 받은 파일 캐시 (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: tmp/office-editor-build/download
           key: office-editor-${{ hashFiles('scripts/office-editor/pins.mjs') }}
@@ -89,11 +92,15 @@ jobs:
   release:
     name: 설치 파일 만들기 · Release 업로드
     needs: test
+    permissions:
+      contents: write
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
@@ -134,7 +141,7 @@ jobs:
       # patches/office-editor/filex/*.patch가 있으면 filex 소스(고정 커밋)에 얹어 앱 페이지를 다시 빌드한다 (git·npm).
       # 묶음·라이선스 파일·수정 고지가 없으면 beforePack이 빌드를 멈춘다.
       - name: Office 편집기 받은 파일 캐시
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: tmp/office-editor-build/download
           key: office-editor-${{ hashFiles('scripts/office-editor/pins.mjs') }}
@@ -147,7 +154,7 @@ jobs:
       # 한글→PDF 변환 프로그램(rhwp 명령줄): Release zip을 고정 크기·SHA-256으로 받아 rhwp.exe·LICENSE·THIRD_PARTY_LICENSES.md를 vendor/rhwp-cli에.
       # 없거나 크기가 다르면 beforePack(scripts/check-editor-bundle.cjs)이 빌드를 멈춘다.
       - name: rhwp 명령줄 받은 파일 캐시
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: tmp/rhwp-cli-build/download
           key: rhwp-cli-${{ hashFiles('scripts/build-rhwp-cli.mjs') }}
@@ -234,7 +241,7 @@ jobs:
       - name: 설치 파일 보관 (Actions 아티팩트)
         if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           retention-days: 7
           name: OfficeKit-Setup

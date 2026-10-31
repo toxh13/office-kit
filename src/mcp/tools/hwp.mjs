@@ -464,7 +464,7 @@ export function register(server, ctx) {
       const h = Hwp.open(full);
       try {
         for (const [i, op] of operations.entries()) {
-          try { done.push(`${i + 1}. ${applyHwpOp(h, op, { resolvePath: abs })}`); } catch (e) {
+          try { done.push(`${i + 1}. ${applyHwpOp(h, op, { resolvePath: mustExist })}`); } catch (e) {
             throw new Error(`${i + 1}번째 작업(${op.op}) 실패: ${koreanError(e)} — 저장하지 않았습니다`);
           }
         }

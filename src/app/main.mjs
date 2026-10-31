@@ -678,6 +678,8 @@ async function start() {
   async function openInProgram() {
     const doc = needDoc();
     const ext = extOf(doc.path);
+    // 인터넷에서 받은 문서: 자동화(COM)로 열면 보호된 보기를 거치지 않는다 → Windows 연결 프로그램으로 (Office가 보호된 보기로 연다)
+    if (!core.isHwp(ext) && core.isFromInternet(doc.path)) { await openOutside(doc.path); return { via: 'shell' }; }
     const apps = await com.probe().catch(() => ({}));
     // 한글은 보안 모듈이 없으면 COM 대신 연결 프로그램으로 연다 (허용 창에서 멈추지 않게)
     if (com.comAppFor(ext) === 'hwp' && !apps.hancomSecurityModule) {
@@ -1061,10 +1063,12 @@ async function start() {
   // 한글: 내장 엔진이 그린 쪽 그림(SVG)을 숨은 창에 펴 놓고 Windows 인쇄 대화상자로 (쪽 크기·방향은 쪽마다).
   // 숨은 창은 스크립트를 끄고, 파일·data: 말고는 아무 데도 읽으러 가지 않는다 (문서 내용이 밖으로 나가지 않게)
   let printSession = null;
+  let printAllowedUrl = null;
   function printSes() {
     if (printSession) return printSession;
     printSession = session.fromPartition('officekit-print');
-    printSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob):/i.test(d.url) }));
+    // 지금 인쇄하는 print.html과 data: 그림만 (다른 파일·네트워크 공유(file://서버)·인터넷은 막는다)
+    printSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !(d.url.startsWith('data:') || (printAllowedUrl && d.url === printAllowedUrl)) }));
     printSession.setPermissionRequestHandler((_w, _p, cb) => cb(false));
     return printSession;
   }
@@ -1089,8 +1093,12 @@ async function start() {
     const file = join(dir, 'print.html');
     writeFileSync(file, html, 'utf8');
     const pw = new BrowserWindow({ show: false, width: 800, height: 1100, ...(parent && !parent.isDestroyed() ? { parent } : {}),
-      webPreferences: { session: printSes(), sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false, spellcheck: false } });
+      webPreferences: { session: printSes(), sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false, spellcheck: false, devTools: false } });
+    pw.webContents.on('will-navigate', (e) => e.preventDefault());
+    pw.webContents.on('will-frame-navigate', (e) => { if (e.url !== printAllowedUrl) e.preventDefault(); });
+    pw.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     try {
+      printAllowedUrl = pathToFileURL(file).href;
       await pw.loadFile(file);
       // 확인용: 인쇄 대화상자 대신 PDF로 (쪽 크기·쪽 수 확인)
       if (SMOKE && process.env.OFFICEKIT_SMOKE_PRINT) {
@@ -1101,8 +1109,20 @@ async function start() {
         pw.webContents.print({ silent: false, printBackground: true }, (ok, reason) => done({ printed: !!ok, reason: ok ? null : String(reason ?? 'cancelled') }));
       });
     } finally {
+      printAllowedUrl = null;
       try { pw.destroy(); } catch {}
       try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  /** 인쇄용 사본(userData/print) 정리: 한 시간 넘은 것 (끝낼 때는 모두) — 문서 사본이 남지 않게 */
+  function cleanPrintCopies({ all = false } = {}) {
+    const root = join(userData, 'print');
+    let names;
+    try { names = readdirSync(root); } catch { return; }
+    for (const n of names) {
+      const p = join(root, n);
+      try { if (all || Date.now() - statSync(p).mtimeMs > 60 * 60 * 1000) rmSync(p, { recursive: true, force: true }); } catch {}
     }
   }
 
@@ -1221,6 +1241,7 @@ async function start() {
       if (!(await com.comAvailableFor(ext))) {
         throw fail(`.${ext} 문서를 고치려면 ${kindOf(p)} 프로그램이 필요해요 (새 형식으로 바꿔 열어야 해서). 미리보기로 열게요.`, 'NEED_APP');
       }
+      if (core.isFromInternet(p)) throw fail(`${core.UNTRUSTED_APP_MESSAGE} 미리보기로 열게요.`, 'UNTRUSTED');
       // 프로그램(COM)은 MSIX 앱 안에서 가상화된 폴더를 못 보므로 임시 폴더에 받은 뒤 옮긴다
       const work = mkdtempSync(join(tmpdir(), 'officekit-convert-'));
       try {
@@ -1375,7 +1396,8 @@ async function start() {
     if (!selected) throw fail('사용할 수 있는 AI가 없습니다. Claude Code나 Codex를 설치하고 로그인하세요.', 'NO_PROVIDER');
     const base = await mcpSpec();
     // 앱 안 AI는 열린 문서의 폴더에만 저장할 수 있다 (MCP 서버가 OFFICEKIT_WRITE_ROOTS로 막는다)
-    const mcp = { ...base, env: { ...(base.env ?? {}), OFFICEKIT_WRITE_ROOTS: dirname(path) } };
+    // 읽기는 그 폴더 안만, 고치기는 열린 문서와 AI가 새로 만든 파일만 (다른 파일은 덮어쓰지 않음)
+    const mcp = { ...base, env: { ...(base.env ?? {}), OFFICEKIT_WRITE_ROOTS: dirname(path), OFFICEKIT_READ_ROOTS: dirname(path), OFFICEKIT_EDIT_FILES: path } };
     // 준비하는 사이 '원래대로'를 눌렀으면 시작하지 않는다 (되돌린 파일을 다시 고치지 않게)
     if (restoring.has(k) || (restoreGen.get(k) ?? 0) !== gen) throw fail('문서를 원래대로 되돌려서 이 요청은 보내지 않았습니다.');
     // AI가 고치기 전 상태를 버전으로 남긴다 (대화 한 번마다. 내용이 같으면 있던 것을 다시 씀)
@@ -1672,10 +1694,9 @@ async function start() {
   handle('shell:showItem', (p) => { shell.showItemInFolder(existingFile(p)); return null; });
   handle('shell:openBackups', async () => { mkdirSync(backups.dir, { recursive: true }); await shell.openPath(backups.dir); return null; });
   handle('shell:openExternal', async (url) => {
-    let u;
-    try { u = new URL(String(url)); } catch { throw fail('잘못된 주소입니다'); }
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') throw fail('웹 주소만 열 수 있습니다');
-    await shell.openExternal(u.href);
+    const r = await openWebLink(url);
+    if (r === 'bad') throw fail('웹 주소만 열 수 있습니다');
+    if (r === 'private') throw fail('이 PC나 내부망 주소는 열지 않아요');
     return null;
   });
 
@@ -1854,6 +1875,37 @@ async function start() {
     });
   }
 
+  // ── 웹 링크 ──────────────────────────────────────────
+  // 문서(PDF 미리보기)·AI 답의 링크는 문서가 정한 주소일 수 있다 → 주소를 보여 주고 묻는다. 이 PC·내부망 주소는 열지 않는다
+  // (주소에 문서 내용을 실어 보내거나 내부망 장비를 건드리지 않게). Office Kit 안내 링크(아래 목록)는 묻지 않는다
+  const TRUSTED_LINK_HOSTS = new Set(['github.com', 'docs.anthropic.com', 'claude.ai', 'claude.com', 'code.claude.com', 'openai.com', 'developer.hancom.com', 'www.onlyoffice.com', 'onlyoffice.com']);
+  let askingLink = false;
+  /** → 'opened' | 'canceled' | 'bad' | 'private' */
+  async function openWebLink(raw) {
+    let u;
+    try { u = new URL(String(raw)); } catch { return 'bad'; }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'bad';
+    const { isPrivateHost } = await import('./editor-window.mjs');
+    if (isPrivateHost(u.hostname)) {
+      send('toast', { type: 'warn', message: `이 PC나 내부망 주소는 열지 않아요: ${u.host}` });
+      return 'private';
+    }
+    if (!TRUSTED_LINK_HOSTS.has(u.hostname.toLowerCase())) {
+      if (askingLink) return 'canceled';
+      askingLink = true;
+      try {
+        const shown = u.href.length > 300 ? `${u.href.slice(0, 300)}…` : u.href;
+        const { response } = await dialog.showMessageBox(win, {
+          type: 'question', title: 'Office Kit', message: '이 주소를 기본 브라우저로 열까요?', detail: shown,
+          buttons: ['열기', '취소'], defaultId: 1, cancelId: 1, noLink: true,
+        });
+        if (response !== 0) return 'canceled';
+      } finally { askingLink = false; }
+    }
+    await shell.openExternal(u.href);
+    return 'opened';
+  }
+
   // ── 창 ───────────────────────────────────────────────
 
   function initialBounds() {
@@ -1889,6 +1941,7 @@ async function start() {
         plugins: true,            // 내장 PDF 뷰어
         webviewTag: false, spellcheck: false, navigateOnDragDrop: false,
         backgroundThrottling: !SMOKE,
+        devTools: !app.isPackaged,
       },
     });
     // 숨긴 채 시작하면(문서 창 방식) 최대화는 처음 보일 때 한다 — maximize()는 숨긴 창도 보이게 한다
@@ -1899,7 +1952,7 @@ async function start() {
     const wc = win.webContents;
     // 새 창·이동 막기: 웹 주소는 기본 브라우저로
     wc.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+      if (/^https?:\/\//i.test(url)) void openWebLink(url);
       return { action: 'deny' };
     });
     wc.on('will-navigate', (e) => e.preventDefault());
@@ -1909,7 +1962,7 @@ async function start() {
       // 미리보기 PDF와 내장 PDF 뷰어만 허용
       if (u === 'about:blank' || u.startsWith('chrome-extension://') || isPreviewUrl(u)) return;
       e.preventDefault();
-      if (/^https?:\/\//i.test(u)) shell.openExternal(u).catch(() => {});
+      if (/^https?:\/\//i.test(u)) void openWebLink(u);
     });
     wc.on('will-attach-webview', (e) => e.preventDefault());
     // 내려받기는 PDF 뷰어의 저장 단추(미리보기 PDF)만 허용 → 저장 위치를 묻는다
@@ -2007,6 +2060,7 @@ async function start() {
     for (const c of chats.values()) { try { c.handle.cancel(); } catch {} }
     // 창이 다 닫힌 뒤 미리보기 PDF(문서 사본)를 지운다. 못 지운 것은 다음 시작 때 지운다
     cleanPreviews(null);
+    cleanPrintCopies({ all: true });
   });
   // 편집 창이 닫히면 상태 막대를 맞춘다
   app.on('browser-window-created', (_e, w) => { w.once('closed', () => pushEditorState()); });
@@ -2022,6 +2076,7 @@ async function start() {
   session.defaultSession.setPermissionCheckHandler((_wc, perm) => allowed.has(perm));
 
   cleanPreviews(null);
+  cleanPrintCopies();
   // 오래 안 연 문서의 자동 저장 사본(Office)·쓰다 남은 임시 파일 정리
   try { cleanOfficeDrafts(); } catch (err) { console.error('[editor] 자동 저장 사본 정리 실패:', err?.message ?? err); }
   buildMenu();

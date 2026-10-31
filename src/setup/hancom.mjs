@@ -17,8 +17,14 @@ export const MODULES_KEY = 'HKCU\\Software\\HNC\\HwpAutomation\\Modules';
 //   (https://github.com/hancom-io/devcenter-archive/tree/main/hwp-automation)
 //   개발자센터 설명상 압축 안에 FilePathCheckerModuleExample.dll 이 있다 (폴더 구성은 몰라도 되게 PE 헤더로 고른다).
 export const HANCOM_SECURITY_MODULE_PAGE = 'https://developer.hancom.com/hwpautomation';
+// 브랜치(main)가 아니라 확인한 커밋으로 고정한다 (저장소가 바뀌어도 그 커밋의 파일만 받는다).
+// 커밋 ec0c158c… = hwp-automation 폴더의 마지막 변경 (2025-04-21). 공식 배포처가 새 판을 내면 이 값을 확인해 바꾼다
+export const HANCOM_SECURITY_MODULE_COMMIT = 'ec0c158c69195070dabcb086e11dd197c336bf8e';
 export const HANCOM_SECURITY_MODULE_URL =
-  'https://github.com/hancom-io/devcenter-archive/raw/main/hwp-automation/%EB%B3%B4%EC%95%88%EB%AA%A8%EB%93%88(Automation).zip';
+  `https://github.com/hancom-io/devcenter-archive/raw/${HANCOM_SECURITY_MODULE_COMMIT}/hwp-automation/%EB%B3%B4%EC%95%88%EB%AA%A8%EB%93%88(Automation).zip`;
+// 압축을 풀 때 한도 (압축 폭탄 막기): 항목 하나 16MB, 모두 합쳐 64MB
+const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
 // 받는 중 리디렉션은 GitHub 공식 주소로만 허용한다
 const ALLOWED_HOSTS = new Set(['github.com', 'raw.githubusercontent.com', 'media.githubusercontent.com',
@@ -213,13 +219,23 @@ export async function pickModuleDll(bytes, arch, depth = 0) {
   if (bytes.toString('latin1', 0, 4) !== 'PK\x03\x04') throw new Error('받은 파일이 zip이나 DLL이 아닙니다. 공식 배포처가 바뀌었을 수 있습니다.');
   const zip = await JSZip.loadAsync(bytes, { decodeFileName: zipName });
   const found = [];
+  let total = 0;
+  // 풀기 전에 적힌 크기로 거른다 (적힌 크기를 속여도 아래에서 실제 크기를 다시 본다)
+  const sizeOf = (entry) => Number(entry?._data?.uncompressedSize ?? 0);
+  const take = async (entry) => {
+    if (sizeOf(entry) > MAX_ENTRY_BYTES || total + sizeOf(entry) > MAX_TOTAL_BYTES) throw new Error('받은 압축 파일의 내용이 너무 큽니다. 공식 배포처가 바뀌었을 수 있습니다.');
+    const data = await entry.async('nodebuffer');
+    total += data.length;
+    if (data.length > MAX_ENTRY_BYTES || total > MAX_TOTAL_BYTES) throw new Error('받은 압축 파일의 내용이 너무 큽니다. 공식 배포처가 바뀌었을 수 있습니다.');
+    return data;
+  };
   for (const entry of Object.values(zip.files)) {
     if (entry.dir) continue;
     if (/\.dll$/i.test(entry.name)) {
-      const data = await entry.async('nodebuffer');
+      const data = await take(entry);
       found.push({ name: entry.name, data, arch: peMachine(data) });
     } else if (/\.zip$/i.test(entry.name) && depth < 1) {
-      try { found.push(await pickModuleDll(await entry.async('nodebuffer'), arch, depth + 1)); } catch {}
+      try { found.push(await pickModuleDll(await take(entry), arch, depth + 1)); } catch (err) { if (/너무 큽니다/.test(err?.message)) throw err; }
     }
   }
   const dlls = found.filter((f) => f.arch);

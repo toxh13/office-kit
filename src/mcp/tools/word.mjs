@@ -204,7 +204,7 @@ export function register(server, ctx) {
     if (output && !WORD_EXTS.has(extOf(abs(output)))) throw new Error('저장 경로는 .docx/.doc/.rtf/.odt 여야 합니다 (PDF는 office_convert)');
     const out = outPath(output, { source: full, allow: WORD_EXTS, overwrite });
     // 그림 경로도 서버 작업 폴더 기준
-    const ops = operations.map((op) => (op.op === 'insert_image' && op.image_path ? { ...op, image_path: abs(op.image_path) } : op));
+    const ops = operations.map((op) => (op.op === 'insert_image' && op.image_path ? { ...op, image_path: mustExist(op.image_path) } : op));
     const r = await wordEdit(full, ops, { output: out });
     return text(r.lines.join('\n'));
   }));

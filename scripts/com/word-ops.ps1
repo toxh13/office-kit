@@ -1129,19 +1129,30 @@ function WdOpInsertToc($doc, $word, $op) {
 }
 
 # refreshed field results are not edits: keep them out of the tracked changes
+$WdUnsafeFieldTypes = @(36, 45, 46, 55, 56, 67, 68, 78)
+
 function WdOpUpdateFields($doc, $word, $op) {
-  $n = 0; $tocs = 0
+  $n = 0; $tocs = 0; $skipped = 0
   $track = [bool]$doc.TrackRevisions
   if ($track) { $doc.TrackRevisions = $false }
   try {
     foreach ($story in $doc.StoryRanges) {
       $r = $story
-      while ($r) { $c = [int]$r.Fields.Count; if ($c -gt 0) { $n += $c; [void]$r.Fields.Update() }; $r = $r.NextStoryRange }
+      while ($r) {
+        # update field by field, skipping kinds that pull outside content into the document (local files, web, other programs):
+        # 36 Include, 45 DDE, 46 DDEAuto, 55 Import, 56 Link, 67 IncludePicture, 68 IncludeText, 78 Database
+        foreach ($f in @($r.Fields)) {
+          $t = [int]$f.Type
+          if ($WdUnsafeFieldTypes -contains $t) { $skipped++; continue }
+          try { [void]$f.Update(); $n++ } catch {}
+        }
+        $r = $r.NextStoryRange
+      }
     }
     foreach ($toc in $doc.TablesOfContents) { $toc.Update(); $tocs++ }
     foreach ($tof in $doc.TablesOfFigures) { $tof.Update() }
   } finally { if ($track) { $doc.TrackRevisions = $true } }
-  return @{ fields = $n; tocs = $tocs }
+  return @{ fields = $n; tocs = $tocs; skipped = $skipped }
 }
 
 function WdOpAddFootnote($doc, $word, $op) {

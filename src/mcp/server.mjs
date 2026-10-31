@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // server.mjs — office-kit MCP 서버 (stdio). Claude/Codex가 문서 도구를 쓰게 한다.
 // stdout은 프로토콜 전용이므로 로그는 모두 stderr로 보낸다.
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -9,7 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import {
   readDocument, documentInfo, listFields, fillFields, replaceText, setCells, convertDocument,
-  createDocument, probe, Hwp, extOf, kindOf, isHwp, OPENABLE_EXTS, hwpPdfStatus,
+  createDocument, probe, Hwp, extOf, kindOf, isHwp, OPENABLE_EXTS, hwpPdfStatus, isFromInternet, UNTRUSTED_APP_MESSAGE,
 } from '../core/index.mjs';
 import { PLACEHOLDER } from '../core/officefile.mjs';
 import { pageImage } from '../core/render.mjs';
@@ -36,7 +36,13 @@ const abs = (p) => resolve(process.cwd(), String(p).trim().replace(/^"(.*)"$/, '
 
 function mustExist(p) {
   const full = abs(p);
+  guardUnc(full);
   if (!existsSync(full)) throw new Error(`파일이 없습니다: ${full}`);
+  // 앱 안 AI 대화: 열린 문서의 폴더 밖은 읽지 않는다 (문서 속 지시문이 다른 곳의 파일을 읽어 옮기지 못하게)
+  const readRoots = rootsOf('OFFICEKIT_READ_ROOTS');
+  if (readRoots.length && !readRoots.some((r) => inside(realOf(full), r))) {
+    throw new Error(`이 대화에서는 다음 폴더 안의 파일만 읽을 수 있습니다: ${readRoots.join(', ')} (요청한 경로: ${full})`);
+  }
   return full;
 }
 
@@ -57,10 +63,38 @@ function realOf(p) {
 }
 const inside = (p, root) => { const r = relative(root, p); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
 
-/** OFFICEKIT_WRITE_ROOTS: 저장을 허락한 폴더들 (경로 구분자로 여러 개). 앱 안 AI 대화가 문서 폴더만 쓰게 할 때 */
-export function writeRoots(env = process.env) {
-  return (env.OFFICEKIT_WRITE_ROOTS ?? '').split(delimiter).map((s) => s.trim()).filter(Boolean).map((r) => realOf(resolve(r)));
+// 값: JSON 배열(앱이 넘김 — 폴더 이름에 ;가 있어도 갈라지지 않게) 또는 경로 구분자(;)로 이은 글
+function rootsOf(name, env = process.env) {
+  const raw = String(env[name] ?? '').trim();
+  if (!raw) return [];
+  let list;
+  if (raw.startsWith('[')) { try { list = JSON.parse(raw); } catch { list = []; } } else list = raw.split(delimiter);
+  return list.map((s) => String(s).trim()).filter(Boolean).map((r) => realOf(resolve(r)));
 }
+// 네트워크(UNC)·장치 경로: \\server\share, //server, \\?\, \\.\ — 열어 보기만 해도 이름 조회·SMB 연결(로그인 해시)이 나간다
+const isUncLike = (p) => /^[\\/]{2}/.test(String(p));
+/** 앱 안 AI 대화(제한 모드)인지: 앱이 READ/WRITE 루트를 넘긴다 */
+const restricted = () => rootsOf('OFFICEKIT_READ_ROOTS').length > 0 || rootsOf('OFFICEKIT_WRITE_ROOTS').length > 0;
+/** 제한 모드에서 네트워크·장치 경로 거절 — 파일 시스템을 건드리기 전에 (루트 자체가 네트워크 폴더면 그 안은 허용) */
+function guardUnc(full) {
+  if (!isUncLike(full)) return;
+  if (/^[\\/]{2}[?.][\\/]/.test(full)) throw new Error(`장치 경로는 쓸 수 없습니다: ${full}`);
+  if (!restricted()) return;
+  const roots = [...rootsOf('OFFICEKIT_READ_ROOTS'), ...rootsOf('OFFICEKIT_WRITE_ROOTS')];
+  const lower = full.toLowerCase().replace(/\//g, '\\');
+  if (!roots.some((r) => isUncLike(r) && (lower === r.toLowerCase() || lower.startsWith(`${r.toLowerCase().replace(/[\\/]+$/, '')}\\`)))) {
+    throw new Error(`이 대화에서는 네트워크 경로(\\\\…)를 쓸 수 없습니다: ${full}`);
+  }
+}
+
+/** OFFICEKIT_WRITE_ROOTS: 저장을 허락한 폴더들 (경로 구분자로 여러 개). 앱 안 AI 대화가 문서 폴더만 쓰게 할 때 */
+export function writeRoots(env = process.env) { return rootsOf('OFFICEKIT_WRITE_ROOTS', env); }
+
+// OFFICEKIT_EDIT_FILES: 고칠(덮어쓸) 수 있는 기존 파일 (앱 안 AI 대화 = 열린 문서). 이 값이 있으면 그 밖의 기존 파일은
+// overwrite=true여도 덮어쓰지 않는다 — 이 서버가 이번에 새로 만든 파일만 다시 고칠 수 있다
+// (문서 속 지시문에 휘둘린 AI가 같은 폴더의 다른 문서를 백업 없이 망가뜨리지 못하게)
+const createdHere = new Set();
+const keyOfPath = (p) => (process.platform === 'win32' ? realOf(p).toLowerCase() : realOf(p));
 
 /**
  * 저장 경로 확인: 형식(확장자), 허락된 폴더, 이미 있는 다른 파일 덮어쓰기.
@@ -68,16 +102,25 @@ export function writeRoots(env = process.env) {
  */
 function outPath(output, { source, allow, overwrite = false }) {
   const full = output ? abs(output) : source;
+  guardUnc(full);
+  // 마지막 이름이 링크(심볼릭·정션)면 거절 (끊어진 링크는 부모 폴더만 풀려 루트 검사를 지날 수 있다)
+  try { if (lstatSync(full).isSymbolicLink()) throw new Error(`링크 파일에는 저장하지 않습니다: ${full}`); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
   const ext = extOf(full);
   if (!allow.has(ext)) throw new Error(`.${ext || '(확장자 없음)'} 파일로는 저장할 수 없습니다 (가능: ${[...allow].join(', ')})`);
   const roots = writeRoots();
   if (roots.length && !roots.some((r) => inside(realOf(full), r))) {
     throw new Error(`이 대화에서는 다음 폴더 안에만 저장할 수 있습니다: ${roots.join(', ')} (요청한 경로: ${full})`);
   }
-  if (existsSync(full) && !(source && samePath(full, source)) && !overwrite) {
+  const editable = rootsOf('OFFICEKIT_EDIT_FILES');
+  const exists = existsSync(full);
+  if (editable.length && exists && !editable.some((f) => keyOfPath(f) === keyOfPath(full)) && !createdHere.has(keyOfPath(full))) {
+    throw new Error(`이 대화에서는 열린 문서와 이번에 새로 만든 파일만 고칠 수 있습니다. 다른 파일은 덮어쓰지 않으니 새 이름으로 저장하세요: ${full}`);
+  }
+  if (exists && !(source && samePath(full, source)) && !overwrite) {
     throw new Error(`이미 있는 파일입니다: ${full} (덮어쓰려면 overwrite=true)`);
   }
   mkdirSync(dirname(full), { recursive: true });
+  if (editable.length && !exists) createdHere.add(keyOfPath(full));
   return full;
 }
 
@@ -117,6 +160,22 @@ export function koreanError(e) {
 }
 
 const text = (t) => ({ content: [{ type: 'text', text: t }] });
+
+// 제한 모드(앱 안 AI)에서 쓰지 않는 엑셀 수식: 계산하면 인터넷·다른 프로그램·다른 파일과 이야기한다 (문서 내용 유출 통로)
+const RISKY_FORMULA = /\b(WEBSERVICE|FILTERXML|IMAGE|RTD|CALL|REGISTER(\.ID)?|EXEC|DDE|HYPERLINK)\s*\(|\||\[[^\]]*\.(xls[xmb]?|csv|ods)\]|['"]?(https?|file|ftp):\/\//i;
+/** 값 안의 수식(=로 시작하는 글)을 모두 살펴 위험하면 거절 (제한 모드일 때만) */
+export function guardFormulas(value, where = '') {
+  if (!restricted()) return;
+  const seen = new Set();
+  const walk = (v) => {
+    if (typeof v === 'string') {
+      if (/^\s*[=+@-]/.test(v) && RISKY_FORMULA.test(v)) throw new Error(`이 대화에서는 인터넷·다른 파일과 연결되는 수식은 넣지 않습니다${where ? ` (${where})` : ''}: ${v.slice(0, 80)}`);
+      return;
+    }
+    if (v && typeof v === 'object' && !seen.has(v)) { seen.add(v); for (const x of Object.values(v)) walk(x); }
+  };
+  walk(value);
+}
 const json = (o) => JSON.stringify(o, null, 2);
 
 // 실패는 isError + 한국어 메시지로 돌려준다
@@ -337,6 +396,7 @@ export function createServer() {
     },
     annotations: { destructiveHint: true },
   }, tool(async ({ path, cells, sheet, output, overwrite = false, engine = 'auto' }) => {
+    guardFormulas(cells, 'office_set_cells');
     const full = mustExist(path);
     const bad = Object.keys(cells).filter((a) => !/^\$?[A-Za-z]{1,3}\$?\d{1,7}$/.test(a));
     if (bad.length) throw new Error(`셀 주소가 올바르지 않습니다: ${bad.join(', ')} (예: A1, B12)`);
@@ -363,6 +423,8 @@ export function createServer() {
   }, tool(async ({ path, output, overwrite = false }) => {
     const full = mustExist(path);
     if (samePath(abs(output), full)) throw new Error('원본과 다른 경로를 지정하세요');
+    // 앱 안 AI 대화: 인터넷에서 받은 Word·Excel·PowerPoint 문서는 프로그램으로 변환하지 않는다 (보호된 보기 없이 열리므로)
+    if (restricted() && !isHwp(extOf(full)) && extOf(full) !== 'pdf' && isFromInternet(full)) throw new Error(UNTRUSTED_APP_MESSAGE);
     const out = outPath(output, { allow: CONVERT_EXTS, overwrite });
     const r = await convertDocument(full, out);
     const how = r.note ? `엔진: 내장(${r.engine})` : `엔진: ${r.engine}`;
@@ -504,7 +566,7 @@ export function createServer() {
   // 형식별 전용 도구 (src/mcp/tools/*.mjs)
   const ctx = {
     z, scalar, tool, text, json, log, abs, mustExist, outPath, koreanError,
-    pathSchema, outputSchema, overwriteSchema, engineSchema, EDIT_EXTS, CONVERT_EXTS, HWP_EXTS,
+    pathSchema, outputSchema, overwriteSchema, engineSchema, EDIT_EXTS, CONVERT_EXTS, HWP_EXTS, guardFormulas,
   };
   for (const register of TOOL_MODULES) register(server, ctx);
 

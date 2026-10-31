@@ -602,9 +602,18 @@ export function createEditorManager({
     return d;
   });
 
+  // Office 편집기 틀(제3자 코드)이 사용자 조작 없이 원본을 덮어쓰거나 저장 창·PDF 앱을 띄우지 못하게:
+  // 이 창에서 방금(USER_ACT_MS 안) 누르거나 친 것이 있을 때만 받는다. 앱이 시킨 저장(Ctrl+S·닫기 확인)도 사용자 조작으로 친다
+  const USER_ACT_MS = 15_000;
+  const userActed = (entry) => Date.now() - (entry.userActAt ?? 0) <= USER_ACT_MS;
+  const needUserAct = (entry, what) => {
+    if (!userActed(entry)) throw fail(`편집기가 사용자 조작 없이 ${what}하려 해서 막았어요. 저장 단추나 Ctrl+S 같은 동작으로 다시 해 주세요.`, 'NO_USER_ACTION');
+  };
+
   handle('editor:save', async (entry, bytes, opts) => {
     if (entry.kind === 'office') {
       if (opts?.reason === 'auto') return saveDraft(entry, bytes);
+      needUserAct(entry, '저장');
       if (entry.convertedFrom) return saveConverted(entry, bytes);
       return saveTo(entry, entry.path, bytes, extOf(entry.path));
     }
@@ -669,6 +678,7 @@ export function createEditorManager({
   // 다른 형식으로 내려받기 (PDF 등) → main의 저장 대화상자
   handle('editor:download', async (entry, name, bytes, mime) => {
     void mime;
+    needUserAct(entry, '내려받기');
     const fallback = `${basename(entry.path).replace(/\.[^.]+$/, '')}.pdf`;
     let file = safeFileName(name, fallback);
     let ext = extOf(file);
@@ -691,6 +701,7 @@ export function createEditorManager({
   // 인쇄: 편집기가 만든 PDF → 임시 파일 → 기본 PDF 앱으로 (PDF 앱이 없으면 저장 대화상자)
   // 편집기 틀이 만든 PDF가 이 창 밖(기본 PDF 앱)으로 나가는 유일한 길이므로: 한 번에 하나, 3초 간격, 창마다 처음 한 번 묻는다
   handle('editor:print', async (entry, pdf) => {
+    needUserAct(entry, '인쇄');
     if (!(pdf instanceof Uint8Array) || pdf.length === 0) throw fail('인쇄할 내용이 비어 있습니다');
     if (pdf.length > maxBytes) throw fail('인쇄할 내용이 너무 큽니다 (512MB 넘음)', 'TOO_BIG');
     if (!downloadBytesOk(pdf, 'pdf')) throw fail('편집기가 만든 인쇄 파일이 PDF가 아닙니다', 'BAD_FORMAT');
@@ -793,6 +804,7 @@ export function createEditorManager({
 
   /** host 페이지에 묻고 답(boolean | null)을 기다린다. 시간이 지나거나 창이 없어지면 null */
   function ask(entry, channel, payload = {}, timeoutMs = REPLY_TIMEOUT_MS) {
+    if (channel === 'editor:command') entry.userActAt = Date.now(); // 단축키·닫기 확인창의 '저장'은 사용자가 고른 것
     if (!entry.win || entry.win.isDestroyed()) return Promise.resolve(null);
     const id = `${++seq}`;
     return new Promise((res) => {
@@ -1226,6 +1238,11 @@ export function createEditorManager({
     // 편집기의 beforeunload(저장 안 함 경고)는 무시하고 닫기 확인은 여기서 한다
     wc.on('will-prevent-unload', (e) => e.preventDefault());
     // 단축키: 편집기(iframe) 안에 커서가 있어도 먼저 받는다
+    // 사용자 조작 기록 (마우스 누름·키 누름 — 틀 안 편집기에서 한 것도 이 webContents로 들어온다)
+    wc.on('input-event', (_e, ev) => {
+      const t = ev?.type;
+      if (t === 'mouseDown' || t === 'keyDown' || t === 'rawKeyDown' || t === 'touchStart' || t === 'gestureTap') entry.userActAt = Date.now();
+    });
     wc.on('before-input-event', (e, input) => {
       if (input.type !== 'keyDown') return;
       const code = input.code || '';

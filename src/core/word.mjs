@@ -470,7 +470,7 @@ function describe(op, r) {
     case 'accept_revisions': return `변경 내용 ${r.count}개 모두 수락${r.left ? ` (남은 ${r.left}개)` : ''}${total}`;
     case 'reject_revisions': return `변경 내용 ${r.count}개 모두 거부${r.left ? ` (남은 ${r.left}개)` : ''}${total}`;
     case 'insert_toc': return `목차 넣음: ${r.title ? `제목 ${r.title}번 문단, ` : ''}${r.paragraph}번 문단부터 (목차 ${r.entries}문단, 제목 1~${r.levels}수준)${total}`;
-    case 'update_fields': return `필드 새로 고침: 필드 ${r.fields}개, 목차 ${r.tocs}개`;
+    case 'update_fields': return `필드 새로 고침: 필드 ${r.fields}개, 목차 ${r.tocs}개${r.skipped ? ` (바깥 파일·웹·다른 프로그램을 불러오는 필드 ${r.skipped}개는 안전을 위해 건너뜀)` : ''}`;
     case 'add_footnote': return `각주 달기: ${quote(op.find)} ${r.count}곳 (각주 모두 ${r.total}개)`;
     case 'insert_hyperlink': return `링크 걸기: ${quote(op.find)} ${r.count}곳 → ${op.url}`;
     default: return op.op;

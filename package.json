@@ -1,6 +1,6 @@
 {
   "name": "office-kit",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "한글(HWP/HWPX)·Word·PowerPoint·Excel 문서를 열고, 확인하고, AI 대화로 수정하는 데스크톱 도구",
   "type": "module",
   "main": "src/app/main.mjs",
@@ -50,6 +50,12 @@
     "copyright": "Copyright © 2026 toxh13",
     "asar": false,
     "beforePack": "scripts/check-editor-bundle.cjs",
+    "electronFuses": {
+      "runAsNode": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableCookieEncryption": true
+    },
     "directories": {
       "output": "dist",
       "buildResources": "build"

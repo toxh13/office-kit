@@ -89,9 +89,11 @@ function makeFake() {
   };
   const evOf = (wc, frame = wc.mainFrame) => ({ sender: wc, senderFrame: frame });
   function emit(channel, wc, ...args) { for (const fn of ipcMain.listeners.get(channel) ?? []) fn(evOf(wc), ...args); }
+  // 이 시험들은 사용자가 저장·내려받기·인쇄를 누른 것으로 친다 (사용자 조작 없는 요청 거절은 따로 시험)
   async function invoke(wc, channel, ...args) {
     const fn = ipcMain.handlers.get(channel);
     if (!fn) throw new Error(`없는 채널: ${channel}`);
+    if (!fake.noUserAct && ['editor:save', 'editor:download', 'editor:print'].includes(channel)) wc.emit?.('input-event', {}, { type: 'mouseDown' });
     return fn(evOf(wc), ...args);
   }
   const session = {
@@ -364,6 +366,16 @@ test('Office 편집 창 (가짜 electron)', async (t) => {
     assert.equal(sha(readFileSync(docx)), sha(before));
     assert.equal(fixCalls.length, 0);
     const edited = await withPart(readFileSync(docx), 'edited.txt', '편집');
+    // 사용자 조작 없이(편집기 틀이 혼자) 보낸 저장·내려받기·인쇄는 거절
+    fake.noUserAct = true;
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60_000; // 마지막 조작 뒤 1분이 지난 것처럼
+    try {
+      for (const [ch, ...a] of [['editor:save', edited, { reason: 'user' }], ['editor:download', 'x.pdf', new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), ''], ['editor:print', new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])]]) {
+        const no = await call(dw, ch, ...a);
+        assert.equal(no.code, 'NO_USER_ACTION', `${ch}: ${no.error}`);
+      }
+    } finally { fake.noUserAct = false; Date.now = realNow; }
     const r = await call(dw, 'editor:save', edited, { reason: 'user' });
     assert.equal(r.ok, true, r.error);
     assert.deepEqual(fixCalls, ['docx']);

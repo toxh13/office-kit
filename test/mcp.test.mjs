@@ -302,6 +302,42 @@ describe('개인정보 · HWPX 일괄 변환', () => {
   });
 });
 
+describe('앱 안 AI 대화의 제한 (열린 문서만 고치기, 그 폴더만 읽기)', () => {
+  test('OFFICEKIT_EDIT_FILES·READ_ROOTS: 다른 기존 파일은 덮어쓰지 않고, 새로 만든 파일은 다시 고칠 수 있다', async () => {
+    const root = tmp.path('ai-only');
+    mkdirSync(root, { recursive: true });
+    const opened = join(root, '열린.docx');
+    const other = join(root, '다른.docx');
+    const { client: setup } = await connect([SERVER]);
+    try {
+      for (const f of [opened, other, tmp.path('밖.docx')]) {
+        const r = await setup.callTool({ name: 'office_create', arguments: { output: f, markdown: '# 제목\n\n본문', overwrite: true } }, undefined, { timeout: 60_000 });
+        assert.ok(!r.isError, textOf(r));
+      }
+    } finally { await setup.close(); }
+    const otherBefore = readFileSync(other);
+    const { client: c } = await connect([SERVER], { OFFICEKIT_WRITE_ROOTS: root, OFFICEKIT_READ_ROOTS: root, OFFICEKIT_EDIT_FILES: opened });
+    const run = (name, args) => c.callTool({ name, arguments: args }, undefined, { timeout: 60_000 });
+    try {
+      let r = await run('office_replace', { path: opened, replacements: [{ find: '본문', replace: '고친 본문' }], engine: 'file' });
+      assert.ok(!r.isError, `열린 문서는 고친다: ${textOf(r)}`);
+      r = await run('office_replace', { path: other, replacements: [{ find: '본문', replace: '망가뜨림' }], engine: 'file' });
+      assert.equal(r.isError, true, '다른 기존 문서는 고치지 않는다');
+      assert.match(textOf(r), /열린 문서와 이번에 새로 만든 파일만/);
+      r = await run('office_create', { output: other, markdown: '# 덮어쓰기', overwrite: true });
+      assert.equal(r.isError, true, 'overwrite=true여도 다른 문서는 덮어쓰지 않는다');
+      assert.deepEqual(readFileSync(other), otherBefore);
+      r = await run('office_create', { output: join(root, '새 문서.docx'), markdown: '# 새 문서' });
+      assert.ok(!r.isError, textOf(r));
+      r = await run('office_replace', { path: join(root, '새 문서.docx'), replacements: [{ find: '새', replace: '다시 고친' }], engine: 'file' });
+      assert.ok(!r.isError, `이번에 만든 파일은 다시 고친다: ${textOf(r)}`);
+      r = await run('office_read', { path: tmp.path('밖.docx') });
+      assert.equal(r.isError, true, '그 폴더 밖은 읽지 않는다');
+      assert.match(textOf(r), /폴더 안의 파일만 읽을 수 있습니다/);
+    } finally { await c.close(); }
+  });
+});
+
 describe('PDF 도구', () => {
   test('office_pdf_tools: 합치기 → 쪽 뽑기 → 돌리기', async () => {
     copyFileSync(join(ROOT, 'test', 'fixtures', 'pdf', '신청서.pdf'), tmp.path('p1.pdf'));

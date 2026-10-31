@@ -56,8 +56,9 @@ export function register(server, ctx) {
     // 그림·테마 경로도 작업 폴더 기준
     const ops = operations.map((op) => ({
       ...op,
-      ...(op.image_path ? { image_path: abs(op.image_path) } : {}),
-      ...(op.theme_path ? { theme_path: abs(op.theme_path) } : {}),
+      // 그림·테마 파일도 읽기 규칙(제한 모드의 폴더·네트워크 경로)을 따른다
+      ...(op.image_path ? { image_path: mustExist(op.image_path) } : {}),
+      ...(op.theme_path ? { theme_path: mustExist(op.theme_path) } : {}),
     }));
     const r = await pptEdit(full, ops, { output: out });
     return text([...r.results, ...(r.notes ?? []), `저장: ${r.output}`].join('\n'));

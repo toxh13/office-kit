@@ -761,7 +761,7 @@ describe('한글 자동화 보안 모듈', () => {
   test('레지스트리 값 이름은 com.mjs의 HANCOM_SECURITY_MODULE과 같다', () => {
     assert.equal(HANCOM_SECURITY_MODULE, 'FilePathCheckerModule');
     assert.equal(MODULES_KEY, 'HKCU\\Software\\HNC\\HwpAutomation\\Modules');
-    assert.match(HANCOM_SECURITY_MODULE_URL, /^https:\/\/github\.com\/hancom-io\/devcenter-archive\/raw\/main\/hwp-automation\//);
+    assert.match(HANCOM_SECURITY_MODULE_URL, /^https:\/\/github\.com\/hancom-io\/devcenter-archive\/raw\/[0-9a-f]{40}\/hwp-automation\//, '바뀔 수 있는 브랜치가 아니라 커밋으로 고정');
   });
 
   test('PE 머신 종류 읽기', () => {
