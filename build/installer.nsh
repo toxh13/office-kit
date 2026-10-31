@@ -11,8 +11,19 @@
 !endif
 !define OK_VERB_KEY "shell\OfficeKit"
 
+; 설치 프로그램 언어(Windows 언어 — package.json installerLanguages)에 맞는 글을 $R6에 (1033 영어, 1041 일본어, 그 밖은 한국어)
+!macro OfficeKitPick KO EN JA
+  StrCpy $R6 "${KO}"
+  ${if} $LANGUAGE == 1033
+    StrCpy $R6 "${EN}"
+  ${elseIf} $LANGUAGE == 1041
+    StrCpy $R6 "${JA}"
+  ${endIf}
+!macroend
+
 !macro OfficeKitAddVerb EXT
-  WriteRegStr HKCU "${OK_SFA}\.${EXT}\${OK_VERB_KEY}" "" "Office Kit로 열기"
+  !insertmacro OfficeKitPick "Office Kit로 열기" "Open with Office Kit" "Office Kit で開く" ; fileassoc.mjs OPEN_VERB
+  WriteRegStr HKCU "${OK_SFA}\.${EXT}\${OK_VERB_KEY}" "" "$R6"
   WriteRegStr HKCU "${OK_SFA}\.${EXT}\${OK_VERB_KEY}" "Icon" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
   WriteRegStr HKCU "${OK_SFA}\.${EXT}\${OK_VERB_KEY}\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
 !macroend
@@ -46,9 +57,10 @@
 !define OK_CAPS "${OK_ROOT}\OfficeKit\Capabilities"
 ; Applications\<exe> 키는 매크로 안에서 쓴다 (APP_EXECUTABLE_FILENAME은 이 파일을 읽은 뒤에 정해질 수 있어 !define에 넣지 않는다)
 
-!macro OfficeKitRegisterType EXT DESC
-  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}" "" "${DESC}"
-  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}" "FriendlyTypeName" "${DESC}"
+!macro OfficeKitRegisterType EXT KO EN JA
+  !insertmacro OfficeKitPick "${KO}" "${EN}" "${JA}"
+  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}" "" "$R6"
+  WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}" "FriendlyTypeName" "$R6"
   WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
   WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}\Application" "ApplicationName" "Office Kit"
   WriteRegStr HKCU "${OK_CLASSES}\OfficeKit.${EXT}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
@@ -57,31 +69,31 @@
   WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\SupportedTypes" ".${EXT}" ""
 !macroend
 
-!macro OfficeKitUnregisterType EXT DESC
+!macro OfficeKitUnregisterType EXT KO EN JA
   DeleteRegKey HKCU "${OK_CLASSES}\OfficeKit.${EXT}"
   DeleteRegValue HKCU "${OK_CLASSES}\.${EXT}\OpenWithProgids" "OfficeKit.${EXT}"
   !insertmacro OfficeKitDeleteKeyIfEmpty "${OK_CLASSES}\.${EXT}\OpenWithProgids"
   !insertmacro OfficeKitDeleteKeyIfEmpty "${OK_CLASSES}\.${EXT}"
 !macroend
 
-; 형식과 탐색기 '유형' 이름 (fileassoc.mjs ASSOC_TYPES 와 같게)
+; 형식과 탐색기 '유형' 이름: 한국어 · 영어 · 일본어 (fileassoc.mjs ASSOC_TYPE_NAMES 와 같게)
 !macro OfficeKitForEachType MACRO
-  !insertmacro ${MACRO} hwp "한글 문서"
-  !insertmacro ${MACRO} hwpx "한글 문서 (HWPX)"
-  !insertmacro ${MACRO} hwt "한글 서식 파일"
-  !insertmacro ${MACRO} docx "Word 문서"
-  !insertmacro ${MACRO} doc "Word 97-2003 문서"
-  !insertmacro ${MACRO} rtf "서식 있는 텍스트 문서"
-  !insertmacro ${MACRO} odt "ODF 텍스트 문서"
-  !insertmacro ${MACRO} pptx "PowerPoint 프레젠테이션"
-  !insertmacro ${MACRO} ppt "PowerPoint 97-2003 프레젠테이션"
-  !insertmacro ${MACRO} odp "ODF 프레젠테이션"
-  !insertmacro ${MACRO} xlsx "Excel 통합 문서"
-  !insertmacro ${MACRO} xls "Excel 97-2003 통합 문서"
-  !insertmacro ${MACRO} xlsm "Excel 매크로 사용 통합 문서"
-  !insertmacro ${MACRO} csv "CSV 파일"
-  !insertmacro ${MACRO} ods "ODF 스프레드시트"
-  !insertmacro ${MACRO} pdf "PDF 문서"
+  !insertmacro ${MACRO} hwp "한글 문서" "Hangul Document" "ハングル文書"
+  !insertmacro ${MACRO} hwpx "한글 문서 (HWPX)" "Hangul Document (HWPX)" "ハングル文書 (HWPX)"
+  !insertmacro ${MACRO} hwt "한글 서식 파일" "Hangul Template" "ハングル テンプレート"
+  !insertmacro ${MACRO} docx "Word 문서" "Word Document" "Word 文書"
+  !insertmacro ${MACRO} doc "Word 97-2003 문서" "Word 97-2003 Document" "Word 97-2003 文書"
+  !insertmacro ${MACRO} rtf "서식 있는 텍스트 문서" "Rich Text Document" "リッチ テキスト文書"
+  !insertmacro ${MACRO} odt "ODF 텍스트 문서" "ODF Text Document" "ODF テキスト文書"
+  !insertmacro ${MACRO} pptx "PowerPoint 프레젠테이션" "PowerPoint Presentation" "PowerPoint プレゼンテーション"
+  !insertmacro ${MACRO} ppt "PowerPoint 97-2003 프레젠테이션" "PowerPoint 97-2003 Presentation" "PowerPoint 97-2003 プレゼンテーション"
+  !insertmacro ${MACRO} odp "ODF 프레젠테이션" "ODF Presentation" "ODF プレゼンテーション"
+  !insertmacro ${MACRO} xlsx "Excel 통합 문서" "Excel Workbook" "Excel ブック"
+  !insertmacro ${MACRO} xls "Excel 97-2003 통합 문서" "Excel 97-2003 Workbook" "Excel 97-2003 ブック"
+  !insertmacro ${MACRO} xlsm "Excel 매크로 사용 통합 문서" "Excel Macro-Enabled Workbook" "Excel マクロ有効ブック"
+  !insertmacro ${MACRO} csv "CSV 파일" "CSV File" "CSV ファイル"
+  !insertmacro ${MACRO} ods "ODF 스프레드시트" "ODF Spreadsheet" "ODF スプレッドシート"
+  !insertmacro ${MACRO} pdf "PDF 문서" "PDF Document" "PDF 文書"
 !macroend
 
 !macro OfficeKitRegisterApp
@@ -90,7 +102,8 @@
   WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
   WriteRegStr HKCU "${OK_CLASSES}\Applications\${APP_EXECUTABLE_FILENAME}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
   WriteRegStr HKCU "${OK_CAPS}" "ApplicationName" "Office Kit"
-  WriteRegStr HKCU "${OK_CAPS}" "ApplicationDescription" "한글·Word·PowerPoint·Excel·PDF 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램"
+  !insertmacro OfficeKitPick "한글·Word·PowerPoint·Excel·PDF 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램" "View and edit Hangul, Word, PowerPoint, Excel, and PDF documents, and revise them by chatting with AI" "ハングル・Word・PowerPoint・Excel・PDF 文書を表示・編集し、AI とのチャットで修正するアプリ" ; fileassoc.mjs APP_DESCRIPTION
+  WriteRegStr HKCU "${OK_CAPS}" "ApplicationDescription" "$R6"
   WriteRegStr HKCU "${OK_CAPS}" "ApplicationIcon" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
   WriteRegStr HKCU "${OK_ROOT}\RegisteredApplications" "Office Kit" "${OK_CAPS}"
 !macroend

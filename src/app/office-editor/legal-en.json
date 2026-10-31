@@ -1,0 +1,331 @@
+{
+  "$comment": "docs/office-editor-legal-en.md에서 만든 Office 편집 창 '정보 · 라이선스' 글. 고치려면 그 문서를 고친 뒤 OFFICEKIT_UPDATE_LEGAL=1 node --test test/editor-integration.test.mjs. {{appVersion}}은 편집 창이 앱 버전으로 바꾼다.",
+  "source": "docs/office-editor-legal-en.md",
+  "title": "About · Licenses",
+  "intro": [
+    {
+      "p": [
+        {
+          "text": "This editor window (Document editor · Spreadsheet editor · Slide editor) is based on "
+        },
+        {
+          "text": "ONLYOFFICE Docs",
+          "bold": true
+        },
+        {
+          "text": "."
+        }
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "title": "Original developer",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "The original developer of the editor is "
+              },
+              {
+                "text": "Ascensio System SIA",
+                "bold": true
+              },
+              {
+                "text": " (ONLYOFFICE). "
+              },
+              {
+                "text": "www.onlyoffice.com",
+                "href": "https://www.onlyoffice.com"
+              }
+            ],
+            [
+              {
+                "text": "Version in use: ONLYOFFICE Docs Community Edition 9.4.0 (build 9.4.0.129), source tag "
+              },
+              {
+                "text": "v9.4.0.129",
+                "code": true
+              }
+            ],
+            [
+              {
+                "text": "The bridge code that runs the editor files in the browser and the app page are BRF Tech's filex-office-editor v0.3.1."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "This may be a modified version",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "The editor in Office Kit is not the original as is; "
+              },
+              {
+                "text": "it may be a modified version",
+                "bold": true
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Changes: what filex-office-editor changed when packaging the editor files; files Office Kit does not use were removed (other-language files, mobile screens, the font folder of the editor package); while editing, the font list is replaced with the fonts on this PC."
+              }
+            ],
+            [
+              {
+                "text": "Dated lists: "
+              },
+              {
+                "text": "Modification notice (NOTICE-OfficeKit.md)",
+                "local": "NOTICE-OfficeKit.md"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "filex-office-editor notice (NOTICE)",
+                "local": "NOTICE"
+              }
+            ],
+            [
+              {
+                "text": "The logos inside the editor and the editor's own \"About\" screen are left unchanged."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Licenses",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "The editor, the converter (x2t), and filex-office-editor are licensed under the "
+              },
+              {
+                "text": "GNU Affero General Public License version 3 (AGPL-3.0)",
+                "bold": true
+              },
+              {
+                "text": ". The ONLYOFFICE parts carry additional terms 1–5 (section 7)."
+              }
+            ],
+            [
+              {
+                "text": "This is free software. You can redistribute and modify it under this license, and it comes with "
+              },
+              {
+                "text": "no warranty",
+                "bold": true
+              },
+              {
+                "text": "."
+              }
+            ],
+            [
+              {
+                "text": "Full AGPL v3 text and ONLYOFFICE additional terms (LICENSE.txt)",
+                "local": "editor/LICENSE.txt"
+              }
+            ],
+            [
+              {
+                "text": "filex-office-editor license (LICENSE)",
+                "local": "LICENSE"
+              }
+            ],
+            [
+              {
+                "text": "Third-party components in the editor (3rd-Party.txt)",
+                "local": "editor/3rd-Party.txt"
+              },
+              {
+                "text": " — Bootstrap, jQuery, RequireJS, Underscore, Backbone, Socket.IO, and more (MIT · BSD · Apache-2.0)"
+              }
+            ],
+            [
+              {
+                "text": "Third-party components in the converter and font engine (WebAssembly) (THIRD-PARTY-NATIVE.txt)",
+                "local": "THIRD-PARTY-NATIVE.txt"
+              },
+              {
+                "text": " — Boost, ICU, FreeType, HarfBuzz, libpng, libjpeg, libtiff, OpenJPEG, libxml2, Xpdf, DjVuLibre, the emscripten runtime, URW++ fonts, and more"
+              }
+            ],
+            [
+              {
+                "text": "Non-code material such as images, icons, and help text is "
+              },
+              {
+                "text": "CC BY-SA 4.0",
+                "bold": true
+              },
+              {
+                "text": ". Author: Ascensio System SIA (ONLYOFFICE). "
+              },
+              {
+                "text": "CC BY-SA 4.0 legal code",
+                "href": "https://creativecommons.org/licenses/by-sa/4.0/legalcode"
+              }
+            ],
+            [
+              {
+                "text": "Office Kit's own code (the window, saving, the font list, and so on) is MIT, except that the filex patches are AGPL-3.0-or-later and the font list generator is AGPL-3.0-only (+ ONLYOFFICE additional terms)."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Source code",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "Editor source package for this version (Office Kit {{appVersion}}): "
+              },
+              {
+                "text": "office-editor-source-{{appVersion}}.zip",
+                "href": "https://github.com/toxh13/office-kit/releases/download/v{{appVersion}}/office-editor-source-{{appVersion}}.zip"
+              }
+            ],
+            [
+              {
+                "text": "Office Kit source: "
+              },
+              {
+                "text": "github.com/toxh13/office-kit (v{{appVersion}})",
+                "href": "https://github.com/toxh13/office-kit/tree/v{{appVersion}}"
+              }
+            ],
+            [
+              {
+                "text": "filex-office-editor v0.3.1: "
+              },
+              {
+                "text": "github.com/BRF-Tech/filex-office-editor",
+                "href": "https://github.com/BRF-Tech/filex-office-editor/tree/v0.3.1"
+              }
+            ],
+            [
+              {
+                "text": "ONLYOFFICE original source (tag "
+              },
+              {
+                "text": "v9.4.0.129",
+                "code": true
+              },
+              {
+                "text": "): "
+              },
+              {
+                "text": "sdkjs",
+                "href": "https://github.com/ONLYOFFICE/sdkjs/tree/v9.4.0.129"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "web-apps",
+                "href": "https://github.com/ONLYOFFICE/web-apps/tree/v9.4.0.129"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "core",
+                "href": "https://github.com/ONLYOFFICE/core/tree/v9.4.0.129"
+              },
+              {
+                "text": " · "
+              },
+              {
+                "text": "build_tools",
+                "href": "https://github.com/ONLYOFFICE/build_tools/tree/v9.4.0.129"
+              }
+            ],
+            [
+              {
+                "text": "The x2t converter is built from ONLYOFFICE core "
+              },
+              {
+                "text": "v9.4.0.129",
+                "code": true
+              },
+              {
+                "text": " plus CryptPad's WebAssembly patches and BRF Tech's patches. How to build it is in "
+              },
+              {
+                "text": "UPSTREAM.md",
+                "code": true
+              },
+              {
+                "text": " in the source package."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Trademarks",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "ONLYOFFICE® and ONLYOFFICE Docs™ are trademarks of Ascensio System SIA. Office Kit is not affiliated with Ascensio System SIA and is not endorsed or sponsored by it. "
+              },
+              {
+                "text": "Trademark policy",
+                "href": "https://www.onlyoffice.com/trademark-policy"
+              }
+            ],
+            [
+              {
+                "text": "Microsoft Word, Excel, and PowerPoint are trademarks of Microsoft. Office Kit uses these names only to refer to file formats."
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Fonts",
+      "blocks": [
+        {
+          "ul": [
+            [
+              {
+                "text": "Fonts used for editing are not distributed with the app. The editor only reads the fonts installed on this PC."
+              }
+            ],
+            [
+              {
+                "text": "However, the x2t converter contains the standard 14 PDF fonts that ONLYOFFICE core includes (URW++ Nimbus Sans · Nimbus Roman · Nimbus Mono, Standard Symbols L, Dingbats). These are free fonts under AGPL-3.0 with an exception that allows embedding them in PDF and PostScript documents. "
+              },
+              {
+                "text": "Notice (THIRD-PARTY-NATIVE.txt)",
+                "local": "THIRD-PARTY-NATIVE.txt"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

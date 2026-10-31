@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Office Kit</title>
   <link rel="stylesheet" href="style.css">
+  <script src="../i18n/translate.js" defer></script>
   <script src="md.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -63,7 +64,7 @@
 
       <div class="docinfo" id="docinfo" hidden>
         <span class="kind-badge" id="doc-kind"></span>
-        <span class="doc-name" id="doc-name"></span>
+        <span class="doc-name" id="doc-name" data-no-i18n></span>
         <span class="engine-badge" id="doc-engine" hidden></span>
         <button class="icon-btn sm" id="btn-close-doc" title="문서 닫기" aria-label="문서 닫기"><svg class="i"><use href="#i-x"/></svg></button>
       </div>
@@ -402,8 +403,17 @@
             <button role="radio" data-theme="light">밝게</button>
             <button role="radio" data-theme="dark">어둡게</button>
           </div>
+          <h3>화면 언어</h3>
+          <div class="segmented" id="lang-seg" role="radiogroup" aria-label="화면 언어">
+            <button role="radio" data-lang="system">Windows 언어</button>
+            <button role="radio" data-lang="ko" data-no-i18n>한국어</button>
+            <button role="radio" data-lang="en" data-no-i18n>English</button>
+            <button role="radio" data-lang="ja" data-no-i18n>日本語</button>
+          </div>
+          <p class="help">바꾸면 Office Kit를 다시 시작해야 적용돼요. AI도 고른 언어로 답해요. 편집기 안 메뉴는 한국어·영어만 있어서 일본어를 고르면 영어로 보여요.</p>
+          <div class="btn-row" id="lang-restart" hidden><button class="btn sm primary" id="btn-lang-restart">지금 다시 시작</button></div>
           <h3>원본 백업</h3>
-          <p class="help">문서를 열 때·편집 창에서 저장하기 전·AI 대화 전·되돌리기 전 상태를 자동으로 복사해 둡니다 (문서마다 최근 30개). 상단의 <b>원래대로</b>(▾ 버전 목록)로 되돌릴 수 있어요.</p>
+          <p class="help" data-i18n-rich>문서를 열 때·편집 창에서 저장하기 전·AI 대화 전·되돌리기 전 상태를 자동으로 복사해 둡니다 (문서마다 최근 30개). 상단의 <b>원래대로</b>(▾ 버전 목록)로 되돌릴 수 있어요.</p>
           <button class="btn sm" id="btn-open-backups"><svg class="i"><use href="#i-folder"/></svg>백업 폴더 열기</button>
         </section>
 
@@ -414,13 +424,13 @@
             <label class="choice"><input type="radio" name="openAction" value="preview"><span class="choice-body"><span class="choice-title"><svg class="i"><use href="#i-eye"/></svg>미리보기만</span><span class="choice-desc">먼저 미리보기로 열고, 고칠 때 ‘직접 편집’(Ctrl+E)을 눌러요.</span></span></label>
           </div>
           <h3>기본 프로그램</h3>
-          <p class="help">Office Kit를 기본 프로그램으로 정하면 탐색기에서 문서를 두 번 눌렀을 때 Office Kit로 열려요. Windows는 앱이 기본 프로그램을 직접 바꾸지 못하게 하므로, 아래 단추로 Windows 설정을 열어 형식마다 <b>Office Kit</b>를 골라 주세요.</p>
+          <p class="help" data-i18n-rich>Office Kit를 기본 프로그램으로 정하면 탐색기에서 문서를 두 번 눌렀을 때 Office Kit로 열려요. Windows는 앱이 기본 프로그램을 직접 바꾸지 못하게 하므로, 아래 단추로 Windows 설정을 열어 형식마다 <b>Office Kit</b>를 골라 주세요.</p>
           <div class="assoc-list" id="assoc-list"></div>
           <div class="btn-row">
             <button class="btn primary" id="btn-assoc-settings"><svg class="i"><use href="#i-external"/></svg>Windows 기본 앱 설정 열기</button>
             <button class="btn" id="btn-assoc-refresh"><svg class="i"><use href="#i-refresh"/></svg>다시 확인</button>
           </div>
-          <p class="help small" id="assoc-note">한 가지 형식만 바꾸려면 탐색기에서 그 파일을 오른쪽 클릭 → <b>연결 프로그램</b> → <b>다른 앱 선택</b> → Office Kit → <b>항상</b>을 눌러도 돼요.</p>
+          <p class="help small" id="assoc-note" data-i18n-rich>한 가지 형식만 바꾸려면 탐색기에서 그 파일을 오른쪽 클릭 → <b>연결 프로그램</b> → <b>다른 앱 선택</b> → Office Kit → <b>항상</b>을 눌러도 돼요.</p>
         </section>
 
         <section class="settings-page" data-page="connect" hidden>
@@ -431,7 +441,7 @@
 
         <section class="settings-page" data-page="hancom" hidden>
           <h3>한글 자동화</h3>
-          <p class="help">한컴오피스는 <b>자동화 보안 모듈</b>이 없으면 파일마다 “접근 허용” 창을 띄워 자동 작업이 멈춥니다. 그래서 지금은 내장 엔진으로 한글 문서를 다뤄요 (PDF로 저장도 내장 엔진으로 됩니다). 연결하면 한글 프로그램으로 원본과 똑같은 PDF 저장과 정확한 미리보기를 할 수 있습니다.</p>
+          <p class="help" data-i18n-rich>한컴오피스는 <b>자동화 보안 모듈</b>이 없으면 파일마다 “접근 허용” 창을 띄워 자동 작업이 멈춥니다. 그래서 지금은 내장 엔진으로 한글 문서를 다뤄요 (PDF로 저장도 내장 엔진으로 됩니다). 연결하면 한글 프로그램으로 원본과 똑같은 PDF 저장과 정확한 미리보기를 할 수 있습니다.</p>
           <div class="status-grid" id="hancom-status"></div>
           <div class="btn-row">
             <button class="btn primary" id="btn-hancom-setup"><svg class="i"><use href="#i-shield"/></svg>한글 자동화 연결</button>

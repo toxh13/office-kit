@@ -68,6 +68,7 @@ export function editorDirs(root, overrides = {}) {
     host: resolve(overrides.host ?? join(base, 'src', 'app', 'editor')),
     office: resolve(overrides.office ?? join(base, 'vendor', 'office-editor')),
     officeHost: resolve(overrides.officeHost ?? join(base, 'src', 'app', 'office-editor')),
+    i18n: resolve(overrides.i18n ?? join(base, 'src', 'app', 'i18n')),
   };
 }
 
@@ -420,6 +421,8 @@ export async function startEditorServer({
       if (hit && isHtml(hit.file)) hit.headers = { 'Content-Security-Policy': hostCsp(studioOrigin) };
       return hit;
     }
+    // 화면 번역기 (사전은 IPC로 받는다 — 이 파일 하나만 내준다)
+    if (prefix === 'i18n') return rest.length === 1 && rest[0] === 'translate.js' ? resolveInDir(d.i18n, rest) : null;
     if (prefix === 'office-host') {
       if (rest[0]?.toLowerCase() === 'fonts' || /\.mjs$/i.test(rest.at(-1) ?? '')) return null;
       const hit = resolveInDir(d.officeHost, rest);

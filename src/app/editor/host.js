@@ -1,5 +1,13 @@
 // host.js — 한글 편집 창: 내장 rhwp-studio(iframe)를 SDK로 띄우고, 저장·닫기·바깥 변경을 앱(preload)과 잇는다.
 const api = window.officeKitEditor;
+// 화면 언어: 틀(단추·알림)의 한국어를 사전으로 바꾼다. 편집기 안 메뉴는 편집기 자체 언어 (일본어 메뉴는 없어 영어)
+function startI18n(d) {
+  const lib = globalThis.OfficeKitI18n;
+  if (!d || !lib || !['en', 'ja'].includes(d.lang)) return;
+  document.documentElement.lang = d.lang;
+  lib.translateDom(document.documentElement, lib.compile(d.dict, d.lang));
+}
+startI18n(api?.i18n);
 // 시험용 고리 (main이 ?test=1로 열 때만)
 const TEST = new URLSearchParams(location.search).get('test') === '1';
 const $ = (id) => document.getElementById(id);
@@ -292,7 +300,7 @@ async function makePdf(op) {
     else if (r?.reason && r.reason !== 'cancelled') toast(`인쇄하지 못했습니다: ${r.reason}`, 'error');
     return true;
   } catch (err) {
-    showBanner('error', `${op === 'save' ? 'PDF로 저장하지' : '인쇄하지'} 못했습니다: ${err.message}`, [{ label: '닫기', onClick: hideBanner }]);
+    showBanner('error', op === 'save' ? `PDF로 저장하지 못했습니다: ${err.message}` : `인쇄하지 못했습니다: ${err.message}`, [{ label: '닫기', onClick: hideBanner }]);
     return false;
   } finally {
     state.pdfBusy = false;
@@ -313,7 +321,7 @@ async function autosave() {
 
 /** 다시 열었을 때 복구 사본이 파일보다 새로우면 묻는다 */
 function offerDraft(draft) {
-  const when = new Date(draft.mtimeMs).toLocaleString('ko-KR');
+  const when = new Date(draft.mtimeMs).toLocaleString(document.documentElement.lang || 'ko');
   showBanner('draft', `저장하지 않고 닫힌 편집 내용이 있습니다 (${when} 자동 저장). 복구할까요?`, [
     { label: '복구', primary: true, onClick: async () => {
       try {

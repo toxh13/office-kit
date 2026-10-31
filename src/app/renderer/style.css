@@ -1158,3 +1158,6 @@ button.st { border: 0; background: none; font: inherit; color: inherit; cursor: 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
+
+/* 일본어 화면: 일본어 글꼴 먼저 (맑은 고딕의 가나는 자간이 벌어져 보인다) */
+:root:lang(ja) { --font: "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", "Malgun Gothic", system-ui, sans-serif; }

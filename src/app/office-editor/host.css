@@ -298,3 +298,6 @@ dialog.about::backdrop { background: rgba(10, 12, 16, 0.45); }
   #btn-about > span { display: none; }
   .file-list { width: 160px; }
 }
+
+/* 일본어 화면: 일본어 글꼴 먼저 (맑은 고딕의 가나는 자간이 벌어져 보인다) */
+:root:lang(ja) { --font: "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", "Malgun Gothic", system-ui, sans-serif; }

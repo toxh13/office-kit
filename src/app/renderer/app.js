@@ -4,6 +4,21 @@
   const K = window.officeKit;
   const MD = window.OKMarkdown;
 
+  // ── 화면 언어 ── 한국어 원문을 사전으로 바꾼다 (문서 내용·파일 이름·대화 글은 그대로)
+  const NO_I18N = [
+    '.paper > p', '.doc-table', '.sheet-scroll', '.s-title', '.s-line', '.bubble', '.md',
+    '.diff-text:not(:has(> .diff-empty-line))', '.diff-where', 'td.addr', '.pii-row td.val', '.pii-row td.masked', '.pii-row td.ctx',
+    '.recent-name', '.recent-dir', '.pdf-name', 'td.file', '.dir', '.path', '.tool-arg',
+  ].join(', ');
+  const I18N = (() => {
+    const d = K?.i18n; const lib = window.OfficeKitI18n;
+    if (!d || !lib || !['en', 'ja'].includes(d.lang)) return { t: (x) => x, lang: 'ko', setting: d?.setting ?? 'system' };
+    const tr = lib.compile(d.dict, d.lang);
+    document.documentElement.lang = d.lang;
+    lib.translateDom(document.documentElement, tr, { skip: NO_I18N });
+    return { ...tr, setting: d.setting ?? 'system' };
+  })();
+
   // ── 작은 도우미 ──────────────────────────────────────
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -113,8 +128,10 @@
 
   // 시간 표시
   const two = (n) => String(n).padStart(2, '0');
+  const LOCALE = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' };
   function timeText(ms) {
     const d = new Date(ms);
+    if (I18N.lang !== 'ko') return d.toLocaleTimeString(LOCALE[I18N.lang] ?? 'en-US', { hour: 'numeric', minute: '2-digit' });
     const hr = d.getHours();
     return `${hr < 12 ? '오전' : '오후'} ${hr % 12 || 12}:${two(d.getMinutes())}`;
   }
@@ -841,7 +858,7 @@
           })))));
       scroll.replaceChildren(table);
     };
-    sheets.forEach((s, i) => tabs.append(h('button', { class: 'sheet-tab', role: 'tab', text: s.name || `시트 ${i + 1}`, onclick: () => show(i) })));
+    sheets.forEach((s, i) => tabs.append(h('button', { class: 'sheet-tab', role: 'tab', text: s.name || `시트 ${i + 1}`, 'data-no-i18n': !!s.name, onclick: () => show(i) })));
     view.append(tabs, scroll);
     show(0);
     return view;
@@ -894,7 +911,7 @@
       const r = await call(K.doc.restore({ file: target.file }));
       if (r.doc) updateDoc(r.doc);
       const editorNote = !r.editorNotified ? '' : state.doc?.editor?.dirty ? '. 편집 창에서 다시 불러올지 골라 주세요' : '. 편집 창도 다시 불러와요';
-      toast(`${r.stoppedAi > 0 ? 'AI 작업을 멈추고 ' : ''}${what} 버전으로 되돌렸어요${editorNote}`, { type: 'success' });
+      toast(r.stoppedAi > 0 ? `AI 작업을 멈추고 ${what} 버전으로 되돌렸어요${editorNote}` : `${what} 버전으로 되돌렸어요${editorNote}`, { type: 'success' });
       // main이 이 문서의 AI 대화를 끝냈다 → 대화창에 알린다 (AI가 되돌리기 전 내용을 기억하지 않게)
       if (r.newChat && chat.items.length) {
         chat.items.push({ role: 'note', text: '문서를 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
@@ -938,8 +955,8 @@
         h('thead', {}, h('tr', {}, h('th', { text: '칸' }), h('th', { text: '전' }), h('th', { text: '후' }))),
         h('tbody', {}, ...d.cells.map((c) => h('tr', {},
           h('td', { class: 'addr', text: `${c.sheet}!${c.cell}` }),
-          h('td', { class: c.old ? 'old' : '', text: c.old || '(빈칸)' }),
-          h('td', { class: c.new ? 'new' : '', text: c.new || '(빈칸)' }))))));
+          h('td', { class: c.old ? 'old' : '', text: c.old || '(빈칸)', 'data-no-i18n': !!c.old }),
+          h('td', { class: c.new ? 'new' : '', text: c.new || '(빈칸)', 'data-no-i18n': !!c.new }))))));
     }
     return out;
   }
@@ -2111,6 +2128,9 @@
     $$('input[name="previewMode"]', el.settings).forEach((r) => { r.checked = r.value === (s.previewMode ?? 'auto'); });
     $$('input[name="openAction"]', el.settings).forEach((r) => { r.checked = r.value === (s.openAction ?? 'edit'); });
     $$('#theme-seg button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.theme === (s.theme ?? 'system'))));
+    $$('#lang-seg button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.lang === (s.lang ?? 'system'))));
+    // 언어는 다시 시작해야 바뀐다 (시작할 때의 설정과 다르면 다시 시작 단추)
+    $('#lang-restart').hidden = (s.lang ?? 'system') === I18N.setting;
     renderModelInputs();
     $('#app-version').textContent = state.version ? `Office Kit ${state.version}` : '';
   }
@@ -2663,6 +2683,8 @@
       }
     }));
     $$('#theme-seg button').forEach((b) => b.addEventListener('click', () => saveSettings({ theme: b.dataset.theme })));
+    $$('#lang-seg button').forEach((b) => b.addEventListener('click', () => saveSettings({ lang: b.dataset.lang })));
+    $('#btn-lang-restart').addEventListener('click', () => call(K.relaunch()).catch(showError));
     $('#btn-provider-recheck').addEventListener('click', () => renderProviderChoices(true));
     $('#btn-open-backups').addEventListener('click', () => call(K.shell.openBackups()).catch(showError));
     $('#btn-hancom-setup').addEventListener('click', () => hancomSetup('download'));

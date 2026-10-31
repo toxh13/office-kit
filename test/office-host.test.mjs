@@ -651,9 +651,11 @@ test('정보 · 라이선스: 거울 주소(sources)를 앞에, https만 · VERS
 test('host.html: 스크립트는 host.js 모듈 하나, 인라인 스크립트·style 속성 없음, 막대에 저장·정보 · 라이선스', () => {
   const html = readFileSync(join(HOST_DIR, 'host.html'), 'utf8');
   const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
-  assert.equal(scripts.length, 1);
-  assert.match(scripts[0][0], /type="module"\s+src="host\.js"/);
-  assert.equal(scripts[0][1].trim(), '');
+  // 화면 번역기(같은 서버의 /i18n/translate.js) + host.js 모듈
+  assert.equal(scripts.length, 2);
+  assert.match(scripts[0][0], /^<script src="\/i18n\/translate\.js">/);
+  assert.match(scripts[1][0], /type="module"\s+src="host\.js"/);
+  for (const x of scripts) assert.equal(x[1].trim(), '');
   assert.doesNotMatch(html, /\sstyle="/i);
   assert.doesNotMatch(html, /\son[a-z]+="/i, '인라인 이벤트 처리기 없음');
   assert.match(html, /<link rel="stylesheet" href="host\.css">/);
@@ -687,6 +689,7 @@ test('office-preload.cjs: window.officeKitOffice만, editor:* 채널로', async 
     ipcRenderer: {
       invoke: (ch, ...a) => { invoked.push([ch, ...a]); return Promise.resolve({ ok: true, value: null }); },
       send: (ch, ...a) => { sent.push([ch, ...a]); },
+      sendSync: (ch) => (ch === 'editor:i18n' ? { lang: 'en', dict: { 저장: 'Save' } } : undefined),
       on: (ch, fn) => { listeners.set(ch, fn); },
       removeListener: (ch) => { listeners.delete(ch); },
     },
@@ -699,9 +702,10 @@ test('office-preload.cjs: window.officeKitOffice만, editor:* 채널로', async 
   assert.deepEqual(Object.keys(exposed), ['officeKitOffice']);
   const api = exposed.officeKitOffice;
   assert.deepEqual(Object.keys(api).sort(), [
-    'close', 'discardDraft', 'download', 'getDocument', 'log', 'onCommand', 'onExternalChange', 'onRequestClose',
+    'close', 'discardDraft', 'download', 'getDocument', 'i18n', 'log', 'onCommand', 'onExternalChange', 'onRequestClose',
     'panel', 'print', 'readDraft', 'reportDirty', 'save', 'saveAs', 'state',
   ]);
+  assert.deepEqual(api.i18n, { lang: 'en', dict: { 저장: 'Save' } }, '화면 번역 사전은 editor:i18n으로 처음에 받는다');
   api.panel();
   assert.deepEqual(sent.at(-1), ['editor:panel'], "'AI · 도구' 단추 → main에 옆 창을 부탁");
   sent.length = 0;

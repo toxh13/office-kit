@@ -673,8 +673,17 @@ export function aboutModel(about, appUrl, legal = null) {
 const IS_BROWSER = typeof window !== 'undefined' && typeof document !== 'undefined';
 if (IS_BROWSER) startPage();
 
+// 화면 언어: 틀(단추·알림)의 한국어를 사전으로 바꾼다. 편집기 안 메뉴는 편집기 자체 언어 (일본어 메뉴는 없어 영어)
+function startI18n(d) {
+  const lib = globalThis.OfficeKitI18n;
+  if (!d || !lib || !['en', 'ja'].includes(d.lang)) return;
+  document.documentElement.lang = d.lang;
+  lib.translateDom(document.documentElement, lib.compile(d.dict, d.lang));
+}
+
 function startPage() {
   const api = window.officeKitOffice;
+  startI18n(api?.i18n);
   const TEST = new URLSearchParams(location.search).get('test') === '1';
   const $ = (id) => document.getElementById(id);
   const HELLO_WAIT_MS = 30_000;
@@ -867,7 +876,7 @@ function startPage() {
       },
       onActionFailed(what, err) {
         state.suppressUntil = Date.now() + 4000;
-        toast(`${what === 'print' ? '인쇄하지' : '내려받지'} 못했습니다: ${err?.message ?? err}`, 'error');
+        toast(what === 'print' ? `인쇄하지 못했습니다: ${err?.message ?? err}` : `내려받지 못했습니다: ${err?.message ?? err}`, 'error');
       },
       onToast(text, tone) {
         // 저장 실패는 host가 띠로 알리므로 앱 알림은 로그로만
@@ -960,7 +969,7 @@ function startPage() {
   // ── 복구용 사본 ──
 
   function offerDraft(draft) {
-    const when = Number.isFinite(draft?.mtimeMs) ? new Date(draft.mtimeMs).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const when = Number.isFinite(draft?.mtimeMs) ? new Date(draft.mtimeMs).toLocaleString(document.documentElement.lang || 'ko', { dateStyle: 'medium', timeStyle: 'short' }) : '';
     showBanner('draft', `자동 저장된 편집 내용이 있습니다${when ? ` (${when})` : ''}. 복구하면 그 내용으로 다시 열고, 저장해야 파일에 들어갑니다.`, [
       { label: '복구', primary: true, onClick: () => { void restoreDraft(); } },
       { label: '버리기', onClick: () => { void discardDraft(); } },
@@ -996,14 +1005,16 @@ function startPage() {
   // ── 정보 · 라이선스 ──
 
   // '정보 · 라이선스' 글 (legal-ko.json, 이 페이지와 같은 폴더). undefined = 아직 안 읽음, null = 못 읽음 → 들어 있는 글로
+  // 화면 언어가 한국어가 아니면 영어 글(legal-en.json — 고지문은 조각 번역하지 않는다)
+  const LEGAL_FILE = (document.documentElement.lang || 'ko') === 'ko' ? 'legal-ko.json' : 'legal-en.json';
   let legal;
   let legalLoading = null;
   function loadLegal() {
     if (legal !== undefined) return Promise.resolve(legal);
-    legalLoading ??= fetch(new URL('legal-ko.json', location.href), { cache: 'no-cache' })
+    legalLoading ??= fetch(new URL(LEGAL_FILE, location.href), { cache: 'no-cache' })
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null)
-      .then((v) => { legal = v && typeof v === 'object' ? v : null; if (!legal) log('정보 · 라이선스 글(legal-ko.json)을 읽지 못해 들어 있는 글로 보여 줍니다'); return legal; });
+      .then((v) => { legal = v && typeof v === 'object' ? v : null; if (!legal) log(`정보 · 라이선스 글(${LEGAL_FILE})을 읽지 못해 들어 있는 글로 보여 줍니다`); return legal; });
     return legalLoading;
   }
 
@@ -1050,6 +1061,8 @@ function startPage() {
         sec.append(ul);
       }
       sec.dataset.title = s.title ?? '';
+      // 이미 화면 언어로 쓴 고지문(legal-en.json)은 번역하지 않는다
+      if (m.legal && LEGAL_FILE !== 'legal-ko.json') sec.dataset.noI18n = '';
       parts.push(sec);
     }
     const ver = el('section', 'about-sec');

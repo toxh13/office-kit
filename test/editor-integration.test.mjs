@@ -1029,7 +1029,6 @@ test('store: officeGet/officeSet — 같은 값이면 다시 쓰지 않고, 한�
 
 // ── '정보 · 라이선스' 글: docs/office-editor-legal-ko.md → src/app/office-editor/legal-ko.json ──
 
-const LEGAL_MD = join(ROOT, 'docs', 'office-editor-legal-ko.md');
 const LEGAL_JSON = join(ROOT, 'src', 'app', 'office-editor', 'legal-ko.json');
 
 /** 글 한 줄 → 조각 [{ text, bold?, code?, href?, local? }] (**굵게**, `코드`, [글](https://… | local:경로)만) */
@@ -1083,20 +1082,31 @@ function legalFromMarkdown(md) {
   return out;
 }
 
-test('정보 · 라이선스 글: legal-ko.json이 docs/office-editor-legal-ko.md와 같다', () => {
-  const want = legalFromMarkdown(readFileSync(LEGAL_MD, 'utf8'));
-  if (process.env.OFFICEKIT_UPDATE_LEGAL === '1') {
-    const json = {
-      $comment: 'docs/office-editor-legal-ko.md에서 만든 Office 편집 창 \'정보 · 라이선스\' 글. 고치려면 그 문서를 고친 뒤 OFFICEKIT_UPDATE_LEGAL=1 node --test test/editor-integration.test.mjs. {{appVersion}}은 편집 창이 앱 버전으로 바꾼다.',
-      source: 'docs/office-editor-legal-ko.md',
-      ...want,
-    };
-    writeFileSync(LEGAL_JSON, `${JSON.stringify(json, null, 2)}\n`);
-  }
-  const have = JSON.parse(readFileSync(LEGAL_JSON, 'utf8'));
-  assert.deepEqual({ title: have.title, intro: have.intro, sections: have.sections }, want,
-    'legal-ko.json이 문서와 다릅니다. OFFICEKIT_UPDATE_LEGAL=1 node --test test/editor-integration.test.mjs 로 다시 만드세요');
-  assert.equal(have.source, 'docs/office-editor-legal-ko.md');
+for (const lang of ['ko', 'en']) {
+  test(`정보 · 라이선스 글: legal-${lang}.json이 docs/office-editor-legal-${lang}.md와 같다`, () => {
+    const md = join(ROOT, 'docs', `office-editor-legal-${lang}.md`);
+    const file = join(ROOT, 'src', 'app', 'office-editor', `legal-${lang}.json`);
+    const want = legalFromMarkdown(readFileSync(md, 'utf8'));
+    if (process.env.OFFICEKIT_UPDATE_LEGAL === '1') {
+      const json = {
+        $comment: `docs/office-editor-legal-${lang}.md에서 만든 Office 편집 창 '정보 · 라이선스' 글. 고치려면 그 문서를 고친 뒤 OFFICEKIT_UPDATE_LEGAL=1 node --test test/editor-integration.test.mjs. {{appVersion}}은 편집 창이 앱 버전으로 바꾼다.`,
+        source: `docs/office-editor-legal-${lang}.md`,
+        ...want,
+      };
+      writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
+    }
+    const have = JSON.parse(readFileSync(file, 'utf8'));
+    assert.deepEqual({ title: have.title, intro: have.intro, sections: have.sections }, want,
+      `legal-${lang}.json이 문서와 다릅니다. OFFICEKIT_UPDATE_LEGAL=1 node --test test/editor-integration.test.mjs 로 다시 만드세요`);
+    assert.equal(have.source, `docs/office-editor-legal-${lang}.md`);
+  });
+}
+
+test('정보 · 라이선스 글: 영어 글(화면 언어가 영어·일본어일 때)도 같은 연결·고정 값을 쓴다', () => {
+  const links = (f) => [...readFileSync(join(ROOT, 'docs', f), 'utf8').replace(/<!--[\s\S]*?-->/, '').matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]);
+  assert.deepEqual(links('office-editor-legal-en.md'), links('office-editor-legal-ko.md'));
+  const en = readFileSync(join(ROOT, 'docs', 'office-editor-legal-en.md'), 'utf8').replace(/<!--[\s\S]*?-->/, '');
+  assert.doesNotMatch(en, /[가-힣]/, '영어 글에 한국어가 남지 않는다');
 });
 
 test('정보 · 라이선스 글: 설계 8장 고지 (원 개발사·수정판·라이선스·소스·상표)와 안전한 링크', () => {

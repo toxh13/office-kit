@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   previewMode: 'auto',     // 'auto'(빠르게) | 'exact'(설치된 프로그램)
   openAction: 'edit',      // 문서를 열면: 'edit'(편집 창도 바로 — 한글·docx·xlsx·pptx) | 'preview'(미리보기만)
   theme: 'system',         // 'system' | 'light' | 'dark'
+  lang: 'system',          // 화면 언어 'system'(Windows 언어) | 'ko' | 'en' | 'ja'
   chatWidth: 400,
   chatCollapsed: false,
   window: null,            // { x, y, width, height, maximized }

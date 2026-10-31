@@ -1,6 +1,6 @@
 {
   "name": "office-kit",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "한글(HWP/HWPX)·Word·PowerPoint·Excel 문서를 열고, 확인하고, AI 대화로 수정하는 데스크톱 도구",
   "type": "module",
   "main": "src/app/main.mjs",
@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "@rhwp/editor": "0.8.7",
+    "acorn": "8.14.0",
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3"
   },
@@ -63,6 +64,9 @@
     "files": [
       "package.json",
       "src/**/*",
+      "!src/app/i18n/parts/**",
+      "!src/app/i18n/strings.json",
+      "!src/app/i18n/GLOSSARY.md",
       "src/app/editor/**/*",
       "vendor/rhwp-studio/**/*",
       "vendor/rhwp-editor-sdk/**/*",
@@ -103,9 +107,11 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerLanguages": [
-        "ko_KR"
+        "ko_KR",
+        "en_US",
+        "ja_JP"
       ],
-      "language": "1042",
+      "language": "1033",
       "deleteAppDataOnUninstall": false
     },
     "publish": [

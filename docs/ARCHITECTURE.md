@@ -289,6 +289,18 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
 - ESM 진입 파일에서 `await app.whenReady()`를 최상위에서 기다리면 멈춘다 → `start()`를 기다리지 않고 부른다.
 - 정리(감시 끄기·AI 대화 멈춤·미리보기 PDF 지우기)는 `will-quit`에서 한다. '끝내기'가 편집 창의 저장 확인에서 **취소**될 수 있어서 `before-quit`에서는 하지 않는다.
 
+### 화면 언어 (src/app/i18n)
+- 원문은 소스 안 한국어 글 그대로다. 번역은 `en.json`·`ja.json` 사전 { 한국어: 번역 } 하나로 한다 (키를 따로 두지 않는다).
+- `translate.js` (의존성 없음, 일반 스크립트·ESM 둘 다): `compile(dict, lang)` → `t(글)`. 그대로 맞추기 → 앞뒤 빈칸·줄바꿈 정리 → 틀(`{0}` 자리가 있는 키, 한국어 고정 글이 긴 것부터). 자리 글도 다시 번역한다.
+  `translateDom(root, tr, { skip })`: 지금 있는 글·`title`·`placeholder`·`aria-label`·`alt`를 바꾸고 MutationObserver로 바뀌는 대로 바꾼다.
+  `[data-no-i18n]`·`skip` 선택자 아래(문서 내용·파일 이름·대화 글)는 건드리지 않는다. `[data-i18n-rich]`는 `<b>`가 섞인 문장을 통째로 (번역문의 `<b>`만 요소로, 나머지는 글로).
+- 주 창: preload가 `i18n:get`(sendSync)으로 사전을 받아 처음 그리기 전에 번역을 건다. 편집 창: preload가 `editor:i18n`으로 받고, host 페이지는 편집기 서버의 `/i18n/translate.js`(그 파일 하나만)를 읽는다.
+- main: `i18n/index.mjs`가 Electron 알림 창(`localizedDialog` — 제목·글·단추·필터 이름)·메뉴(`localizeMenu`)·창 제목·작은 바쁨 창 글을 번역한다. 오류 글은 화면에 보일 때 번역된다.
+- 언어 = 설정 `lang` ('system' | 'ko' | 'en' | 'ja'). 'system'이면 `app.getPreferredSystemLanguages()`의 첫 언어 (ko·ja 말고는 영어). 시작할 때 정하고 바꾸면 다시 시작한다.
+- 편집기: rhwp-studio `?lang=ko|en`, Office 편집기 `locale` `ko-KR`|`en-US` (일본어는 둘 다 영어). AI: `systemPrompt({ lang })`이 답할 언어를 알려 준다.
+- 사전 만들기: `node scripts/i18n/extract.mjs` (소스 → `strings.json`) → 새 글은 `parts/fixes.<lang>.json`에 번역 → `node scripts/i18n/merge.mjs` (조각 + 손본 글 → 사전, 자리 표시 검사).
+  `scripts/i18n/rules.mjs`가 사전에 넣지 않는 글(조사 조각·코드·`{쪽}` 같은 토큰)을 정한다. `test/i18n.test.mjs`가 빠진 글이 없는지 본다.
+
 ### 한글 편집 창 (src/app/editor-window.mjs · editor-server.mjs · editor/)
 
 앱 안에서 한글 문서(hwp·hwpx·hwt)를 직접 고치는 창. 편집기는 rhwp-studio(웹 앱)를 묶어 넣은 것(`vendor/`)이고, 인터넷 없이 동작한다.

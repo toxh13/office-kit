@@ -359,6 +359,8 @@ function safeFileName(name, fallback) {
 export function createEditorManager({
   app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange, onPanel, onClosed, toPdf, toPrint, onOpenRequest, onNewRequest,
   dirs, officeState, fonts: fontsModule, fixups: fixupsModule, nativeTheme, icon, testHooks = false, userName,
+  // 화면 언어: t(한국어) → 번역 (창 제목), lang() → 'ko' | 'en' | 'ja' (편집기 메뉴 언어. 일본어 메뉴는 없어 영어로)
+  t = (x) => x, lang = () => 'ko', i18nData = () => null,
   log = (...a) => console.log('[editor]', ...a), limits = {},
 } = {}) {
   const root = resolve(appRoot ?? join(here, '..', '..'));
@@ -401,7 +403,7 @@ export function createEditorManager({
     try { u = new URL(url); } catch { return false; }
     if (u.protocol !== 'http:') return false;
     if (kind === 'office') {
-      return (u.origin === srv.origin && u.pathname.startsWith('/office-host/'))
+      return (u.origin === srv.origin && (u.pathname.startsWith('/office-host/') || u.pathname === '/i18n/translate.js'))
         || (!!srv.officeOrigin && u.origin === srv.officeOrigin && u.pathname.startsWith(`/office/${srv.officeKey}/`));
     }
     return u.origin === srv.origin || u.origin === srv.studioOrigin;
@@ -546,6 +548,9 @@ export function createEditorManager({
     });
   }
 
+  // 화면 번역 사전 (편집 창 preload가 처음에 sendSync로 받는다 — 앱에 든 공개 글이라 보낸 쪽을 가리지 않는다. 답은 꼭 준다)
+  ipcMain.on('editor:i18n', (e) => { try { e.returnValue = i18nData() ?? null; } catch { e.returnValue = null; } });
+
   // 편집 창의 'AI · 도구' 단추 → main이 그 문서의 옆 창(AI 대화·버전·도구)을 이 창 옆에 띄운다
   on('editor:panel', (entry) => { try { onPanel?.(entry.path, entry.win); } catch (err) { log('onPanel 오류:', err); } });
 
@@ -575,7 +580,8 @@ export function createEditorManager({
       const ok = available('hwp');
       const hwpDraft = draftOffer(entry, st);
       entry.draftPending = !!hwpDraft;
-      return { ...base, available: ok.available, reason: ok.reason, studioUrl: server.studioUrl, draft: hwpDraft, pdfAvailable: typeof toPdf === 'function' };
+      const studioUrl = `${server.studioUrl}${server.studioUrl.includes('?') ? '&' : '?'}lang=${lang() === 'ko' ? 'ko' : 'en'}`;
+      return { ...base, available: ok.available, reason: ok.reason, studioUrl, draft: hwpDraft, pdfAvailable: typeof toPdf === 'function' };
     }
     const ok = available('office');
     const draft = draftOffer(entry, st);
@@ -583,7 +589,7 @@ export function createEditorManager({
     entry.draftPending = !!draft;
     return {
       ...base, available: ok.available, reason: ok.reason,
-      appUrl: server.officeUrl, locale: 'ko-KR', mime: OOXML_MIME[ext] ?? '', title: labelOf('office', ext),
+      appUrl: server.officeUrl, locale: lang() === 'ko' ? 'ko-KR' : 'en-US', mime: OOXML_MIME[ext] ?? '', title: labelOf('office', ext),
       theme: nativeTheme?.shouldUseDarkColors ? 'dark' : 'light',
       userName: await editorUserName(),
       fontsWarning,
@@ -1070,7 +1076,7 @@ export function createEditorManager({
   const labelOfEntry = (entry) => labelOf(entry.kind, extOf(entry.path));
   function titleOf(entry) {
     const name = entry.convertedFrom ? `${basename(entry.convertedFrom)} → .${extOf(entry.path)}` : basename(entry.path);
-    return `${entry.dirty ? '* ' : ''}${name} - ${labelOfEntry(entry)} (Office Kit)`;
+    return `${entry.dirty ? '* ' : ''}${name} - ${t(labelOfEntry(entry))} (Office Kit)`;
   }
   function updateTitle(entry) { if (entry.win && !entry.win.isDestroyed()) entry.win.setTitle(titleOf(entry)); }
 

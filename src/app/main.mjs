@@ -1,10 +1,11 @@
 // main.mjs — Office Kit 창, 단일 인스턴스, IPC, 원본 백업, 파일 감시, AI 대화 중계.
-import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, screen, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog as electronDialog, ipcMain, nativeTheme, screen, session, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createSettings, hashFile, samePath } from './store.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,9 @@ const SMOKE_DIFF = SMOKE && process.env.OFFICEKIT_SMOKE_DIFF ? resolve(process.e
 const SMOKE_TOOL = SMOKE && ['pii', 'pii-mask', 'batch', 'pdftools', 'print'].includes(process.env.OFFICEKIT_SMOKE_TOOL) ? process.env.OFFICEKIT_SMOKE_TOOL : null;
 const SMOKE_BATCH = SMOKE_TOOL === 'batch' && process.env.OFFICEKIT_SMOKE_BATCH ? resolve(process.env.OFFICEKIT_SMOKE_BATCH) : '';
 const APP_ICON = [join(APP_ROOT, 'build', 'icon.ico'), join(APP_ROOT, 'build', 'icon.png')].find((f) => existsSync(f));
+// 화면 언어 (설정 'lang' → 시작 때 정한다. 바꾸면 다시 시작). 알림 창은 늘 이 언어로 번역해 보인다
+let i18n = createI18n('ko');
+const dialog = localizedDialog(electronDialog, () => i18n.t);
 
 // 테스트용으로 설정 폴더를 바꿀 수 있게 (단일 인스턴스 잠금도 폴더별로 걸린다)
 if (process.env.OFFICEKIT_USER_DATA) app.setPath('userData', resolve(process.env.OFFICEKIT_USER_DATA));
@@ -888,6 +892,7 @@ async function start() {
     editors = m.createEditorManager({
       app, BrowserWindow, ipcMain, session, dialog, shell, nativeTheme,
       appRoot: APP_ROOT, userData, icon: APP_ICON,
+      t: (x) => i18n.t(x), lang: () => i18n.lang, i18nData: () => ({ lang: i18n.lang, dict: i18n.dict }),
       dirs: vendor ? { studio: join(vendor, 'rhwp-studio'), sdk: join(vendor, 'rhwp-editor-sdk'), office: join(vendor, 'office-editor') } : undefined,
       ...(fonts ? { fonts } : {}),
       testHooks: dev && process.env.OFFICEKIT_EDITOR_TEST === '1',
@@ -1217,7 +1222,7 @@ async function start() {
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false } });
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const dark = nativeTheme.shouldUseDarkColors;
-    w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset="utf-8"><body style="margin:0;font:13.5px 'Malgun Gothic',sans-serif;display:flex;align-items:center;gap:12px;height:100vh;padding:0 22px;box-sizing:border-box;color:${dark ? '#e6e8ec' : '#1f2328'};background:${dark ? '#1d2027' : '#fff'};border:1px solid ${dark ? '#333842' : '#d0d5dd'}"><b style="color:#3b5bdb">Office Kit</b><span>${esc(text)}</span>`)}`).catch(() => {});
+    w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset="utf-8"><body style="margin:0;font:13.5px 'Malgun Gothic',sans-serif;display:flex;align-items:center;gap:12px;height:100vh;padding:0 22px;box-sizing:border-box;color:${dark ? '#e6e8ec' : '#1f2328'};background:${dark ? '#1d2027' : '#fff'};border:1px solid ${dark ? '#333842' : '#d0d5dd'}"><b style="color:#3b5bdb">Office Kit</b><span>${esc(i18n.t(text))}</span>`)}`).catch(() => {});
     w.once('ready-to-show', () => { if (!w.isDestroyed()) w.show(); });
     return { close: () => { try { if (!w.isDestroyed()) w.destroy(); } catch {} } };
   }
@@ -1421,7 +1426,7 @@ async function start() {
       provider: selected, prompt, sessionId: sess?.provider === selected ? sess.sessionId : undefined,
       // 대화 기록은 같은 작업 폴더에서만 이어지므로 ai.mjs의 고정 폴더를 쓴다
       cwd: typeof ai.defaultWorkspace === 'function' ? ai.defaultWorkspace() : join(userData, 'ai'),
-      filePath: path, mcp, model, onEvent,
+      filePath: path, mcp, model, onEvent, lang: i18n.lang,
     });
     chats.set(chatId, { handle, path });
     Promise.resolve(handle.done)
@@ -1445,7 +1450,7 @@ async function start() {
 
   // ── 설정 ─────────────────────────────────────────────
 
-  const PUBLIC_KEYS = ['provider', 'models', 'previewMode', 'openAction', 'theme', 'chatWidth', 'chatCollapsed'];
+  const PUBLIC_KEYS = ['provider', 'models', 'previewMode', 'openAction', 'theme', 'lang', 'chatWidth', 'chatCollapsed'];
   const publicSettings = () => Object.fromEntries(PUBLIC_KEYS.map((k) => [k, k === 'models' ? { ...settings.get(k) } : settings.get(k)]));
   const PROVIDER_ID = /^[a-z0-9_-]{1,32}$/i;
 
@@ -1476,6 +1481,9 @@ async function start() {
         if (!['system', 'light', 'dark'].includes(v)) throw fail('잘못된 테마입니다');
         clean.theme = v;
         nativeTheme.themeSource = v;
+      } else if (k === 'lang') {
+        if (!LANG_SETTINGS.includes(v)) throw fail('잘못된 언어입니다');
+        clean.lang = v;
       } else if (k === 'chatWidth') {
         if (!Number.isFinite(v)) throw fail('잘못된 너비입니다');
         clean.chatWidth = Math.round(Math.min(800, Math.max(280, v)));
@@ -1550,7 +1558,7 @@ async function start() {
     const exe = assocExe();
     if (!exe) throw fail('설치 프로그램으로 설치한 Office Kit에서만 등록할 수 있어요');
     const m = await loadAssoc();
-    await m.registerFileTypes({ exe });
+    await m.registerFileTypes({ exe, lang: i18n.lang });
     return assocStatus();
   }
 
@@ -1710,6 +1718,14 @@ async function start() {
   });
 
   handle('settings:get', () => publicSettings());
+  // 언어를 바꾼 뒤 다시 시작: 열린 편집 창은 저장 여부를 묻고 닫힌다 (취소하면 그대로). 열고 시작한 파일은 다시 열지 않는다
+  handle('app:relaunch', () => {
+    if (SMOKE) return null;
+    const args = process.argv.slice(1).filter((a) => { try { return !(isAbsolute(a) && statSync(a).isFile()); } catch { return true; } });
+    app.relaunch({ args });
+    app.quit();
+    return null;
+  });
   handle('settings:set', (patch) => setSettings(patch));
 
   handle('ai:providers', (opts) => providers({ refresh: opts?.refresh === true }));
@@ -1969,7 +1985,7 @@ async function start() {
     wc.session.on('will-download', (e, item) => {
       if (!isPreviewUrl(item.getURL())) { e.preventDefault(); return; }
       const name = current ? `${basename(current.path).replace(/\.[^.]+$/, '')}.pdf` : item.getFilename();
-      item.setSaveDialogOptions({ title: 'PDF로 저장', defaultPath: join(current ? dirname(current.path) : app.getPath('documents'), name), filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] });
+      item.setSaveDialogOptions(localizeDialogOptions({ title: 'PDF로 저장', defaultPath: join(current ? dirname(current.path) : app.getPath('documents'), name), filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] }, i18n.t));
     });
     wc.on('render-process-gone', (_e, d) => console.error('[renderer] 종료:', d.reason));
     if (SMOKE) wc.on('console-message', (e) => { if (e.level === 'error' || e.level === 'warning') console.log('[renderer]', e.message); });
@@ -2025,7 +2041,7 @@ async function start() {
         { label: '화면 다시 불러오기', accelerator: 'CmdOrCtrl+Shift+R', click: () => win?.webContents.reloadIgnoringCache() },
       ] });
     }
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    Menu.setApplicationMenu(Menu.buildFromTemplate(localizeMenu(template, i18n.t)));
   }
 
   // ── 시작 ─────────────────────────────────────────────
@@ -2066,6 +2082,9 @@ async function start() {
   app.on('browser-window-created', (_e, w) => { w.once('closed', () => pushEditorState()); });
 
   await app.whenReady();
+  i18n = createI18n(resolveLang(settings.get('lang'), app.getPreferredSystemLanguages?.() ?? [app.getLocale?.() ?? 'ko']));
+  // 화면(주 창·편집 창의 preload)이 처음 그리기 전에 받는다 (sendSync) — 번역 사전은 앱에 들어 있는 공개 글이다
+  ipcMain.on('i18n:get', (e) => { e.returnValue = { lang: i18n.lang, setting: settings.get('lang'), dict: i18n.dict }; });
   nativeTheme.themeSource = ['light', 'dark'].includes(settings.get('theme')) ? settings.get('theme') : 'system';
   // 맞춤법 검사는 쓰지 않는다. 창을 만들기만 해도 Chromium이 인터넷에서 사전(ko-3-0.bdic, 11MB)을 받으므로 받을 곳을 막는다
   try { session.defaultSession.setSpellCheckerDictionaryDownloadURL('http://127.0.0.1:9/'); } catch {}

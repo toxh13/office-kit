@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ASSOC_TYPES, ASSOC_GROUPS, PROGID_PREFIX, DEFAULT_APPS_URI, registrationEntries, summarizeStatus, assocStatus, registerFileTypes, unregisterForTest,
+  ASSOC_TYPES, ASSOC_TYPE_NAMES, APP_DESCRIPTION, OPEN_VERB, ASSOC_GROUPS, PROGID_PREFIX, DEFAULT_APPS_URI, registrationEntries, summarizeStatus, assocStatus, registerFileTypes, unregisterForTest,
 } from '../src/setup/fileassoc.mjs';
 import { OPENABLE_EXTS } from '../src/core/index.mjs';
 
@@ -15,8 +15,13 @@ test('등록 형식 = 열 수 있는 형식 = 설치 프로그램 목록', () =>
   assert.deepEqual(ASSOC_GROUPS.flatMap((g) => g.exts).sort(), [...OPENABLE_EXTS].sort());
   const nsh = readFileSync(join(import.meta.dirname, '..', 'build', 'installer.nsh'), 'utf8');
   const block = /!macro OfficeKitForEachType MACRO([\s\S]*?)!macroend/.exec(nsh)[1];
-  const fromNsh = Object.fromEntries([...block.matchAll(/\$\{MACRO\} (\w+) "([^"]+)"/g)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(fromNsh, ASSOC_TYPES, 'installer.nsh의 형식·이름이 fileassoc.mjs와 같아야 한다');
+  const rows = [...block.matchAll(/\$\{MACRO\} (\w+) "([^"]+)" "([^"]+)" "([^"]+)"/g)];
+  ['ko', 'en', 'ja'].forEach((lang, i) => {
+    const fromNsh = Object.fromEntries(rows.map((m) => [m[1], m[2 + i]]));
+    assert.deepEqual(fromNsh, ASSOC_TYPE_NAMES[lang], `installer.nsh의 형식·이름(${lang})이 fileassoc.mjs와 같아야 한다`);
+  });
+  // 오른쪽 클릭 메뉴 이름·기본 앱 설명도 세 언어가 같아야 한다
+  for (const table of [OPEN_VERB, APP_DESCRIPTION]) assert.ok(nsh.includes(`OfficeKitPick "${table.ko}" "${table.en}" "${table.ja}"`));
   // 기본 연결을 덮어쓰는 키(.ext의 기본값)는 쓰지 않는다
   assert.doesNotMatch(nsh, /WriteRegStr HKCU "\$\{OK_CLASSES\}\\\.\$\{EXT\}" ""/);
 });

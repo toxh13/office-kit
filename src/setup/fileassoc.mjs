@@ -19,6 +19,16 @@ export const ASSOC_TYPES = {
   pdf: 'PDF 문서',
 };
 
+/** 화면 언어별 '유형' 이름 (한국어는 ASSOC_TYPES). 설치 프로그램(installer.nsh)도 Windows 언어에 따라 같은 이름을 쓴다 */
+export const ASSOC_TYPE_NAMES = {
+  ko: ASSOC_TYPES,
+  en: { hwp: 'Hangul Document', hwpx: 'Hangul Document (HWPX)', hwt: 'Hangul Template', docx: 'Word Document', doc: 'Word 97-2003 Document', rtf: 'Rich Text Document', odt: 'ODF Text Document', pptx: 'PowerPoint Presentation', ppt: 'PowerPoint 97-2003 Presentation', odp: 'ODF Presentation', xlsx: 'Excel Workbook', xls: 'Excel 97-2003 Workbook', xlsm: 'Excel Macro-Enabled Workbook', csv: 'CSV File', ods: 'ODF Spreadsheet', pdf: 'PDF Document' },
+  ja: { hwp: 'ハングル文書', hwpx: 'ハングル文書 (HWPX)', hwt: 'ハングル テンプレート', docx: 'Word 文書', doc: 'Word 97-2003 文書', rtf: 'リッチ テキスト文書', odt: 'ODF テキスト文書', pptx: 'PowerPoint プレゼンテーション', ppt: 'PowerPoint 97-2003 プレゼンテーション', odp: 'ODF プレゼンテーション', xlsx: 'Excel ブック', xls: 'Excel 97-2003 ブック', xlsm: 'Excel マクロ有効ブック', csv: 'CSV ファイル', ods: 'ODF スプレッドシート', pdf: 'PDF 文書' },
+};
+/** 기본 앱 목록에 보일 설명 · 오른쪽 클릭 메뉴 이름 (installer.nsh와 같게) */
+export const APP_DESCRIPTION = { ko: '한글·Word·PowerPoint·Excel·PDF 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램', en: 'View and edit Hangul, Word, PowerPoint, Excel, and PDF documents, and revise them by chatting with AI', ja: 'ハングル・Word・PowerPoint・Excel・PDF 文書を表示・編集し、AI とのチャットで修正するアプリ' };
+export const OPEN_VERB = { ko: 'Office Kit로 열기', en: 'Open with Office Kit', ja: 'Office Kit で開く' };
+
 /** 설정 화면에 묶어 보일 순서 */
 export const ASSOC_GROUPS = [
   { kind: '한글', exts: ['hwp', 'hwpx', 'hwt'] },
@@ -38,15 +48,17 @@ export const openCommand = (exe) => `"${exe}" "%1"`;
 
 /**
  * 써야 할 레지스트리 값 목록 → [{ key, name, value }] (key는 HKCU 아래, name ''은 기본값).
- * root: 시험용으로 'Software' 대신 다른 키 아래에 쓴다
+ * root: 시험용으로 'Software' 대신 다른 키 아래에 쓴다. lang: 유형 이름·설명 언어 ('ko' | 'en' | 'ja')
  */
-export function registrationEntries(exe, { root = 'Software' } = {}) {
+export function registrationEntries(exe, { root = 'Software', lang = 'ko' } = {}) {
+  const names = ASSOC_TYPE_NAMES[lang] ?? ASSOC_TYPES;
   const icon = `"${exe}",0`;
   const cls = `${root}\\Classes`;
   const caps = root === 'Software' ? CAPABILITIES_KEY : `${root}\\OfficeKit\\Capabilities`;
   const out = [];
   const put = (key, name, value) => out.push({ key, name, value });
-  for (const [ext, desc] of Object.entries(ASSOC_TYPES)) {
+  for (const ext of Object.keys(ASSOC_TYPES)) {
+    const desc = names[ext] ?? ASSOC_TYPES[ext];
     const id = `${PROGID_PREFIX}${ext}`;
     put(`${cls}\\${id}`, '', desc);
     put(`${cls}\\${id}`, 'FriendlyTypeName', desc);
@@ -61,7 +73,7 @@ export function registrationEntries(exe, { root = 'Software' } = {}) {
   put(`${cls}\\Applications\\${APP_NAME}.exe\\DefaultIcon`, '', icon);
   put(`${cls}\\Applications\\${APP_NAME}.exe\\shell\\open\\command`, '', openCommand(exe));
   put(caps, 'ApplicationName', APP_NAME);
-  put(caps, 'ApplicationDescription', '한글·Word·PowerPoint·Excel·PDF 문서를 보고, 직접 고치고, AI 대화로 수정하는 프로그램');
+  put(caps, 'ApplicationDescription', APP_DESCRIPTION[lang] ?? APP_DESCRIPTION.ko);
   put(caps, 'ApplicationIcon', icon);
   put(`${root}\\RegisteredApplications`, APP_NAME, caps);
   return out;
@@ -232,9 +244,9 @@ export function parseOpenCommand(command, file, env = process.env) {
 }
 
 /** 등록하기(고쳐 쓰기). 기본 프로그램은 바꾸지 않는다 → 쓴 값 개수 */
-export async function registerFileTypes({ exe, root = 'Software', run = regExe } = {}) {
+export async function registerFileTypes({ exe, root = 'Software', run = regExe, lang = 'ko' } = {}) {
   if (!exe) throw new Error('실행 파일 경로가 필요합니다');
-  const entries = registrationEntries(exe, { root });
+  const entries = registrationEntries(exe, { root, lang });
   for (const e of entries) {
     const args = ['add', `HKCU\\${e.key}`, ...(e.name ? ['/v', e.name] : ['/ve']), '/t', 'REG_SZ', '/d', e.value, '/f'];
     const r = await run(args);

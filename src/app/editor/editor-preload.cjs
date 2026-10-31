@@ -29,7 +29,12 @@ const answer = (channel, pick) => (callback) => {
 };
 
 // 응답은 { ok, value } / { ok:false, error, code } 그대로 넘기고, 화면 쪽에서 풀어 쓴다
+// 화면 언어와 번역 사전 (처음 그리기 전에)
+const i18n = (() => { try { return ipcRenderer.sendSync('editor:i18n') ?? null; } catch { return null; } })();
+
 contextBridge.exposeInMainWorld('officeKitEditor', {
+  /** { lang: 'ko'|'en'|'ja', dict } | null */
+  i18n,
   /** 열린 문서 → { name, ext, bytes, size, mtimeMs, readOnly, studioUrl, available, reason } */
   getDocument: () => ipcRenderer.invoke('editor:get-document'),
   /** 원래 자리에 저장 (bytes는 원래 형식으로 내보낸 것) → { name, ext, size, mtimeMs, backup } */

@@ -12,8 +12,15 @@ const subscribe = (channel) => (callback) => {
   return () => ipcRenderer.removeListener(channel, listener);
 };
 
+// 화면 언어와 번역 사전 (처음 그리기 전에 — 한국어면 빈 사전)
+const i18n = (() => { try { return ipcRenderer.sendSync('i18n:get') ?? null; } catch { return null; } })();
+
 contextBridge.exposeInMainWorld('officeKit', {
   init: invoke('app:init'),
+  /** { lang: 'ko'|'en'|'ja', setting: 'system'|…, dict } */
+  i18n,
+  /** 앱 다시 시작 (언어를 바꾼 뒤) */
+  relaunch: invoke('app:relaunch'),
 
   doc: {
     pick: invoke('doc:pick'),
