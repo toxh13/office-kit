@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createBlankDocument, createDocument } from '../src/core/create.mjs';
-import { readDocument } from '../src/core/index.mjs';
+import { readDocument, Hwp, hwpPdfStatus } from '../src/core/index.mjs';
 import { createSettings, OFFICE_STATE_MAX_KEYS } from '../src/app/store.mjs';
 import { draftPathFor } from '../src/app/editor-window.mjs';
 import { startEditorServer } from '../src/app/editor-server.mjs';
@@ -563,6 +563,46 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
 
   let officeWin; let officeCall;
   const docxBefore = sha(docxPath);
+  await t.test('한글 편집 창: 자동 저장은 복구 사본에만, 다시 열면 복구/버리기, 원본은 그대로', async () => {
+    const before = readFileSync(docPath);
+    const bytes = new Uint8Array(before);
+    const r = await hostCall('editor:save', bytes, { reason: 'auto' });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.value.draft, true);
+    const draft = draftPathFor(ud, docPath);
+    assert.ok(existsSync(draft), '복구 사본');
+    assert.deepEqual(readFileSync(docPath), before, '원본은 그대로');
+    // 파일보다 새로운 사본 → 다시 열면 알린다
+    utimesSync(draft, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+    const d = await hostCall('editor:get-document');
+    assert.equal(d.ok, true, d.error);
+    assert.ok(d.value.draft && d.value.draft.size === bytes.length, JSON.stringify(d.value.draft));
+    const read = await hostCall('editor:draft', 'read');
+    assert.equal(read.ok, true, read.error);
+    assert.equal(read.value.bytes.length, bytes.length);
+    // 형식이 아닌 바이트는 사본으로도 쓰지 않는다
+    const bad = await hostCall('editor:save', new Uint8Array(Buffer.from('not hwp')), { reason: 'auto' });
+    assert.equal(bad.ok, false);
+    assert.equal((await hostCall('editor:draft', 'discard')).ok, true);
+    assert.equal(existsSync(draft), false);
+  });
+
+  await t.test('한글 편집 창: 지금 내용을 PDF로 저장 (편집기 인쇄 대신)', { skip: !hwpPdfStatus().ok && '내장 PDF 엔진(rhwp.exe) 없음' }, async () => {
+    const h = Hwp.open(docPath);
+    let hwpBytes;
+    try { hwpBytes = new Uint8Array(h.toBytes('hwp')); } finally { h.close(); }
+    const target = join(docs, '보고서 출력.pdf');
+    fake.saveDialogAnswers.push({ canceled: false, filePath: target });
+    const r = await hostCall('editor:hwp-pdf', hwpBytes, 'save');
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.value.name, '보고서 출력.pdf');
+    assert.equal(readFileSync(target).subarray(0, 5).toString('latin1'), '%PDF-');
+    // hwp가 아닌 바이트는 거절
+    const no = await hostCall('editor:hwp-pdf', new Uint8Array(Buffer.from('PK\x03\x04')), 'save');
+    assert.equal(no.ok, false);
+    assert.equal(no.code, 'BAD_FORMAT');
+  });
+
   await t.test('Office: docx를 문서 편집 창으로 연다 (따로 된 세션·네트워크 막기)', async () => {
     assert.equal((await call('doc:open', docxPath)).ok, true);
     const r = await call('doc:edit');

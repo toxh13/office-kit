@@ -46,6 +46,7 @@
     <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 9.5 3 2.5-3 2.5M12.5 15h4"/></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M10.5 10h.01M14 10h.01M17.5 10h.01M8 14h8"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4.5 19.5l1-4.2L15.8 5a2.1 2.1 0 0 1 3 0l.2.2a2.1 2.1 0 0 1 0 3L8.7 18.5z"/><path d="M13.8 7l3.2 3.2"/><path d="M13 19.5h6.5"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4.5h6l-1 5 3 3v1.5H7V12.5l3-3z"/><path d="M12 14v5.5"/></symbol>
     <symbol id="i-tools" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17l3 3 5.5-5.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.3-.6-.6-2.3z"/></symbol>
     <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3.5 3.5l17 17"/><path d="M10.4 5.6A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16.5 16.5 0 0 1-3 3.7M6.7 7.2A16.5 16.5 0 0 0 2.5 12S6 18.5 12 18.5a9.3 9.3 0 0 0 4.3-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
     <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h14l-3.5-3.5"/><path d="M20 16H6l3.5 3.5"/></symbol>
@@ -99,6 +100,7 @@
 
     <div class="popover tools-pop" id="tools-pop" role="menu" aria-label="도구" hidden>
       <button class="tool-item" role="menuitem" id="tool-pii"><svg class="i"><use href="#i-eye-off"/></svg><span class="tool-text"><span class="tool-name">개인정보 찾아 가리기</span><span class="tool-desc">주민번호·전화·계좌 등을 찾아 가린 사본을 만들어요</span></span></button>
+      <button class="tool-item" role="menuitem" id="tool-pdf"><svg class="i"><use href="#i-pdf"/></svg><span class="tool-text"><span class="tool-name">PDF 합치기 · 나누기 · 돌리기</span><span class="tool-desc">여러 PDF를 하나로, 필요한 쪽만 뽑기·지우기·돌리기</span></span></button>
       <button class="tool-item" role="menuitem" id="tool-batch"><svg class="i"><use href="#i-swap"/></svg><span class="tool-text"><span class="tool-name">한글 → HWPX 일괄 변환</span><span class="tool-desc">여러 HWP 파일을 HWPX로 바꾸고 결과를 확인해요</span></span></button>
     </div>
 
@@ -198,6 +200,35 @@
       <span class="diff-foot-note" id="pii-note">원본은 그대로 두고 가린 사본을 만들어요. 그림 속 글자는 찾지 못해요.</span>
       <button class="btn" id="pii-cancel">닫기</button>
       <button class="btn primary" id="pii-mask"><svg class="i"><use href="#i-eye-off"/></svg>가린 사본 만들기</button>
+    </div>
+  </dialog>
+
+  <!-- PDF 도구 -->
+  <dialog class="dialog diff pdftools" id="dlg-pdf" aria-labelledby="pdf-title">
+    <div class="diff-head">
+      <h2 id="pdf-title">PDF 합치기 · 나누기 · 돌리기</h2>
+      <p class="diff-sub">원본은 그대로 두고 결과를 새 PDF로 저장해요. 인터넷 없이 동작해요.</p>
+      <div class="segmented" id="pdf-action" role="radiogroup" aria-label="작업">
+        <button role="radio" data-action="merge">합치기</button>
+        <button role="radio" data-action="extract">쪽 뽑기</button>
+        <button role="radio" data-action="delete">쪽 지우기</button>
+        <button role="radio" data-action="rotate">돌리기</button>
+      </div>
+      <button class="icon-btn close-x" id="pdf-close" title="닫기 (Esc)" aria-label="닫기"><svg class="i"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="diff-body">
+      <ol class="pdf-list" id="pdf-list"></ol>
+      <div class="btn-row"><button class="btn sm" id="pdf-add"><svg class="i"><use href="#i-plus"/></svg>PDF 추가…</button><span class="help small" id="pdf-hint"></span></div>
+      <div class="pdf-opts" id="pdf-opts">
+        <label class="nd-label" for="pdf-pages" id="pdf-pages-label">쪽</label>
+        <input class="input" id="pdf-pages" placeholder="예: 1-3, 5, 8-" autocomplete="off">
+        <select class="select" id="pdf-degrees" aria-label="돌릴 각도"><option value="90">오른쪽으로 90°</option><option value="180">180°</option><option value="270">왼쪽으로 90°</option></select>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <span class="diff-foot-note" id="pdf-note"></span>
+      <button class="btn" id="pdf-cancel">닫기</button>
+      <button class="btn primary" id="pdf-run" disabled>저장…</button>
     </div>
   </dialog>
 
@@ -310,8 +341,10 @@
         <div class="nd-label" id="new-start-label">시작 방법</div>
         <div class="start-choices" role="radiogroup" aria-labelledby="new-start-label">
           <label class="choice"><input type="radio" name="new-start" value="blank"><span class="choice-body"><span class="choice-title"><svg class="i"><use href="#i-file"/></svg>빈 문서</span><span class="choice-desc">아무것도 없는 문서로 시작해요.</span></span></label>
+          <label class="choice" id="new-start-tpl"><input type="radio" name="new-start" value="template"><span class="choice-body"><span class="choice-title"><svg class="i"><use href="#i-pages"/></svg>서식 파일</span><span class="choice-desc">회의록·보고서·기안문·이력서 같은 틀로 시작해요.</span></span></label>
           <label class="choice" id="new-start-ai"><input type="radio" name="new-start" value="ai"><span class="choice-body"><span class="choice-title"><svg class="i"><use href="#i-sparkle"/></svg>AI에게 내용 부탁하기</span><span class="choice-desc">빈 문서를 만든 뒤 AI가 내용을 채워요.</span></span></label>
         </div>
+        <div class="template-grid" id="new-template-box" role="radiogroup" aria-label="서식" hidden></div>
         <div class="nd-msg warn" id="new-ai-hint" hidden></div>
         <div class="ai-request" id="new-ai-box" hidden>
           <textarea id="new-request" rows="2" maxlength="10000" placeholder="예: 주간 회의록 양식 만들어줘" aria-label="AI에게 부탁할 내용" aria-describedby="new-request-msg"></textarea>

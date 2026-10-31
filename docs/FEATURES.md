@@ -18,9 +18,10 @@ Word·PowerPoint·Excel·한글 각각의 고유 기능을 AI(MCP)와 명령줄�
 - [ ] `…_edit` 에 작업을 순서대로 모아 **한 번에** 보낸다
 - [ ] `office_page_image` 로 결과를 눈으로 본다 (PowerPoint는 쪽 번호 = 슬라이드 번호, 숨긴 슬라이드 포함)
 
-- MCP 도구는 모두 21개: 공통 13개 + 형식별 8개 (`src/mcp/server.mjs` + `src/mcp/tools/*.mjs`).
+- MCP 도구는 모두 22개: 공통 14개 + 형식별 8개 (`src/mcp/server.mjs` + `src/mcp/tools/*.mjs`).
   공통 중 `office_find_pii`·`office_mask_pii`(개인정보 찾기·가린 사본, `src/core/pii.mjs`)와
-  `office_hwpx_batch`(한글 → HWPX 일괄 변환 + 확인, `src/core/batch.mjs`)는 형식에 묶이지 않은 도구다.
+  `office_hwpx_batch`(한글 → HWPX 일괄 변환 + 확인, `src/core/batch.mjs`), `office_pdf_tools`(PDF 합치기·쪽 뽑기·쪽 지우기·돌리기,
+  `src/core/pdftools.mjs`)는 형식에 묶이지 않은 도구다.
 - 명령줄: `office-kit inspect <파일>`, `office-kit edit <파일> <작업.json>` — 형식에 맞는 core 함수로 보낸다 (아래 '명령줄').
 - 앱 안 AI: 열린 문서 형식의 `…_inspect` → `…_edit` 를 먼저 쓰도록 안내받는다 (`src/app/ai.mjs` 지침).
 - 앱: 새 문서를 만들고, 한글 문서와 Word·Excel·PowerPoint 형식(docx·xlsx·pptx) 문서는 **직접 편집**(앱 안 편집 창)으로도 고친다 — 아래 '앱에서'.

@@ -12,7 +12,7 @@ const CLI = join(ROOT, 'src', 'cli.mjs');
 // 서버가 등록하는 도구: 공통 office_* + 형식마다(src/mcp/tools/*.mjs) 살펴보기·편집 한 쌍.
 // 도구를 더하거나 빼면 여기도 고쳐야 한다 (빠지거나 늘어난 도구를 잡는다).
 const COMMON_TOOLS = ['office_status', 'office_info', 'office_read', 'office_fields', 'office_fill', 'office_replace',
-  'office_set_cells', 'office_convert', 'office_create', 'office_page_image', 'office_find_pii', 'office_mask_pii', 'office_hwpx_batch'];
+  'office_set_cells', 'office_convert', 'office_create', 'office_page_image', 'office_find_pii', 'office_mask_pii', 'office_hwpx_batch', 'office_pdf_tools'];
 const FORMATS = ['hwp', 'word', 'ppt', 'excel'];
 const TOOLS = [...COMMON_TOOLS, ...FORMATS.flatMap((f) => [`${f}_inspect`, `${f}_edit`])];
 const HANGUL = /[가-힣]/;
@@ -299,6 +299,18 @@ describe('개인정보 · HWPX 일괄 변환', () => {
     assert.ok(existsSync(tmp.path('batch/a.hwpx')) && existsSync(tmp.path('batch/sub/b.hwpx')));
     assert.match(readFileSync(tmp.path('batch/결과.csv'), 'utf8'), /같음/);
     assert.match(await ok('office_hwpx_batch', { paths: ['batch/a.hwp'] }), /건너뜀 1/);
+  });
+});
+
+describe('PDF 도구', () => {
+  test('office_pdf_tools: 합치기 → 쪽 뽑기 → 돌리기', async () => {
+    copyFileSync(join(ROOT, 'test', 'fixtures', 'pdf', '신청서.pdf'), tmp.path('p1.pdf'));
+    copyFileSync(join(ROOT, 'test', 'fixtures', 'pdf', '신청서.pdf'), tmp.path('p2.pdf'));
+    assert.match(await ok('office_pdf_tools', { action: 'merge', paths: ['p1.pdf', 'p2.pdf'], output: 'm.pdf' }), /\(4쪽\)/);
+    assert.match(await ok('office_pdf_tools', { action: 'extract', paths: ['m.pdf'], pages: '2-3', output: 'e.pdf' }), /\(2쪽\)/);
+    assert.match(await ok('office_pdf_tools', { action: 'rotate', paths: ['e.pdf'], degrees: 180, output: 'r.pdf' }), /\(2쪽\)/);
+    await fails('office_pdf_tools', { action: 'extract', paths: ['m.pdf'], pages: '9', output: 'x.pdf' }, /범위를 벗어났습니다/);
+    await fails('office_pdf_tools', { action: 'merge', paths: ['p1.pdf', 'p2.pdf'], output: 'm.pdf' }, /이미 있는 파일/);
   });
 });
 

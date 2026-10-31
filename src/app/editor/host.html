@@ -16,6 +16,7 @@
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5"/><path d="M12 16.3v.2"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.5 4 4L18.5 7.5"/></symbol>
+    <symbol id="i-print" viewBox="0 0 24 24"><path d="M7 8.5V4.5h10v4"/><rect x="4.5" y="8.5" width="15" height="7.5" rx="1.5"/><path d="M7 13.5h10v6H7z"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.7v.2"/></symbol>
     <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5l1.6 4.4 4.4 1.6-4.4 1.6L12 15.5l-1.6-4.4L6 9.5l4.4-1.6z"/><path d="M18.5 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></symbol>
   </svg>
@@ -34,8 +35,10 @@
         <div class="menu" id="save-as-menu" role="menu" hidden>
           <button class="menu-item" type="button" role="menuitem" data-ext="hwpx"><span>한글 문서 (.hwpx)</span><small>최신 형식</small></button>
           <button class="menu-item" type="button" role="menuitem" data-ext="hwp"><span>한글 문서 (.hwp)</span><small>예전 형식</small></button>
+          <button class="menu-item" type="button" role="menuitem" data-pdf="save"><span>PDF 문서 (.pdf)</span><small>내장 엔진</small></button>
         </div>
       </div>
+      <button class="btn ghost" id="btn-print" type="button" title="인쇄 (Ctrl+P) — PDF로 만들어 기본 PDF 앱에서 인쇄" disabled><svg class="i"><use href="#i-print"/></svg><span>인쇄</span></button>
       <span class="vsep" aria-hidden="true"></span>
       <button class="btn ghost" id="btn-close" type="button" title="닫기 (Ctrl+W)"><svg class="i"><use href="#i-x"/></svg><span>닫기</span></button>
     </header>

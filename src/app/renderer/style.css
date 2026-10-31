@@ -203,6 +203,9 @@ kbd {
 .icon-btn.sm { width: 28px; height: 28px; }
 .icon-btn.sm svg.i { width: 16px; height: 16px; }
 
+.recent-pin { position: absolute; right: 34px; top: 50%; transform: translateY(-50%); opacity: 0; }
+.recent-item:hover .recent-pin, .recent-pin:focus-visible, .recent-pin.on { opacity: 1; }
+.recent-pin.on { color: var(--accent-text); }
 .link-btn { border: 0; background: none; padding: 2px 4px; color: var(--muted); font-size: 12px; border-radius: 4px; }
 .link-btn:hover { color: var(--accent-text); text-decoration: underline; }
 
@@ -333,6 +336,18 @@ kbd {
 .batch-table td.file .dir { display: block; color: var(--muted); font-size: 11.5px; }
 .batch-table td.memo { color: var(--muted); font-size: 12px; }
 .batch-table td .pill { cursor: default; }
+/* PDF 도구 */
+.pdftools .segmented { margin-top: 12px; }
+.pdf-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pdf-list:empty::before { content: "PDF를 추가해 주세요"; color: var(--muted); font-size: 12.5px; }
+.pdf-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.pdf-item .pdf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.pdf-item .pdf-pages { font-size: 12px; color: var(--muted); flex: none; }
+.pdf-item .pdf-err { font-size: 12px; color: var(--danger); flex: none; }
+svg.i.flip { transform: rotate(180deg); }
+.pdf-opts { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.pdf-opts .input { flex: 1; max-width: 260px; }
+.pdf-opts[hidden], .pdf-opts [hidden] { display: none; }
 /* 대화창: AI가 문서를 고친 뒤 */
 .msg-change { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); font-size: 12.5px; }
 .msg-change-text { flex-basis: 100%; color: var(--text-2); display: inline-flex; align-items: center; gap: 6px; }
@@ -998,6 +1013,15 @@ button.st { border: 0; background: none; font: inherit; color: inherit; cursor: 
 .ai-request textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ai-request textarea::placeholder { color: var(--faint); }
 .request-suggests { display: flex; flex-wrap: wrap; gap: 6px; }
+.start-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.template-grid[hidden] { display: none; }
+.tpl-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.tpl-item:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.tpl-item[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.tpl-item:disabled { opacity: 0.55; cursor: default; }
+.tpl-name { font-weight: 600; font-size: 12.5px; }
+.tpl-desc { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
 .suggest-chip {
   display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface);

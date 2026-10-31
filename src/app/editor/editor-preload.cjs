@@ -33,7 +33,12 @@ contextBridge.exposeInMainWorld('officeKitEditor', {
   /** 열린 문서 → { name, ext, bytes, size, mtimeMs, readOnly, studioUrl, available, reason } */
   getDocument: () => ipcRenderer.invoke('editor:get-document'),
   /** 원래 자리에 저장 (bytes는 원래 형식으로 내보낸 것) → { name, ext, size, mtimeMs, backup } */
-  save: (bytes) => ipcRenderer.invoke('editor:save', toBytes(bytes)),
+  save: (bytes, opts) => ipcRenderer.invoke('editor:save', toBytes(bytes), { reason: opts?.reason === 'auto' ? 'auto' : 'user' }),
+  /** 자동 저장 복구 사본 읽기 → { bytes, size, mtimeMs } · 버리기 */
+  readDraft: () => ipcRenderer.invoke('editor:draft', 'read'),
+  discardDraft: () => ipcRenderer.invoke('editor:draft', 'discard'),
+  /** 지금 내용(hwp 바이트)을 PDF로: op 'print'(기본 PDF 앱으로 인쇄) | 'save'(PDF로 저장) */
+  pdf: (bytes, op) => ipcRenderer.invoke('editor:hwp-pdf', toBytes(bytes), op === 'save' ? 'save' : 'print'),
   /** 다른 이름으로 저장 (ext: 'hwp' | 'hwpx', bytes는 그 형식) → { canceled } | { name, ext, size, mtimeMs } */
   saveAs: (bytes, ext) => ipcRenderer.invoke('editor:save-as', toBytes(bytes), String(ext ?? '')),
   /** 다른 곳에서 파일이 바뀜 → cb({ missing, size, mtimeMs }) */

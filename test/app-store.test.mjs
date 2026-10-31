@@ -282,3 +282,32 @@ test('미리보기 기억: 경로·크기·수정 시각·방식이 같을 때�
   c.put({ ...what, path: join(dir, 'big.docx') }, pdf('big.pdf', 'x'.repeat(999)));
   assert.equal(readdirSync(join(dir, 'preview-cache')).filter((f) => f.endsWith('.pdf')).length, 1);
 });
+
+test('최근 문서 고정: 고정한 것이 먼저, 지우기·밀려남에도 남는다', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'officekit-pin-'));
+  try {
+    const s = createSettings(dir);
+    const p = (n) => join(dir, `문서${n}.docx`);
+    for (let i = 1; i <= 3; i++) s.addRecent(p(i));
+    s.pinRecent(p(1), true);
+    assert.deepEqual(s.recent().map((r) => r.name), ['문서1.docx', '문서3.docx', '문서2.docx']);
+    assert.equal(s.recent()[0].pinned, true);
+    // 고정 안 한 것이 많아져도 고정은 남는다
+    for (let i = 10; i < 25; i++) s.addRecent(p(i));
+    const names = s.recent().map((r) => r.name);
+    assert.equal(names[0], '문서1.docx');
+    assert.equal(names.length, 11, '고정 1 + 최근 10');
+    // 다시 열어도 고정은 그대로
+    s.addRecent(p(1));
+    assert.equal(s.recent()[0].pinned, true);
+    // 목록 지우기: 고정은 남김
+    s.clearRecent();
+    assert.deepEqual(s.recent().map((r) => r.name), ['문서1.docx']);
+    s.pinRecent(p(1), false);
+    assert.equal(s.recent()[0].pinned, false);
+    assert.equal(createSettings(dir).recent()[0].pinned, false, '파일에 저장됨');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

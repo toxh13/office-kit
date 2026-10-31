@@ -622,7 +622,10 @@ test('cancel(): 프로세스 트리(손자까지) 종료, done 은 cancelled 로
     assert.equal(alive, false, '손자 프로세스가 남아 있음');
     // 두 번 불러도 괜찮다
     assert.equal(await chat.cancel(), res);
-  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+  } finally {
+    // 끊은 프로세스가 폴더를 잠깐 쥐고 있을 수 있다 (Windows) → 다시 해 보고, 그래도 안 되면 남긴다 (시험 결과와 무관)
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 200 }); } catch {}
+  }
 });
 
 test('runCli: onEvent 가 예외를 던져도 대화는 끝까지 간다', async () => {

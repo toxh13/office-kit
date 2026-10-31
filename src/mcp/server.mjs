@@ -136,7 +136,7 @@ const outputSchema = z.string().optional().describe('저장할 경로 (원본과
 const overwriteSchema = z.boolean().default(false).describe('output이 이미 있는 다른 파일일 때 덮어쓸지 (기본 false: 거부)');
 const scalar = z.union([z.string(), z.number()]);
 
-const SUPPORTED = 'hwp, hwpx, hwt, docx, pptx, xlsx, csv(읽기) (프로그램이 있으면 doc, ppt, xls, rtf, odt 등도)';
+const SUPPORTED = 'hwp, hwpx, hwt, docx, pptx, xlsx, csv·pdf(읽기, PDF는 office_pdf_tools로 합치기·나누기·돌리기) (프로그램이 있으면 doc, ppt, xls, rtf, odt 등도)';
 
 // 원고 문법 (src/core/create.mjs parseMarkdown 과 같음)
 const MARKDOWN_HELP = [
@@ -473,6 +473,32 @@ export function createServer() {
     const lines = r.results.map((x) => `- [${BATCH_STATUS_KO[x.status]}] ${x.src} → ${x.out}${x.notes?.length ? ` (${x.notes.join(', ')})` : ''}`);
     return text(`한글 → HWPX ${s.total}개: 같음 ${s.ok}, 확인 필요 ${s.check}, 건너뜀 ${s.skipped}, 실패 ${s.fail}${truncated ? ' (파일이 많아 앞부분만)' : ''}`
       + `${reportPath ? `\n보고서: ${reportPath}` : ''}\n${lines.join('\n')}`);
+  }));
+
+  server.registerTool('office_pdf_tools', {
+    title: 'PDF 합치기·나누기·돌리기',
+    description: 'PDF를 다룬다 (인터넷·프로그램 없이, 원본은 그대로 두고 output에 새 PDF로 저장): '
+      + 'merge = paths의 PDF를 차례로 하나로 합치기, extract = 첫 PDF에서 pages의 쪽만 뽑기(나누기), '
+      + 'delete = 첫 PDF에서 pages의 쪽을 지운 나머지, rotate = 첫 PDF의 pages 쪽(비우면 모두)을 degrees(90·180·270)만큼 시계 방향으로 돌리기. '
+      + '쪽 번호는 1부터, "1-3,5,8-" 꼴. 암호가 걸린 PDF는 다루지 못한다.',
+    inputSchema: {
+      action: z.enum(['merge', 'extract', 'delete', 'rotate']).describe('작업: merge 합치기 | extract 쪽 뽑기 | delete 쪽 지우기 | rotate 돌리기'),
+      paths: z.array(z.string().min(1)).min(1).max(200).describe('PDF 파일 경로들 (merge는 둘 이상, 나머지는 첫 번째만 씀)'),
+      pages: z.string().max(500).optional().describe('쪽 번호 (예: "1-3,5", "8-"). extract·delete는 필수, rotate는 비우면 모든 쪽'),
+      degrees: z.number().int().optional().describe('rotate 각도: 90, 180, 270'),
+      output: z.string().min(1).describe('저장할 .pdf 경로 (원본과 달라야 함)'),
+      overwrite: overwriteSchema,
+    },
+    annotations: { destructiveHint: false },
+  }, tool(async ({ action, paths, pages = '', degrees = 90, output, overwrite = false }) => {
+    const m = await import('../core/pdftools.mjs');
+    const files = paths.map((p) => mustExist(p));
+    const out = outPath(output, { allow: new Set(['pdf']), overwrite });
+    const r = action === 'merge' ? await m.mergePdfs(files, out)
+      : action === 'extract' ? await m.extractPages(files[0], pages, out)
+        : action === 'delete' ? await m.deletePages(files[0], pages, out)
+          : await m.rotatePages(files[0], degrees, pages, out);
+    return text(`저장: ${r.output} (${r.pages}쪽)`);
   }));
 
   // 형식별 전용 도구 (src/mcp/tools/*.mjs)

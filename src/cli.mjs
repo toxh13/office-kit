@@ -45,6 +45,9 @@ const HELP = `office-kit ${VERSION} — 한글·Word·PowerPoint·Excel 문서 �
   pii <파일> [--mask] [-o 출력] [--types rrn,mobile,...] [--json]
                                       개인정보 찾기 (주민·외국인등록번호, 휴대전화·전화, 이메일, 카드, 계좌, 여권, 운전면허).
                                       --mask: 가린 사본 만들기 (원본은 그대로, 기본 이름 <이름>_가림.<확장자>)
+  pdf <작업> ... -o 출력.pdf           PDF 합치기·나누기·돌리기 (원본은 그대로)
+                                      merge a.pdf b.pdf ... · extract 원본.pdf 1-3,5 · delete 원본.pdf 2
+                                      rotate 원본.pdf 90 [--pages 1,3]
   mcp                                 MCP 서버 실행 (stdio, Claude/Codex 연결용)
   setup <대상> [--remove]             연결 설정. 대상: claude-desktop | claude-code | codex | cli | hancom
                                       (hancom: --dll <경로> 로 보안 모듈 파일 지정, --download 로 한컴 공식 배포본 받기)
@@ -76,7 +79,7 @@ const HELP = `office-kit ${VERSION} — 한글·Word·PowerPoint·Excel 문서 �
 // ── 인수 해석 ────────────────────────────────────────────
 
 const VALUED = { '-o': 'out', '--out': 'out', '--output': 'out', '--sheet': 'sheet', '--engine': 'engine', '--dpi': 'dpi', '--dll': 'dll',
-  '--offset': 'offset', '--limit': 'limit', '--slide': 'slide', '--report': 'report', '--types': 'types' };
+  '--offset': 'offset', '--limit': 'limit', '--slide': 'slide', '--report': 'report', '--types': 'types', '--pages': 'pages' };
 const FLAGS = { '--remove': 'remove', '--download': 'download', '--json': 'json', '--force': 'force', '--overwrite': 'overwrite', '--mask': 'mask',
   '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version' };
 
@@ -555,6 +558,24 @@ const COMMANDS = {
       print(`주의: 가리지 못한 것 ${r.remaining.length}가지 — ${r.remaining.map((x) => x.value).join(', ')} (직접 확인하세요)`);
       process.exitCode = 1;
     } else print('확인: 가린 사본을 다시 읽어 남은 것이 없습니다.');
+  },
+
+  async pdf([action, ...rest], opt) {
+    const usage = 'pdf merge|extract|delete|rotate ... -o 출력.pdf (도움말: office-kit help)';
+    if (!action || !opt.out) throw new Error(`인수가 부족합니다. 사용법: office-kit ${usage}`);
+    const m = await import('./core/pdftools.mjs');
+    const out = resolve(opt.out);
+    if (existsSync(out) && !opt.overwrite) throw new Error(`이미 있는 파일입니다: ${out} (덮어쓰려면 --overwrite)`);
+    let r;
+    if (action === 'merge') r = await m.mergePdfs(rest.map((p) => fileArg(p)), out);
+    else if (action === 'extract' || action === 'delete') {
+      need(rest, 2, `pdf ${action} <원본.pdf> <쪽> -o 출력.pdf`);
+      r = await (action === 'extract' ? m.extractPages : m.deletePages)(fileArg(rest[0]), rest[1], out);
+    } else if (action === 'rotate') {
+      need(rest, 2, 'pdf rotate <원본.pdf> <90|180|270> [--pages 1,3] -o 출력.pdf');
+      r = await m.rotatePages(fileArg(rest[0]), rest[1], opt.pages ?? '', out);
+    } else throw new Error(`알 수 없는 PDF 작업: ${action} (merge, extract, delete, rotate)`);
+    print(`저장: ${r.output} (${r.pages}쪽)`);
   },
 
   async convert([input, output]) {

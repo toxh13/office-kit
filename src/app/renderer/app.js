@@ -322,7 +322,12 @@
         h('span', { class: 'recent-dir' }, h('bdi', { text: dirName(r.path) }))),
       r.exists ? h('span', { class: 'recent-meta', text: relText(r.openedAt) }) : h('span', { class: 'recent-missing', text: '찾을 수 없음' }));
       const remove = h('button', { class: 'icon-btn sm recent-remove', title: '목록에서 빼기', 'aria-label': `${r.name} 목록에서 빼기`, onclick: (e) => { e.stopPropagation(); removeRecent(r.path); } }, icon('x'));
-      return h('li', { class: `recent-item${r.exists ? '' : ' missing'}` }, open, remove);
+      const pin = h('button', {
+        class: `icon-btn sm recent-pin${r.pinned ? ' on' : ''}`, title: r.pinned ? '고정 풀기' : '목록 맨 위에 고정',
+        'aria-label': `${r.name} ${r.pinned ? '고정 풀기' : '고정'}`, 'aria-pressed': String(!!r.pinned),
+        onclick: async (e) => { e.stopPropagation(); try { renderRecent(await call(K.recent.pin(r.path, !r.pinned))); } catch (err) { showError(err); } },
+      }, icon('pin'));
+      return h('li', { class: `recent-item${r.exists ? '' : ' missing'}${r.pinned ? ' pinned' : ''}` }, open, pin, remove);
     }));
   }
 
@@ -1103,6 +1108,64 @@
     $('#pii-note').textContent = '사본을 열어 가려진 모양을 꼭 확인해 주세요.';
   }
 
+  // ── PDF 도구 ─────────────────────────────────────────
+
+  const pdft = { action: 'merge', files: [], busy: false };
+  const PDF_ACTION_HINT = {
+    merge: '위에서부터 차례로 하나의 PDF로 합쳐요. ↑↓로 순서를 바꿀 수 있어요.',
+    extract: '고른 쪽만 새 PDF로 저장해요 (첫 번째 PDF). 예: 1-3, 5',
+    delete: '고른 쪽을 뺀 나머지를 새 PDF로 저장해요 (첫 번째 PDF).',
+    rotate: '고른 쪽을 돌려 새 PDF로 저장해요. 쪽을 비우면 모든 쪽.',
+  };
+
+  function openPdfTools() {
+    closeTools();
+    // 열린 문서가 PDF면 미리 넣어 둔다
+    if (!pdft.files.length && state.doc && extOf(state.doc.path) === 'pdf') {
+      pdft.files.push({ path: state.doc.path, name: state.doc.name, pages: null, error: null });
+    }
+    renderPdfTools();
+    const dlg = $('#dlg-pdf');
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function renderPdfTools() {
+    const a = pdft.action;
+    $$('#pdf-action button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.action === a)));
+    const single = a !== 'merge';
+    $('#pdf-list').replaceChildren(...pdft.files.map((f, i) => h('li', { class: 'pdf-item' },
+      h('span', { class: 'pdf-name', text: `${i + 1}. ${f.name}`, title: f.path }),
+      f.error ? h('span', { class: 'pdf-err', text: f.error }) : h('span', { class: 'pdf-pages', text: f.pages ? `${f.pages}쪽` : '' }),
+      single && i > 0 ? h('span', { class: 'pdf-pages', text: '(쓰지 않음)' }) : null,
+      h('button', { class: 'icon-btn sm', title: '위로', 'aria-label': '위로', disabled: i === 0 || pdft.busy, onclick: () => { pdft.files.splice(i - 1, 0, pdft.files.splice(i, 1)[0]); renderPdfTools(); } }, icon('chevron-down', 'i flip')),
+      h('button', { class: 'icon-btn sm', title: '아래로', 'aria-label': '아래로', disabled: i === pdft.files.length - 1 || pdft.busy, onclick: () => { pdft.files.splice(i + 1, 0, pdft.files.splice(i, 1)[0]); renderPdfTools(); } }, icon('chevron-down')),
+      h('button', { class: 'icon-btn sm', title: '빼기', 'aria-label': `${f.name} 빼기`, disabled: pdft.busy, onclick: () => { pdft.files.splice(i, 1); renderPdfTools(); } }, icon('x')))));
+    $('#pdf-hint').textContent = PDF_ACTION_HINT[a];
+    $('#pdf-opts').hidden = a === 'merge';
+    $('#pdf-pages-label').textContent = a === 'rotate' ? '쪽 (비우면 모두)' : '쪽';
+    $('#pdf-degrees').hidden = a !== 'rotate';
+    const ok = pdft.files.filter((f) => !f.error);
+    $('#pdf-run').disabled = pdft.busy || (a === 'merge' ? ok.length < 2 : !ok.length);
+  }
+
+  async function actPdfRun() {
+    if (pdft.busy) return;
+    const files = pdft.files.filter((f) => !f.error).map((f) => f.path);
+    pdft.busy = true;
+    renderPdfTools();
+    setBusy('pdftools', 'PDF 만드는 중…');
+    try {
+      const r = await call(K.pdftools.run({ action: pdft.action, inputs: pdft.action === 'merge' ? files : files.slice(0, 1), pages: $('#pdf-pages').value, degrees: $('#pdf-degrees').value }));
+      if (r?.canceled) return;
+      $('#pdf-note').textContent = `저장했어요: ${baseName(r.output)} (${r.pages}쪽)`;
+      toast(`PDF를 저장했어요: ${baseName(r.output)} (${r.pages}쪽)`, { type: 'success', action: { label: '열기', run: () => { $('#dlg-pdf').close(); openPath(r.output); } } });
+    } catch (err) { showError(err); } finally {
+      pdft.busy = false;
+      clearBusy('pdftools');
+      renderPdfTools();
+    }
+  }
+
   // ── 한글 → HWPX 일괄 변환 ────────────────────────────
 
   const batch = { sources: [], outDir: '', running: false, done: false, scanSeq: 0, count: 0 };
@@ -1266,6 +1329,17 @@
       // 한컴오피스 없이 내장 엔진(rhwp)으로 만든 한글 PDF는 그렇다고 알린다 (한컴과 글꼴·줄바꿈이 조금 다를 수 있음)
       toast(`PDF로 저장했어요${r.note ? ' (내장 엔진)' : ''}: ${baseName(r.output)}`, { type: 'success', action: { label: '폴더에서 보기', run: () => call(K.shell.showItem(r.output)).catch(showError) } });
     } catch (err) { showError(err); } finally { clearBusy('pdf'); }
+  }
+
+  async function actPrint() {
+    if (!state.doc) { toast('문서를 먼저 열어 주세요.', { type: 'info' }); return; }
+    setBusy('print', '인쇄 준비 중…');
+    try {
+      const r = await call(K.doc.print());
+      if (r?.opened) toast('PDF 프로그램에서 인쇄해 주세요.', { type: 'info' });
+      else if (r?.printed) toast('인쇄를 보냈어요', { type: 'success' });
+      else if (r?.reason && r.reason !== 'cancelled') toast(`인쇄하지 못했어요: ${r.reason}`, { type: 'warn' });
+    } catch (err) { showError(err); } finally { clearBusy('print'); }
   }
 
   async function actShowFolder() {
@@ -1736,7 +1810,7 @@
 
   // format은 창을 닫아도 기억한다 (이번 실행 동안). start는 열 때마다 '빈 문서'부터
   // edit: 만든 뒤 바로 편집 창 열기 (한글·docx·xlsx·pptx, 이번 실행 동안 기억)
-  const nd = { format: 'hwpx', start: 'blank', edit: true, folder: '', autoName: '', busy: false, opening: false, seq: 0, timer: 0 };
+  const nd = { format: 'hwpx', start: 'blank', edit: true, folder: '', autoName: '', busy: false, opening: false, seq: 0, timer: 0, templates: {}, template: null };
   const ne = {
     dlg: $('#dlg-new'), name: $('#new-name'), nameBox: $('#new-name-box'), nameMsg: $('#new-name-msg'), ext: $('#new-ext'),
     folder: $('#new-folder'), folderText: $('#new-folder-text'), change: $('#new-folder-change'), formatHint: $('#new-format-hint'),
@@ -1761,12 +1835,13 @@
     if (nd.opening || el.confirm.open) return;
     if (el.settings.open) el.settings.close();
     if (NEW_FORMATS[format]) nd.format = format;
-    nd.start = start === 'ai' ? 'ai' : 'blank';
+    nd.start = start === 'ai' || start === 'template' ? start : 'blank';
     nd.opening = true;
     try {
       const info = await call(K.doc.newInfo({ format: nd.format }));
       nd.folder = info.folder;
       nd.autoName = info.name;
+      nd.templates = info.templates ?? {};
     } catch (err) { showError(err); return; } finally { nd.opening = false; }
     ne.name.value = nd.autoName;
     ne.request.value = '';
@@ -1791,9 +1866,20 @@
     const busy = nd.busy;
     const ai = newDocAi();
     if (!ai.ok && nd.start === 'ai') nd.start = 'blank';
+    // 서식 파일: 이 형식의 서식 (없으면 고를 수 없음)
+    const tpls = nd.templates[nd.format] ?? [];
+    if (!tpls.length && nd.start === 'template') nd.start = 'blank';
+    if (!tpls.some((t) => t.id === nd.template)) nd.template = tpls[0]?.id ?? null;
+    const tplBox = $('#new-template-box');
+    tplBox.hidden = nd.start !== 'template';
+    tplBox.replaceChildren(...tpls.map((t) => h('button', {
+      class: 'tpl-item', type: 'button', role: 'radio', 'aria-checked': String(t.id === nd.template), disabled: busy,
+      onclick: () => { nd.template = t.id; renderNewDoc(); },
+    }, h('span', { class: 'tpl-name', text: t.name }), h('span', { class: 'tpl-desc', text: t.desc }))));
     const f = NEW_FORMATS[nd.format];
     for (const r of $$('input[name="new-format"]', ne.dlg)) { r.checked = r.value === nd.format; r.disabled = busy; }
-    for (const r of $$('input[name="new-start"]', ne.dlg)) { r.checked = r.value === nd.start; r.disabled = busy || (r.value === 'ai' && !ai.ok); }
+    for (const r of $$('input[name="new-start"]', ne.dlg)) { r.checked = r.value === nd.start; r.disabled = busy || (r.value === 'ai' && !ai.ok) || (r.value === 'template' && !tpls.length); }
+    $('#new-start-tpl').classList.toggle('disabled', !tpls.length);
     ne.ext.textContent = `.${nd.format}`;
     ne.formatHint.textContent = f.hint;
     ne.folderText.textContent = nd.folder;
@@ -1912,7 +1998,7 @@
     const queued = ai && !chatFor(check.path).busy ? queueChat(check.path, request) : null;
     try {
       const edit = newDocEditable(nd.format) && nd.edit;
-      const res = await call(K.doc.create({ format: nd.format, folder: nd.folder, name: ne.name.value, start: nd.start, request: ai ? request : undefined, edit }));
+      const res = await call(K.doc.create({ format: nd.format, folder: nd.folder, name: ne.name.value, start: nd.start, request: ai ? request : undefined, template: nd.start === 'template' ? nd.template : undefined, edit }));
       nd.busy = false;
       ne.dlg.close();
       const path = res.doc?.path ?? check.path;
@@ -2383,6 +2469,12 @@
       const paths = files.map((f) => K.pathForFile(f)).filter(Boolean);
       // 일괄 변환 창이 열려 있으면 파일·폴더를 변환 목록에 넣는다
       if ($('#dlg-batch').open) { if (!batch.running) batchAdd(paths); return; }
+      if ($('#dlg-pdf').open) {
+        const have = new Set(pdft.files.map((f) => pathKey(f.path)));
+        for (const p of paths) if (extOf(p) === 'pdf' && !have.has(pathKey(p))) pdft.files.push({ path: p, name: baseName(p), pages: null, error: null });
+        renderPdfTools();
+        return;
+      }
       const ok = paths.find((p) => state.exts.includes(extOf(p)));
       if (!ok) {
         const ext = extOf(paths[0] ?? files[0].name);
@@ -2403,7 +2495,7 @@
     if (state.smoke.newdoc) {
       // AI 선택지가 제 모양으로 보이게 AI 확인을 기다린다
       await Promise.race([state.providersReady, sleep(8000)]);
-      await openNewDoc({ start: state.smoke.newdoc === 'ai' ? 'ai' : 'blank' });
+      await openNewDoc({ start: state.smoke.newdoc === '1' ? 'blank' : state.smoke.newdoc });
       if (state.smoke.newdoc === 'ai') ne.request.value = '주간 회의록 양식 만들어줘';
       await sleep(300);
     }
@@ -2414,6 +2506,13 @@
     if (state.smoke.tool === 'pii' || state.smoke.tool === 'pii-mask') {
       await openPii();
       if (state.smoke.tool === 'pii-mask') await actPiiMask();
+      await sleep(300);
+    }
+    if (state.smoke.tool === 'print') { await actPrint(); await sleep(300); }
+    if (state.smoke.tool === 'pdftools') {
+      openPdfTools();
+      if (state.smoke.batch) { pdft.files.push({ path: state.smoke.batch, name: baseName(state.smoke.batch), pages: null, error: null }); }
+      renderPdfTools();
       await sleep(300);
     }
     if (state.smoke.tool === 'batch') {
@@ -2519,6 +2618,19 @@
     $('#btn-panel-close').addEventListener('click', () => call(K.panel.close()).catch(showError));
     $('#tool-pii').addEventListener('click', openPii);
     $('#tool-batch').addEventListener('click', openBatch);
+    $('#tool-pdf').addEventListener('click', openPdfTools);
+    $$('#pdf-action button').forEach((b) => b.addEventListener('click', () => { pdft.action = b.dataset.action; renderPdfTools(); }));
+    $('#pdf-add').addEventListener('click', async () => {
+      try {
+        const add = await call(K.pdftools.pick());
+        const have = new Set(pdft.files.map((f) => pathKey(f.path)));
+        for (const f of add) if (!have.has(pathKey(f.path))) pdft.files.push(f);
+        renderPdfTools();
+      } catch (err) { showError(err); }
+    });
+    $('#pdf-run').addEventListener('click', actPdfRun);
+    $('#pdf-close').addEventListener('click', () => $('#dlg-pdf').close());
+    $('#pdf-cancel').addEventListener('click', () => $('#dlg-pdf').close());
     document.addEventListener('click', (e) => { if (!$('#tools-pop').hidden && !e.target.closest('#tools-pop, #btn-tools')) closeTools(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#tools-pop').hidden) { e.preventDefault(); closeTools(); $('#btn-tools').focus(); } });
     $('#pii-close').addEventListener('click', () => $('#dlg-pii').close());
@@ -2594,6 +2706,8 @@
       else if (cmd === 'settings') openSettings('ai');
       else if (cmd === 'pii') openPii();
       else if (cmd === 'batch') openBatch();
+      else if (cmd === 'pdftools') openPdfTools();
+      else if (cmd === 'print') actPrint();
     });
     K.on.batchProgress(onBatchProgress);
     K.on.panel(onPanel);

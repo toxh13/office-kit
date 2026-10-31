@@ -19,6 +19,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
 });
 
 const RECENT_MAX = 10;
+const PINNED_MAX = 20;
+/** 고정은 PINNED_MAX개, 고정 안 한 것은 RECENT_MAX개까지 (순서는 그대로) */
+function keepWithin(list) {
+  const pinned = new Set(list.filter((r) => r.pinned).slice(0, PINNED_MAX));
+  const recent = new Set(list.filter((r) => !r.pinned).slice(0, RECENT_MAX));
+  return list.filter((r) => pinned.has(r) || recent.has(r));
+}
 /** Office 편집기 설정: 이름 규칙·값 크기(JSON 바이트)·개수 한도 */
 export const OFFICE_STATE_KEY = /^[\w.:-]{1,128}$/;
 export const OFFICE_STATE_VALUE_MAX = 8 * 1024;
@@ -104,15 +111,34 @@ export function createSettings(dir) {
     set(patch) { data = { ...data, ...patch }; save(); return { ...data }; },
 
     // ── 최근 파일 ───────────────────────────────────────
+    /** 고정한 것이 먼저, 그다음 최근에 연 것 */
     recent() {
-      return data.recent.map((r) => ({ ...r, name: basename(r.path), exists: existsSync(r.path) }));
+      const list = data.recent.map((r) => ({ ...r, pinned: r.pinned === true, name: basename(r.path), exists: existsSync(r.path) }));
+      return [...list.filter((r) => r.pinned), ...list.filter((r) => !r.pinned)];
     },
+    /** 연 문서를 맨 앞에 (고정은 그대로). 고정 안 한 것은 최근 RECENT_MAX개, 고정은 PINNED_MAX개까지 */
     addRecent(path) {
-      data.recent = [{ path, openedAt: Date.now() }, ...data.recent.filter((r) => !samePath(r.path, path))].slice(0, RECENT_MAX);
+      const old = data.recent.find((r) => samePath(r.path, path));
+      const all = [{ path, openedAt: Date.now(), ...(old?.pinned ? { pinned: true } : {}) }, ...data.recent.filter((r) => !samePath(r.path, path))];
+      data.recent = keepWithin(all);
+      save();
+    },
+    /** 목록에 고정 · 풀기 (목록에 없으면 넣는다) */
+    pinRecent(path, on) {
+      let list = data.recent;
+      if (!list.some((r) => samePath(r.path, path))) list = [{ path, openedAt: Date.now() }, ...list];
+      if (on && list.filter((r) => r.pinned && !samePath(r.path, path)).length >= PINNED_MAX) throw new Error(`고정은 ${PINNED_MAX}개까지 할 수 있어요`);
+      list = list.map((r) => {
+        if (!samePath(r.path, path)) return r;
+        const { pinned: _old, ...rest } = r;
+        return on ? { ...rest, pinned: true } : rest;
+      });
+      data.recent = keepWithin(list);
       save();
     },
     removeRecent(path) { data.recent = data.recent.filter((r) => !samePath(r.path, path)); save(); },
-    clearRecent() { data.recent = []; save(); },
+    /** 지우기: 고정한 것은 남긴다 */
+    clearRecent() { data.recent = data.recent.filter((r) => r.pinned); save(); },
 
     // ── Office 편집기 설정 (편집 창의 editor:state) ─────────
     /** 값 하나 → 값(사본) | null */

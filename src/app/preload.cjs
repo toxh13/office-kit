@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('officeKit', {
     // PDF를 Word 창에서 열기 (Word가 편집할 수 있는 문서로 바꾼다 — 확인 창은 사용자가 누른다)
     openInWord: invoke('doc:openInWord'),
     savePdf: invoke('doc:savePdf'),
+    // 인쇄: 한글은 인쇄 대화상자 { printed }, 그 밖은 PDF로 만들어 PDF 프로그램에서 { opened }
+    print: invoke('doc:print'),
     showInFolder: invoke('doc:showInFolder'),
     // 편집 창 열기 (한글 → 한글 편집, docx·xlsx·pptx → 문서·표·슬라이드 편집. 이미 열려 있으면 앞으로)
     // → { path, kind: 'hwp' | 'office', reused, notice }
@@ -45,6 +47,8 @@ contextBridge.exposeInMainWorld('officeKit', {
     list: invoke('recent:list'),
     remove: invoke('recent:remove'),
     clear: invoke('recent:clear'),
+    /** 고정 · 풀기 (path, on) → 목록 */
+    pin: invoke('recent:pin'),
   },
 
   settings: {
@@ -90,6 +94,12 @@ contextBridge.exposeInMainWorld('officeKit', {
   panel: {
     full: invoke('panel:full'),
     close: invoke('panel:close'),
+  },
+
+  // PDF 도구: 고르기 → [{ path, name, pages, error }] · 실행 { action: merge|extract|delete|rotate, inputs, pages, degrees } → { output, pages }
+  pdftools: {
+    pick: invoke('pdftools:pick'),
+    run: invoke('pdftools:run'),
   },
 
   // 기본 프로그램: 상태(형식마다 Office Kit로 여는지) · 등록 고치기 · Windows 기본 앱 설정 열기

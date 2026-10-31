@@ -1467,6 +1467,9 @@ export async function fixOoxml(bytes, ext, { original = null } = {}) {
   }
 }
 
+// 새로 넣는 부분의 날짜 (ZIP 날짜는 1980년부터)
+const NEW_PART_DATE = new Date(Date.UTC(1980, 0, 1, 0, 0, 0));
+
 async function fixOnce(input, e, orig, carry) {
   const edit = new Edit(await JSZip.loadAsync(input));
   const types = await readTypes(edit.zip, edit.budget);
@@ -1484,7 +1487,11 @@ async function fixOnce(input, e, orig, carry) {
   if (!edit.changed) return { changed: false, warnings };
   if (types.changed) edit.write('[Content_Types].xml', types.xml);
   for (const n of edit.removed) edit.zip.remove(n);
-  for (const [n, data] of edit.put) edit.zip.file(n, data, { binary: true, createFolders: false });
+  // 날짜: 원래 있던 부분은 원래 날짜, 새 부분은 고정 날짜 → 같은 입력이면 늘 같은 바이트 (지금 시각을 넣으면 초마다 달라진다)
+  for (const [n, data] of edit.put) {
+    const date = edit.zip.file(n)?.date ?? NEW_PART_DATE;
+    edit.zip.file(n, data, { binary: true, createFolders: false, date });
+  }
   const out = await edit.zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   // 확인은 원래 꾸러미와 비교하므로 새로 읽은 것으로
   const before = new Edit(await JSZip.loadAsync(input));

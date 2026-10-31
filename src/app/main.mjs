@@ -14,7 +14,7 @@ const SMOKE = process.env.OFFICEKIT_SMOKE ? resolve(process.env.OFFICEKIT_SMOKE)
 const SMOKE_CHAT = process.env.OFFICEKIT_SMOKE_CHAT === '1';
 const SMOKE_SETTINGS = ['ai', 'view', 'open', 'connect', 'hancom'].includes(process.env.OFFICEKIT_SMOKE_SETTINGS) ? process.env.OFFICEKIT_SMOKE_SETTINGS : null;
 // 새 문서 창을 연 채로 찍기: '1' = 빈 문서, 'ai' = AI에게 부탁하기를 고른 모양
-const SMOKE_NEWDOC = ['1', 'ai'].includes(process.env.OFFICEKIT_SMOKE_NEWDOC) ? process.env.OFFICEKIT_SMOKE_NEWDOC : null;
+const SMOKE_NEWDOC = ['1', 'ai', 'template'].includes(process.env.OFFICEKIT_SMOKE_NEWDOC) ? process.env.OFFICEKIT_SMOKE_NEWDOC : null;
 // 편집 창(한글·문서·표·슬라이드)도 열어 두 창을 함께 찍기 (편집 창은 <png>-editor.png)
 const SMOKE_EDITOR = process.env.OFFICEKIT_SMOKE_EDITOR === '1';
 // 'PDF로 저장'도 눌러 보기: 저장 대화상자 대신 이 경로에 만든다 (OFFICEKIT_SMOKE와 함께일 때만). 결과는 [smoke] 줄의 pdf
@@ -22,7 +22,7 @@ const SMOKE_PDF = SMOKE && process.env.OFFICEKIT_SMOKE_PDF ? resolve(process.env
 // '바뀐 내용' 창 찍기: 문서를 연 뒤(처음 연 상태 버전이 생긴 뒤) 이 파일로 덮어쓰고, 처음 연 상태 → 지금을 비교해 보인다
 const SMOKE_DIFF = SMOKE && process.env.OFFICEKIT_SMOKE_DIFF ? resolve(process.env.OFFICEKIT_SMOKE_DIFF) : '';
 // 도구 창 찍기: 'pii'(찾은 목록) | 'pii-mask'(가린 사본까지) | 'batch'(OFFICEKIT_SMOKE_BATCH 폴더를 바꾼 결과)
-const SMOKE_TOOL = SMOKE && ['pii', 'pii-mask', 'batch'].includes(process.env.OFFICEKIT_SMOKE_TOOL) ? process.env.OFFICEKIT_SMOKE_TOOL : null;
+const SMOKE_TOOL = SMOKE && ['pii', 'pii-mask', 'batch', 'pdftools', 'print'].includes(process.env.OFFICEKIT_SMOKE_TOOL) ? process.env.OFFICEKIT_SMOKE_TOOL : null;
 const SMOKE_BATCH = SMOKE_TOOL === 'batch' && process.env.OFFICEKIT_SMOKE_BATCH ? resolve(process.env.OFFICEKIT_SMOKE_BATCH) : '';
 const APP_ICON = [join(APP_ROOT, 'build', 'icon.ico'), join(APP_ROOT, 'build', 'icon.png')].find((f) => existsSync(f));
 
@@ -53,6 +53,7 @@ async function start() {
   const core = await import('../core/index.mjs');
   const com = await import('../core/com.mjs');
   const create = await import('../core/create.mjs');
+  const templatesMod = await import('../core/templates.mjs');
   const { OPENABLE_EXTS, extOf, kindOf } = core;
 
   const userData = app.getPath('userData');
@@ -567,6 +568,59 @@ async function start() {
     return { output: file };
   }
 
+  // ── PDF 도구 (core/pdftools.mjs) ──────────────────────
+  let loadedPdfTools = null;
+  const loadPdfTools = async () => (loadedPdfTools ??= await import('../core/pdftools.mjs'));
+  const PDF_ACTIONS = { merge: '합침', extract: '쪽뽑기', delete: '쪽지움', rotate: '돌림' };
+
+  async function pdfPick() {
+    const r = await dialog.showOpenDialog(win, { title: 'PDF 고르기', properties: ['openFile', 'multiSelections'],
+      defaultPath: current ? dirname(current.path) : app.getPath('documents'), filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] });
+    if (r.canceled) return [];
+    const m = await loadPdfTools();
+    const out = [];
+    for (const p of r.filePaths.slice(0, 200)) {
+      let pages = null; let error = null;
+      try { pages = await m.pdfPageCount(p); } catch (err) { error = err.message; }
+      out.push({ path: p, name: basename(p), pages, error });
+    }
+    return out;
+  }
+
+  async function pdfRun({ action, inputs, pages, degrees } = {}) {
+    if (!Object.hasOwn(PDF_ACTIONS, action)) throw fail('잘못된 작업입니다');
+    const list = pathList(inputs).filter((p) => extOf(p) === 'pdf');
+    if (!list.length) throw fail('PDF를 골라 주세요');
+    if (action === 'merge' && list.length < 2) throw fail('합칠 PDF를 둘 이상 골라 주세요');
+    const spec = typeof pages === 'string' ? pages.slice(0, 500) : '';
+    const first = list[0];
+    const stem = basename(first).replace(/\.[^.]+$/, '');
+    let suggest = join(dirname(first), `${stem}_${PDF_ACTIONS[action]}.pdf`);
+    for (let i = 2; existsSync(suggest); i++) suggest = join(dirname(first), `${stem}_${PDF_ACTIONS[action]} (${i}).pdf`);
+    // 쪽 번호가 맞는지는 저장할 곳을 묻기 전에 확인한다
+    const m = await loadPdfTools();
+    if (action !== 'merge') {
+      let total;
+      try { total = await m.pdfPageCount(first); } catch (err) { throw fail(err.message); }
+      if (action !== 'rotate' || spec.trim()) { try { m.parsePages(spec, total); } catch (err) { throw fail(err.message, 'BAD_PAGES'); } }
+    }
+    const r = SMOKE && process.env.OFFICEKIT_SMOKE_PDFTOOLS_OUT ? { canceled: false, filePath: resolve(process.env.OFFICEKIT_SMOKE_PDFTOOLS_OUT) }
+      : await dialog.showSaveDialog(win, { title: '결과 PDF 저장', defaultPath: suggest, filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] });
+    if (r.canceled || !r.filePath) return { canceled: true };
+    const output = r.filePath.toLowerCase().endsWith('.pdf') ? r.filePath : `${r.filePath}.pdf`;
+    try {
+      const res = action === 'merge' ? await m.mergePdfs(list, output)
+        : action === 'extract' ? await m.extractPages(first, spec, output)
+          : action === 'delete' ? await m.deletePages(first, spec, output)
+            : await m.rotatePages(first, Number(degrees) || 90, spec, output);
+      if (!SMOKE) { try { settings.addRecent(res.output); } catch {} }
+      return res;
+    } catch (err) {
+      if (/EBUSY|EPERM|EACCES/.test(err?.code ?? err?.message)) throw fail('저장하지 못했어요 — 같은 이름의 파일이 열려 있거나 쓰기 권한이 없어요');
+      throw fail(err.message);
+    }
+  }
+
   /** 이 형식을 프로그램으로 다룰 수 있는지 미리 확인 (한글은 보안 모듈이 없으면 COM을 쓰지 않는다) */
   async function appCheck(p, what) {
     const ext = extOf(p);
@@ -699,7 +753,8 @@ async function start() {
   function newDocInfo({ format = create.BLANK_FORMATS[0], folder } = {}) {
     const ext = blankFormat(format);
     const dir = typeof folder === 'string' && folder.length <= 4096 && isAbsolute(folder) ? resolve(folder) : newDocFolder();
-    return { folder: dir, name: create.freeDocName(dir, ext), documents: app.getPath('documents'), formats: [...create.BLANK_FORMATS] };
+    const templates = Object.fromEntries(create.BLANK_FORMATS.map((f) => [f, templatesMod.templatesFor(f)]));
+    return { folder: dir, name: create.freeDocName(dir, ext), documents: app.getPath('documents'), formats: [...create.BLANK_FORMATS], templates };
   }
 
   /** 입력하는 동안 이름 확인 → { ok, path, name, code, error, suggestion } (오류를 던지지 않고 돌려준다) */
@@ -745,7 +800,7 @@ async function start() {
   async function newDocument(args) {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('잘못된 요청입니다');
     const start = args.start ?? 'blank';
-    if (!['blank', 'ai'].includes(start)) throw fail('잘못된 시작 방법입니다');
+    if (!['blank', 'ai', 'template'].includes(start)) throw fail('잘못된 시작 방법입니다');
     let request = '';
     if (start === 'ai') {
       request = typeof args.request === 'string' ? args.request.trim() : '';
@@ -756,7 +811,18 @@ async function start() {
     try { plan = create.planBlankDocument({ folder: args.folder, name: args.name, format: blankFormat(args.format) }); } catch (err) {
       throw err?.code ? fail(err.message, err.code) : err;
     }
-    try { await create.createBlankDocument(plan.path); } catch (err) {
+    // 서식 파일: 원고로 만든다 (같은 이름이 있으면 거절 — 빈 문서와 같게)
+    let tplMarkdown = null;
+    if (start === 'template') {
+      tplMarkdown = templatesMod.templateMarkdown(String(args.template ?? ''), extOf(plan.path));
+      if (!tplMarkdown) throw fail('고른 서식을 이 형식으로 만들 수 없어요', 'NO_TEMPLATE');
+    }
+    try {
+      if (tplMarkdown) {
+        if (existsSync(plan.path)) throw Object.assign(new Error('exists'), { code: 'EXISTS' });
+        await create.createDocument(plan.path, tplMarkdown);
+      } else await create.createBlankDocument(plan.path);
+    } catch (err) {
       if (err.code === 'EXISTS') throw fail(`이 폴더에 같은 이름의 파일이 이미 있어요: ${basename(plan.path)}`, 'EXISTS');
       if (['EACCES', 'EPERM', 'EROFS'].includes(err.code)) throw fail('이 폴더에는 파일을 만들 수 없어요 (권한이 없거나 읽기 전용). 다른 폴더를 골라 주세요.', 'WRITE_FAILED');
       if (err.code === 'ENOSPC') throw fail('디스크 공간이 부족해 문서를 만들지 못했어요', 'WRITE_FAILED');
@@ -832,6 +898,12 @@ async function start() {
       onDownloaded: (p) => editorDownloaded(p),
       onDirtyChange: () => pushEditorState(),
       onPanel: (p, ew) => { showPanel(p, ew).catch((err) => console.error('[panel]', err)); },
+      // 한글 편집 창의 인쇄·PDF로 저장: 편집 중인 hwp 바이트 → PDF (한컴+자동화 연결이 있으면 한컴, 없으면 내장 엔진)
+      toPdf: (bytes) => hwpBytesToPdf(bytes),
+      toPrint: (bytes, ew) => printHwpBytes(bytes, ew),
+      // 편집 창의 Ctrl+O · Ctrl+N
+      onOpenRequest: (ew) => { pickAndOpen(ew).catch((err) => console.error('[open]', err)); },
+      onNewRequest: () => { showHub(); send('menu', 'new'); },
       onClosed: () => setTimeout(editorClosed, 0),
     });
   } catch (err) {
@@ -865,7 +937,7 @@ async function start() {
   const DRAFT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const DRAFT_KEEP = 50;
   const DRAFT_TMP_AGE_MS = 60 * 60 * 1000;
-  const DRAFT_NAME = /^[0-9a-f]{40}\.(docx|xlsx|pptx)$/i;
+  const DRAFT_NAME = /^[0-9a-f]{40}\.(docx|xlsx|pptx|hwp|hwpx|hwt)$/i;
 
   /** 30일 넘은 사본, 쓰다 남은 임시 파일, 50개 넘는 것(오래된 것부터) 지우기. 열린 편집 창 문서의 사본은 남긴다 → 지운 개수 */
   function cleanOfficeDrafts({ now = Date.now() } = {}) {
@@ -971,6 +1043,114 @@ async function start() {
     }
     pushEditorState();
     return { path: r.path, kind: r.kind ?? kind, reused: !!r.reused, notice: typeof r.notice === 'string' && r.notice ? r.notice : null };
+  }
+
+  /** hwp 바이트 → PDF 바이트 (임시 폴더에서) */
+  async function hwpBytesToPdf(bytes) {
+    const work = mkdtempSync(join(tmpdir(), 'officekit-hwppdf-'));
+    try {
+      const src = join(work, 'doc.hwp');
+      const out = join(work, 'doc.pdf');
+      writeFileSync(src, bytes);
+      await core.convertDocument(src, out);
+      return new Uint8Array(readFileSync(out));
+    } finally { try { rmSync(work, { recursive: true, force: true, maxRetries: 3 }); } catch {} }
+  }
+
+  // ── 인쇄 ─────────────────────────────────────────────
+  // 한글: 내장 엔진이 그린 쪽 그림(SVG)을 숨은 창에 펴 놓고 Windows 인쇄 대화상자로 (쪽 크기·방향은 쪽마다).
+  // 숨은 창은 스크립트를 끄고, 파일·data: 말고는 아무 데도 읽으러 가지 않는다 (문서 내용이 밖으로 나가지 않게)
+  let printSession = null;
+  function printSes() {
+    if (printSession) return printSession;
+    printSession = session.fromPartition('officekit-print');
+    printSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob):/i.test(d.url) }));
+    printSession.setPermissionRequestHandler((_w, _p, cb) => cb(false));
+    return printSession;
+  }
+
+  async function printHwpPath(path, parent) {
+    const h = core.Hwp.openForView(path);
+    let pages;
+    try { pages = Array.from({ length: h.pageCount }, (_, i) => h.svg(i)); } finally { h.close(); }
+    if (!pages.length) throw fail('인쇄할 쪽이 없습니다');
+    const mm = (px) => (Number(px) * 25.4 / 96).toFixed(2);
+    const css = []; const body = [];
+    pages.forEach((svg, i) => {
+      const m = /<svg\b[^>]*\bwidth="([\d.]+)"[^>]*\bheight="([\d.]+)"/.exec(svg);
+      const w = m ? mm(m[1]) : '210'; const hgt = m ? mm(m[2]) : '297';
+      css.push(`@page p${i} { size: ${w}mm ${hgt}mm; margin: 0 } .p${i} { page: p${i}; width: ${w}mm; height: ${hgt}mm }`);
+      body.push(`<div class="pg p${i}">${svg}</div>`);
+    });
+    const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>인쇄</title><style>html,body{margin:0;padding:0;background:#fff}
+      .pg{overflow:hidden;break-after:page}.pg:last-child{break-after:auto}.pg>svg{display:block;width:100%;height:100%}${css.join('\n')}</style></head><body>${body.join('')}</body></html>`;
+    const dir = join(userData, 'print', randomUUID().slice(0, 12));
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'print.html');
+    writeFileSync(file, html, 'utf8');
+    const pw = new BrowserWindow({ show: false, width: 800, height: 1100, ...(parent && !parent.isDestroyed() ? { parent } : {}),
+      webPreferences: { session: printSes(), sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false, spellcheck: false } });
+    try {
+      await pw.loadFile(file);
+      // 확인용: 인쇄 대화상자 대신 PDF로 (쪽 크기·쪽 수 확인)
+      if (SMOKE && process.env.OFFICEKIT_SMOKE_PRINT) {
+        writeFileSync(resolve(process.env.OFFICEKIT_SMOKE_PRINT), await pw.webContents.printToPDF({ preferCSSPageSize: true, printBackground: true }));
+        return { printed: true, reason: null };
+      }
+      return await new Promise((done) => {
+        pw.webContents.print({ silent: false, printBackground: true }, (ok, reason) => done({ printed: !!ok, reason: ok ? null : String(reason ?? 'cancelled') }));
+      });
+    } finally {
+      try { pw.destroy(); } catch {}
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  /** 한글 편집 창의 인쇄: 편집 중인 hwp 바이트 → 임시 파일 → 인쇄 대화상자 */
+  async function printHwpBytes(bytes, parent) {
+    const work = mkdtempSync(join(tmpdir(), 'officekit-print-'));
+    try {
+      const src = join(work, 'doc.hwp');
+      writeFileSync(src, bytes);
+      return await printHwpPath(src, parent);
+    } finally { try { rmSync(work, { recursive: true, force: true, maxRetries: 3 }); } catch {} }
+  }
+
+  /** 주 창의 인쇄 (Ctrl+P): 한글은 인쇄 대화상자, PDF·Word·Excel·PowerPoint는 PDF로 만들어 PDF 프로그램에서 */
+  async function printCurrent() {
+    const doc = needDoc();
+    const ext = extOf(doc.path);
+    if (core.isHwp(ext)) return printHwpPath(doc.path, win);
+    let pdf = doc.path;
+    if (ext !== 'pdf') {
+      await appCheck(doc.path, '인쇄');
+      const dir = join(userData, 'print', randomUUID().slice(0, 12));
+      mkdirSync(dir, { recursive: true });
+      const work = mkdtempSync(join(tmpdir(), 'officekit-print-'));
+      try {
+        const tmp = join(work, 'print.pdf');
+        await core.convertDocument(doc.path, tmp);
+        pdf = join(dir, `${basename(doc.path).replace(/\.[^.]+$/, '')}.pdf`);
+        copyFileSync(tmp, pdf);
+      } finally { try { rmSync(work, { recursive: true, force: true }); } catch {} }
+    }
+    await openOutside(pdf);
+    return { opened: true };
+  }
+
+  /** 편집 창의 Ctrl+O: 문서를 골라 열기 (편집할 수 있으면 새 편집 창, 아니면 주 창) */
+  async function pickAndOpen(parent) {
+    const all = OPENABLE_EXTS;
+    const r = await dialog.showOpenDialog(parent && !parent.isDestroyed() ? parent : win, {
+      title: '문서 열기', properties: ['openFile', 'multiSelections'],
+      defaultPath: current ? dirname(current.path) : app.getPath('documents'),
+      filters: [{ name: '모든 문서', extensions: all }],
+    });
+    if (r.canceled) return;
+    for (const f of r.filePaths) {
+      if (wantsDocWindow(f)) await openAsDocument(f);
+      else await openInHub(f);
+    }
   }
 
   // ── 문서 창 (Word처럼) ───────────────────────────────
@@ -1470,6 +1650,9 @@ async function start() {
   handle('batch:start', (args) => batchStart(args && typeof args === 'object' ? args : {}));
   handle('batch:cancel', () => { if (batchRun) batchRun.cancelled = true; return null; });
   handle('batch:saveReport', () => batchSaveReport());
+  handle('pdftools:pick', () => pdfPick());
+  handle('doc:print', () => printCurrent());
+  handle('pdftools:run', (args) => pdfRun(args && typeof args === 'object' ? args : {}));
   handle('doc:openInApp', () => openInProgram());
   handle('doc:openInWord', () => openPdfInWord());
   handle('panel:full', () => { showHub(); return null; });
@@ -1498,7 +1681,12 @@ async function start() {
 
   handle('recent:list', () => settings.recent());
   handle('recent:remove', (p) => { if (typeof p !== 'string') throw fail('잘못된 경로입니다'); settings.removeRecent(p); return settings.recent(); });
-  handle('recent:clear', () => { settings.clearRecent(); return []; });
+  handle('recent:clear', () => { settings.clearRecent(); return settings.recent(); });
+  handle('recent:pin', (p, on) => {
+    if (typeof p !== 'string' || !isAbsolute(p) || p.length > 4096) throw fail('잘못된 경로입니다');
+    try { settings.pinRecent(resolve(p), on === true); } catch (err) { throw fail(err.message); }
+    return settings.recent();
+  });
 
   handle('settings:get', () => publicSettings());
   handle('settings:set', (patch) => setSettings(patch));
@@ -1767,9 +1955,11 @@ async function start() {
         { label: '파일 열기…', accelerator: 'CmdOrCtrl+O', click: () => send('menu', 'open') },
         { label: '직접 편집', accelerator: 'CmdOrCtrl+E', click: () => send('menu', 'edit') },
         { label: '새로고침', accelerator: 'F5', click: () => send('menu', 'refresh') },
+        { label: '인쇄…', accelerator: 'CmdOrCtrl+P', click: () => send('menu', 'print') },
         { type: 'separator' },
         { label: '개인정보 찾아 가리기…', click: () => send('menu', 'pii') },
         { label: '한글 → HWPX 일괄 변환…', click: () => send('menu', 'batch') },
+        { label: 'PDF 합치기 · 나누기 · 돌리기…', click: () => send('menu', 'pdftools') },
         { type: 'separator' },
         { label: '설정', accelerator: 'CmdOrCtrl+,', click: () => send('menu', 'settings') },
         { type: 'separator' },

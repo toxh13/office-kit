@@ -7,6 +7,8 @@ const $ = (id) => document.getElementById(id);
 // 원래 형식으로 저장: hwp·hwt는 HWP, hwpx는 HWPX
 const FORMAT_OF = { hwp: 'hwp', hwt: 'hwp', hwpx: 'hwpx' };
 const DIRTY_POLL_MS = 800;
+// 자동 저장: 고친 내용이 있으면 10분마다 복구 사본으로 (원본 파일은 그대로)
+const AUTOSAVE_MS = 10 * 60 * 1000;
 // 저장 뒤 이 시간 안에 studio가 '바뀜'을 다시 표시하면 저장한 내용과 같은지 확인한다
 const RECHECK_MS = 4000;
 
@@ -71,6 +73,7 @@ function renderState() {
   const ready = state.loaded && !state.failed;
   $('btn-save').disabled = !ready || !!state.saving;
   $('btn-save-as').disabled = !ready || !!state.saving;
+  $('btn-print').disabled = !ready || !!state.pdfBusy;
 }
 
 function setDirty(dirty) {
@@ -271,6 +274,62 @@ function save({ ext } = {}) {
   return state.saving;
 }
 
+// ── 인쇄 · PDF로 저장 · 자동 저장 ──────────────────────
+
+/** 지금 내용으로 PDF: op 'print' | 'save' (저장 안 한 내용도 들어간다) */
+async function makePdf(op) {
+  if (!state.loaded || state.failed || !state.editor || state.pdfBusy) return false;
+  closeMenu();
+  state.pdfBusy = true;
+  renderState();
+  try {
+    const bytes = await state.editor.exportHwp();
+    const r = unwrap(await api.pdf(bytes, op));
+    if (r?.canceled) return false;
+    if (op === 'save') toast(`PDF로 저장했습니다: ${r.name ?? ''}`);
+    else if (r?.printed) toast('인쇄를 보냈습니다');
+    else if (r?.opened) toast('PDF 앱에서 인쇄하세요', 'info');
+    else if (r?.reason && r.reason !== 'cancelled') toast(`인쇄하지 못했습니다: ${r.reason}`, 'error');
+    return true;
+  } catch (err) {
+    showBanner('error', `${op === 'save' ? 'PDF로 저장하지' : '인쇄하지'} 못했습니다: ${err.message}`, [{ label: '닫기', onClick: hideBanner }]);
+    return false;
+  } finally {
+    state.pdfBusy = false;
+    renderState();
+  }
+}
+
+/** 10분마다: 고친 내용이 있으면 복구 사본으로 (원본 형식 그대로, 원본 파일은 건드리지 않음) */
+async function autosave() {
+  if (!state.loaded || state.failed || !state.editor || state.saving || state.reloading || !state.dirty || state.autosaving) return;
+  state.autosaving = true;
+  try {
+    const bytes = state.format === 'hwpx' ? await state.editor.exportHwpx() : await state.editor.exportHwp();
+    unwrap(await api.save(bytes, { reason: 'auto' }));
+    log('자동 저장 사본을 남겼습니다');
+  } catch (err) { log(`자동 저장 실패: ${err.message}`); } finally { state.autosaving = false; }
+}
+
+/** 다시 열었을 때 복구 사본이 파일보다 새로우면 묻는다 */
+function offerDraft(draft) {
+  const when = new Date(draft.mtimeMs).toLocaleString('ko-KR');
+  showBanner('draft', `저장하지 않고 닫힌 편집 내용이 있습니다 (${when} 자동 저장). 복구할까요?`, [
+    { label: '복구', primary: true, onClick: async () => {
+      try {
+        const d = unwrap(await api.readDraft());
+        await state.editor.loadFile(d.bytes, state.name, { skipUnsavedGuard: true, suppressDialogs: true });
+        state.saved = null;
+        state.lateEdits = true; // 복구한 내용은 아직 파일에 없다 → '저장 안 됨'
+        setDirty(true);
+        hideBanner();
+        toast('자동 저장된 내용을 복구했습니다. 저장하면 문서에 들어갑니다', 'info');
+      } catch (err) { showBanner('error', `복구하지 못했습니다: ${err.message}`, [{ label: '닫기', onClick: hideBanner }]); }
+    } },
+    { label: '버리기', onClick: async () => { try { await api.discardDraft(); } catch {} hideBanner(); } },
+  ]);
+}
+
 // ── 다른 이름으로 저장 메뉴 ─────────────────────────────
 
 function openMenu() {
@@ -293,6 +352,8 @@ function wireUi() {
   for (const item of document.querySelectorAll('#save-as-menu [data-ext]')) {
     item.addEventListener('click', () => { void save({ ext: item.dataset.ext }); });
   }
+  document.querySelector('#save-as-menu [data-pdf]')?.addEventListener('click', () => { void makePdf('save'); });
+  $('btn-print').addEventListener('click', () => { void makePdf('print'); });
   document.addEventListener('click', (e) => { if (!e.target.closest?.('.menu-wrap')) closeMenu(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   window.addEventListener('blur', closeMenu);
@@ -337,6 +398,7 @@ function wireApp() {
   api.onCommand(async (command) => {
     if (command === 'save') return save();
     if (command === 'save-as') { if (!state.loaded || state.failed) return false; openMenu(); return true; }
+    if (command === 'print') return makePdf('print');
     return false;
   });
 }
@@ -383,6 +445,8 @@ async function boot() {
     state.editor.onDocumentChanged(() => { void refreshDirty(); });
   } catch {}
   startDirtyPoll();
+  setInterval(() => { void autosave(); }, AUTOSAVE_MS);
+  if (doc.draft) offerDraft(doc.draft);
   try { state.editor.element.focus(); } catch {}
 }
 
@@ -396,6 +460,8 @@ if (TEST) {
     }),
     refreshDirty: () => refreshDirty(),
     save: (ext) => save(ext ? { ext } : {}),
+    autosave: () => autosave(),
+    makePdf: (op) => makePdf(op),
     pageCount: () => state.editor?.pageCount(),
     pageSvg: (page = 0) => state.editor?.getPageSvg(page),
     context: () => state.editor?.commands.context(),

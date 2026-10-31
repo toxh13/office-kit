@@ -357,7 +357,7 @@ function safeFileName(name, fallback) {
  * @param {{ maxBytes?: number, fontsTimeoutMs?: number, printIntervalMs?: number }} [o.limits]  시험용 한도 (기본 512MB, 글꼴 준비 20초, 인쇄 간격 3초)
  */
 export function createEditorManager({
-  app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange, onPanel, onClosed,
+  app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange, onPanel, onClosed, toPdf, toPrint, onOpenRequest, onNewRequest,
   dirs, officeState, fonts: fontsModule, fixups: fixupsModule, nativeTheme, icon, testHooks = false, userName,
   log = (...a) => console.log('[editor]', ...a), limits = {},
 } = {}) {
@@ -573,7 +573,9 @@ export function createEditorManager({
     };
     if (entry.kind !== 'office') {
       const ok = available('hwp');
-      return { ...base, available: ok.available, reason: ok.reason, studioUrl: server.studioUrl };
+      const hwpDraft = draftOffer(entry, st);
+      entry.draftPending = !!hwpDraft;
+      return { ...base, available: ok.available, reason: ok.reason, studioUrl: server.studioUrl, draft: hwpDraft, pdfAvailable: typeof toPdf === 'function' };
     }
     const ok = available('office');
     const draft = draftOffer(entry, st);
@@ -598,7 +600,7 @@ export function createEditorManager({
     if (!d) throw fail('복구할 자동 저장 사본이 없습니다', 'NO_DRAFT');
     entry.draftPending = false; // 복구함 → 편집 창이 저장 안 한 내용으로 들고 있다 (닫을 때 저장 여부를 묻는다)
     return d;
-  }, { kinds: ['office'] });
+  });
 
   handle('editor:save', async (entry, bytes, opts) => {
     if (entry.kind === 'office') {
@@ -606,6 +608,8 @@ export function createEditorManager({
       if (entry.convertedFrom) return saveConverted(entry, bytes);
       return saveTo(entry, entry.path, bytes, extOf(entry.path));
     }
+    // 한글도 10분 자동 저장은 복구 사본에만 (원본은 그대로)
+    if (opts?.reason === 'auto') return saveDraft(entry, bytes);
     return saveTo(entry, entry.path, bytes, extOf(entry.path) === 'hwpx' ? 'hwpx' : 'hwp');
   });
 
@@ -696,6 +700,32 @@ export function createEditorManager({
     entry.printing = true;
     try { return await printPdf(entry, pdf); } finally { entry.printing = false; entry.lastPrintAt = Date.now(); }
   }, { kinds: ['office'] });
+
+  // 한글 편집 창: 지금 내용(저장 안 한 것 포함)을 PDF로 → 인쇄(기본 PDF 앱) 또는 PDF로 저장. 바이트는 hwp 형식
+  handle('editor:hwp-pdf', async (entry, bytes, op) => {
+    if (typeof toPdf !== 'function') throw fail('PDF로 만드는 기능을 불러오지 못했습니다', 'UNAVAILABLE');
+    if (!(bytes instanceof Uint8Array) || !bytesMatchExt(bytes, 'hwp')) throw fail('편집기가 내보낸 내용이 한글 문서가 아닙니다', 'BAD_FORMAT');
+    if (bytes.length > maxBytes) throw fail('문서가 너무 큽니다 (512MB 넘음)', 'TOO_BIG');
+    if (op === 'print' && (entry.printing || Date.now() - (entry.lastPrintAt ?? 0) < printIntervalMs)) {
+      throw fail('인쇄를 준비하는 중입니다. 잠시 뒤 다시 시도하세요.', 'BUSY');
+    }
+    const stem = safeFileName(basename(entry.path).replace(/\.[^.]+$/, ''), '문서');
+    if (op === 'save') {
+      const target = await askTarget(entry, { title: 'PDF로 저장', defaultPath: join(dirname(entry.path), `${stem}.pdf`), ext: 'pdf', filterName: 'PDF 문서 (.pdf)' });
+      if (!target) return { canceled: true };
+      const pdf = await toPdf(bytes);
+      const res = await writeFile(target, pdf);
+      try { onDownloaded?.(target); } catch {}
+      return { ...res, path: target };
+    }
+    if (op !== 'print') throw fail('알 수 없는 요청입니다', 'BAD_OP');
+    entry.printing = true;
+    try {
+      // Windows 인쇄 대화상자로 바로 (쪽 그림을 숨은 창에 그려 인쇄). 못 하면 PDF를 기본 PDF 앱으로
+      if (typeof toPrint === 'function') return await toPrint(bytes, entry.win);
+      return await printPdf(entry, await toPdf(bytes));
+    } finally { entry.printing = false; entry.lastPrintAt = Date.now(); }
+  }, { kinds: ['hwp'] });
 
   async function printPdf(entry, pdf) {
     if (!entry.printAllowed) {
@@ -856,7 +886,7 @@ export function createEditorManager({
       const st = statOf(target);
       if (keyOf(target) === entry.key) entry.known = { mtimeMs: st?.mtimeMs ?? 0, size: buf.length, hash: hashOf(buf), missing: false };
       // 정상 저장 → 복구 사본은 필요 없다 (복구 / 버리기를 아직 고르지 않았으면 남긴다)
-      if (entry.kind === 'office' && keyOf(target) === entry.key && !entry.draftPending) removeDraft(target);
+      if (keyOf(target) === entry.key && !entry.draftPending) removeDraft(target);
       log(`저장: ${target} (${buf.length}바이트)`);
       try { onSaved?.(target); } catch (err) { log('onSaved 오류:', err); }
       const res = { name, ext: extOf(target), size: buf.length, mtimeMs: st?.mtimeMs ?? null, backup };
@@ -930,7 +960,7 @@ export function createEditorManager({
     if (!d || d.size === 0 || d.size > maxBytes) return null;
     try {
       const bytes = new Uint8Array(readFileSync(file));
-      if (checkOoxmlBytes(bytes, extOf(entry.path))) return null;
+      if (entry.kind === 'office' ? checkOoxmlBytes(bytes, extOf(entry.path)) : !bytesMatchExt(bytes, extOf(entry.path))) return null;
       return { bytes, size: bytes.length, mtimeMs: d.mtimeMs };
     } catch { return null; }
   }
@@ -1212,6 +1242,16 @@ export function createEditorManager({
       } else if (code === 'KeyW' && !input.shift) {
         e.preventDefault();
         win.close();
+      } else if (code === 'KeyP' && !input.shift && entry.kind === 'hwp') {
+        // 한글 편집기는 인쇄를 꺼 두었다 → host가 PDF를 만들어 인쇄 (Office 편집기는 자기 인쇄를 쓴다)
+        e.preventDefault();
+        void ask(entry, 'editor:command', { command: 'print' }, SAVE_TIMEOUT_MS);
+      } else if (code === 'KeyO' && !input.shift) {
+        e.preventDefault();
+        try { onOpenRequest?.(win); } catch (err) { log('onOpenRequest 오류:', err); }
+      } else if (code === 'KeyN' && !input.shift) {
+        e.preventDefault();
+        try { onNewRequest?.(win); } catch (err) { log('onNewRequest 오류:', err); }
       }
     });
     wc.on('render-process-gone', (_e, d) => {
@@ -1243,7 +1283,7 @@ export function createEditorManager({
       if (entries.get(entry.key) === entry) entries.delete(entry.key);
       for (const [id, p] of pending) if (p.entry === entry) { clearTimeout(p.timer); pending.delete(id); p.resolve(null); }
       // 정상 닫기 → 복구 사본을 지운다. 단 '복구 / 버리기'에 아직 답하지 않았으면 남긴다 (다음에 열 때 다시 묻는다)
-      if (office && entry.cleanClose && !entry.draftPending) removeDraft(entry.path);
+      if (entry.cleanClose && !entry.draftPending) removeDraft(entry.path);
       // 옛 형식에서 바꿔 연 임시 사본은 저장하지 않고 닫으면 지운다 (원본은 그대로)
       if (entry.convertedFrom) { try { rmSync(dirname(entry.path), { recursive: true, force: true }); } catch {} }
       entry.win = null;
