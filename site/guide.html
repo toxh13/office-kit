@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>사용 안내, Office Kit</title>
+<meta name="description" content="Office Kit 설치부터 직접 편집, AI 대화, 개인정보 가리기, Claude Code 연결까지 사용 방법.">
+<link rel="icon" href="images/icon.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+<header class="nav">
+  <div class="container nav__inner">
+    <a class="brand" href="./"><img src="images/icon.png" alt="" width="30" height="30">Office Kit</a>
+    <ul class="nav__links">
+      <li><a href="guide.html" aria-current="page">사용 안내</a></li>
+      <li class="hide-s"><a href="https://github.com/toxh13/office-kit">GitHub</a></li>
+      <li class="hide-s"><a href="en/" lang="en">English</a></li>
+      <li><a class="btn btn--primary btn--s" href="https://github.com/toxh13/office-kit/releases/latest">내려받기</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container guide">
+  <nav class="toc" aria-label="목차">
+    <p>목차</p>
+    <ol>
+      <li><a href="#install">설치</a></li>
+      <li><a href="#open">문서 열기</a></li>
+      <li><a href="#edit">직접 편집</a></li>
+      <li><a href="#ai">AI 대화</a></li>
+      <li><a href="#versions">버전과 되돌리기</a></li>
+      <li><a href="#new">새 문서</a></li>
+      <li><a href="#pii">개인정보 가리기</a></li>
+      <li><a href="#pdf">PDF 도구</a></li>
+      <li><a href="#mcp">Claude Code에서 쓰기</a></li>
+      <li><a href="#cli">명령줄</a></li>
+      <li><a href="#hancom">한글 자동화 연결</a></li>
+      <li><a href="#data">데이터 안내</a></li>
+      <li><a href="#limits">알아 둘 점</a></li>
+    </ol>
+  </nav>
+
+  <main id="main" class="doc">
+    <h1>사용 안내</h1>
+    <p class="lead">설치부터 자주 쓰는 기능까지 순서대로 정리했습니다.</p>
+
+    <section id="install" aria-labelledby="h-install">
+      <h2 id="h-install">설치</h2>
+      <ol>
+        <li><a href="https://github.com/toxh13/office-kit/releases/latest">Releases</a>에서 <code>OfficeKit-Setup-&lt;버전&gt;.exe</code>를 받습니다.</li>
+        <li>실행합니다. 관리자 권한 없이 내 계정에만 설치됩니다.</li>
+        <li>“Windows의 PC 보호” 창이 뜨면 <strong>추가 정보</strong>를 누르고 <strong>실행</strong>을 고릅니다. 설치 파일에 코드 서명이 없어서 뜨는 경고입니다.</li>
+      </ol>
+      <table>
+        <thead><tr><th scope="col">항목</th><th scope="col">내용</th></tr></thead>
+        <tbody>
+          <tr><td>필요</td><td>Windows 10 또는 11 (64비트)</td></tr>
+          <tr><td>AI 대화 (선택)</td><td>직접 설치하고 로그인한 Claude Code 또는 Codex</td></tr>
+          <tr><td>더 정확한 처리 (선택)</td><td>한컴오피스, Word·Excel·PowerPoint. 없으면 내장 엔진으로 읽고 고칩니다.</td></tr>
+          <tr><td>다루는 형식</td><td>hwp hwpx hwt, docx doc rtf odt, pptx ppt odp, xlsx xls xlsm csv ods, pdf</td></tr>
+        </tbody>
+      </table>
+      <p>지울 때는 Windows 설정의 앱 목록에서 “Office Kit”을 제거합니다. 설정과 문서 버전은 <code>%APPDATA%\office-kit</code>에 남으니 필요 없으면 직접 지웁니다.</p>
+    </section>
+
+    <section id="open" aria-labelledby="h-open">
+      <h2 id="h-open">문서 열기</h2>
+      <ul>
+        <li>창에 끌어다 놓거나, <strong>파일 열기</strong>를 누르거나, 탐색기에서 오른쪽 클릭 후 <strong>Office Kit로 열기</strong>를 고릅니다.</li>
+        <li>한글·Word·Excel·PowerPoint 문서는 열면 고칠 수 있는 편집 창이 바로 뜹니다. 설정의 <strong>파일 열기</strong>에서 “미리보기만”으로 바꿀 수 있습니다.</li>
+        <li>기본 프로그램으로 쓰려면 설정의 <strong>파일 열기</strong>에서 <strong>Windows 기본 앱 설정 열기</strong>를 눌러 형식마다 Office Kit을 고릅니다.</li>
+      </ul>
+      <figure class="shot"><img src="images/main.png" width="1783" height="974" loading="lazy" alt="주 창. 왼쪽 미리보기와 오른쪽 AI 도우미 창."></figure>
+    </section>
+
+    <section id="edit" aria-labelledby="h-edit">
+      <h2 id="h-edit">직접 편집</h2>
+      <p>문서를 연 뒤 <strong>직접 편집</strong>(<kbd>Ctrl</kbd>+<kbd>E</kbd>)을 누르면 문서마다 편집 창이 하나 열립니다. 편집기는 앱 안에 들어 있어 인터넷 없이 동작하고, 앱 밖으로 나가는 요청은 막습니다.</p>
+      <h3>한글 (hwp, hwpx)</h3>
+      <p><kbd>Ctrl</kbd>+<kbd>S</kbd>로 원래 형식 그대로 저장합니다. 덮어쓰기 전 내용은 백업으로 남습니다.</p>
+      <figure class="shot"><img src="images/edit-hwp.png" width="1583" height="974" loading="lazy" alt="한글 편집 창."></figure>
+      <h3>Word, Excel, PowerPoint (docx, xlsx, pptx)</h3>
+      <p>형식에 따라 문서·표·슬라이드 편집 창이 열립니다. 이 PC에 설치된 글꼴을 씁니다. 매크로 문서와 옛 형식은 <strong>프로그램에서 열기</strong>로 설치된 Office에서 고칩니다.</p>
+      <figure class="shot"><img src="images/edit-xlsx.png" width="1583" height="974" loading="lazy" alt="표 편집 창에서 Excel 예산표를 고치는 화면."></figure>
+    </section>
+
+    <section id="ai" aria-labelledby="h-ai">
+      <h2 id="h-ai">AI 대화</h2>
+      <p>오른쪽 <strong>AI 도우미</strong> 창에 할 일을 씁니다. 예: “표 2행 금액 합계 넣어줘”, “{{담당자}}를 홍길동으로 채워줘”, “이 문서 PDF로 저장해줘”.</p>
+      <ul>
+        <li>AI는 Office Kit 문서 도구만 씁니다. 명령 실행이나 웹 접속은 하지 않습니다.</li>
+        <li>AI는 저장된 파일을 고칩니다. 편집 창에 저장 안 한 내용이 있으면 보내기 전에 묻습니다.</li>
+      </ul>
+      <figure class="shot"><img src="images/ai-chat.png" width="1783" height="974" loading="lazy" alt="AI 도우미 창의 대화 예시."><figcaption>대화 화면 예시</figcaption></figure>
+      <h3>AI 프로그램 준비</h3>
+      <p>Office Kit은 로그인 정보를 다루지 않습니다. 내 PC에 설치하고 로그인한 프로그램을 그대로 실행합니다.</p>
+      <table>
+        <thead><tr><th scope="col">AI</th><th scope="col">준비</th></tr></thead>
+        <tbody>
+          <tr><td>Claude</td><td><a href="https://code.claude.com/docs">Claude Code</a>를 설치하고, 터미널에서 <code>claude</code>를 한 번 실행해 내 계정으로 로그인</td></tr>
+          <tr><td>Codex</td><td><code>npm i -g @openai/codex</code>로 설치하고 <code>codex login</code>으로 내 ChatGPT 계정 로그인</td></tr>
+        </tbody>
+      </table>
+      <p>설정의 <strong>AI</strong>에서 어느 쪽을 쓸지 고릅니다.</p>
+      <figure class="shot"><img src="images/settings-ai.png" width="1783" height="974" loading="lazy" alt="설정 창의 AI 프로그램 선택 화면. Claude와 Codex가 설치됨으로 표시된다."></figure>
+    </section>
+
+    <section id="versions" aria-labelledby="h-versions">
+      <h2 id="h-versions">버전과 되돌리기</h2>
+      <ul>
+        <li>문서를 열 때, 편집 창에서 저장하기 전, AI가 고치기 전마다 버전을 저절로 남깁니다 (문서마다 최근 30개).</li>
+        <li>위쪽 <strong>원래대로</strong>는 마지막 변경 전으로 되돌립니다. 옆 <strong>▾</strong>에서 버전 목록을 보고 원하는 때로 되돌립니다.</li>
+        <li><strong>바뀐 내용</strong>은 그 버전 뒤로 바뀐 글을 빨강·초록으로 보여 줍니다. 서식과 그림 변화는 나오지 않습니다.</li>
+      </ul>
+    </section>
+
+    <section id="new" aria-labelledby="h-new">
+      <h2 id="h-new">새 문서</h2>
+      <p><strong>새 문서</strong>(<kbd>Ctrl</kbd>+<kbd>N</kbd>)에서 형식, 이름, 저장 위치를 고르고 시작 방법을 정합니다. 빈 문서, 서식 파일(회의록, 기안문, 이력서, 예산표 등), 또는 AI에게 내용 부탁하기가 있습니다.</p>
+      <figure class="shot"><img src="images/new-doc.png" width="1783" height="974" loading="lazy" alt="새 문서 만들기 창."></figure>
+    </section>
+
+    <section id="pii" aria-labelledby="h-pii">
+      <h2 id="h-pii">개인정보 가리기</h2>
+      <p>위쪽 도구 단추에서 <strong>개인정보 찾아 가리기</strong>를 고릅니다. 주민·외국인등록번호, 휴대전화·전화번호, 이메일, 카드번호, 계좌번호, 여권번호, 운전면허번호를 찾습니다. 고른 것만 가린 사본을 원본 옆에 <code>&lt;이름&gt;_가림</code>으로 만듭니다.</p>
+      <p class="note">글자 규칙으로 찾으므로 그림 속 글자나 띄어 쓴 번호는 놓칠 수 있습니다. 남에게 보내기 전에 가린 사본을 꼭 열어 확인하세요.</p>
+      <figure class="shot"><img src="images/pii.png" width="1783" height="974" loading="lazy" alt="개인정보 찾아 가리기 창에서 찾은 항목 목록."></figure>
+    </section>
+
+    <section id="pdf" aria-labelledby="h-pdf">
+      <h2 id="h-pdf">PDF 도구</h2>
+      <ul>
+        <li><strong>PDF로 저장</strong>: 한글 문서는 한컴오피스가 없어도 내장 엔진으로 저장합니다. Word·Excel·PowerPoint 문서는 그 프로그램이 있어야 합니다.</li>
+        <li><strong>PDF 합치기·나누기·돌리기</strong>: 여러 PDF를 하나로, 필요한 쪽만 뽑기, 쪽 지우기, 돌리기. 원본은 그대로 두고 새 파일로 저장합니다.</li>
+        <li><strong>한글 → HWPX 일괄 변환</strong>: 폴더째 바꾸고, 바꾼 파일의 쪽 수·표·글이 원본과 같은지 확인합니다.</li>
+      </ul>
+      <figure class="shot"><img src="images/pdf-tools.png" width="1783" height="974" loading="lazy" alt="PDF 도구 창."></figure>
+    </section>
+
+    <section id="mcp" aria-labelledby="h-mcp">
+      <h2 id="h-mcp">Claude Code, Claude Desktop, Codex에서 쓰기</h2>
+      <p>Office Kit 문서 도구를 다른 AI 앱에 연결(MCP)할 수 있습니다. 앱 설정의 <strong>외부 연결</strong>에서 켜고 그 프로그램을 다시 시작하면 됩니다. 명령줄로도 됩니다.</p>
+<pre><code>office-kit setup claude-code
+office-kit setup claude-desktop
+office-kit setup codex
+office-kit setup codex --remove</code></pre>
+      <p>설정 파일을 고칠 때마다 같은 폴더에 백업을 남깁니다. PC에 Node.js가 없어도 됩니다.</p>
+    </section>
+
+    <section id="cli" aria-labelledby="h-cli">
+      <h2 id="h-cli">명령줄</h2>
+      <p>설정의 <strong>외부 연결</strong>에서 <strong>명령줄</strong>을 켜면 새 터미널부터 <code>office-kit</code>을 쓸 수 있습니다.</p>
+      <table>
+        <thead><tr><th scope="col">명령</th><th scope="col">하는 일</th></tr></thead>
+        <tbody>
+          <tr><td><code>office-kit text 보고서.hwp</code></td><td>글자 출력</td></tr>
+          <tr><td><code>office-kit fill 신청서.hwpx 값.json -o 채움.hwpx</code></td><td>칸 채우기</td></tr>
+          <tr><td><code>office-kit convert 보고서.hwp 보고서.pdf</code></td><td>형식 변환</td></tr>
+          <tr><td><code>office-kit new 원고.md 새문서.hwpx</code></td><td>마크다운 원고로 새 문서</td></tr>
+          <tr><td><code>office-kit pii 명단.xlsx --mask</code></td><td>개인정보 가린 사본</td></tr>
+          <tr><td><code>office-kit help</code></td><td>전체 도움말</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="hancom" aria-labelledby="h-hancom">
+      <h2 id="h-hancom">한글 자동화 연결 (선택)</h2>
+      <p>한컴오피스가 있다면 한컴의 보안 승인 모듈을 등록해 원본과 똑같은 미리보기와 PDF를 얻을 수 있습니다. 설정의 <strong>한글 자동화</strong>에서 <strong>한글 자동화 연결</strong>을 누르면 한컴 공식 저장소에서 받아 등록합니다. 이 모듈은 Office Kit에 들어 있지 않고, 단추를 눌렀을 때만 받습니다.</p>
+    </section>
+
+    <section id="data" aria-labelledby="h-data">
+      <h2 id="h-data">데이터 안내</h2>
+      <ul>
+        <li>Office Kit 자체에는 서버가 없고 사용 기록을 모으지 않습니다. 자동 업데이트도 없습니다.</li>
+        <li>AI 대화를 쓰면 문서 내용이 내 계정으로 Anthropic(Claude Code) 또는 OpenAI(Codex)에 전송됩니다. 각 회사의 약관과 개인정보 처리 방침을 따릅니다.</li>
+        <li>개인정보 가리기, PDF 도구, 직접 편집은 인터넷 없이 이 PC 안에서만 동작합니다.</li>
+      </ul>
+    </section>
+
+    <section id="limits" aria-labelledby="h-limits">
+      <h2 id="h-limits">알아 둘 점</h2>
+      <ul>
+        <li>Windows 전용입니다.</li>
+        <li>앱 안 편집기는 한컴오피스나 Microsoft Office와 같지 않습니다. 복잡한 서식 문서는 저장 뒤 확인하거나 <strong>프로그램에서 열기</strong>로 고치세요.</li>
+        <li>내장 엔진의 미리보기와 PDF는 원래 프로그램과 글꼴·줄바꿈이 조금 다를 수 있습니다.</li>
+        <li>새 버전은 Releases에서 받아 덮어 설치합니다.</li>
+        <li>문제를 찾으면 <a href="https://github.com/toxh13/office-kit/issues">GitHub Issues</a>에 알려 주세요.</li>
+      </ul>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <div class="container footer__grid">
+    <div>
+      <a class="brand" href="./"><img src="images/icon.png" alt="" width="30" height="30">Office Kit</a>
+      <ul class="footer__links">
+        <li><a href="./">소개</a></li>
+        <li><a href="https://github.com/toxh13/office-kit">소스 코드 (GitHub)</a></li>
+        <li><a href="https://github.com/toxh13/office-kit/releases">모든 버전</a></li>
+      </ul>
+    </div>
+    <div>
+      <p>Office Kit은 무료 오픈소스이며 아무런 보증이 없습니다. 앱 코드는 MIT이고, 함께 담긴 문서 편집기(ONLYOFFICE Docs 기반 수정판)가 GNU AGPL 3판이라 설치된 앱 전체는 AGPL 조건으로 배포합니다. 자세한 내용은 <a href="https://github.com/toxh13/office-kit/blob/main/LICENSE">라이선스 문서</a>에 있습니다.</p>
+      <p>ONLYOFFICE는 Ascensio System SIA의, Word·Excel·PowerPoint는 Microsoft의, 한컴·한글·HWP는 한글과컴퓨터의 상표입니다. Office Kit은 이들 회사와 관계가 없습니다.</p>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

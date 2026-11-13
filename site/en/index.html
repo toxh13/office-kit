@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Office Kit, a document tool for HWP and Office files</title>
+<meta name="description" content="Open, edit and ask AI about Hangul (HWP, HWPX), Word, Excel and PowerPoint documents in one free Windows app.">
+<link rel="icon" href="../images/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="container nav__inner">
+    <a class="brand" href="./"><img src="../images/icon.png" alt="" width="30" height="30">Office Kit</a>
+    <ul class="nav__links">
+      <li class="hide-s"><a href="https://github.com/toxh13/office-kit/blob/main/README.en.md">Docs</a></li>
+      <li class="hide-s"><a href="../" lang="ko">한국어</a></li>
+      <li><a class="btn btn--primary btn--s" href="https://github.com/toxh13/office-kit/releases/latest">Download</a></li>
+    </ul>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="container">
+      <h1>Hangul and Word files, one window</h1>
+      <p class="hero__lead">A free Windows app to open, edit and ask AI about documents.</p>
+      <div class="hero__actions">
+        <a class="btn btn--primary" href="https://github.com/toxh13/office-kit/releases/latest">Download for Windows</a>
+        <a class="btn btn--ghost" href="https://github.com/toxh13/office-kit/blob/main/README.en.md">Read the docs</a>
+      </div>
+      <figure class="shot hero__shot">
+        <img src="../images/main.png" width="1783" height="974" alt="The Office Kit main window with a Korean form previewed on the left and the AI assistant on the right." fetchpriority="high">
+        <figcaption>Screens shown in Korean; the app also runs in English and Japanese.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="section section--tint" aria-labelledby="edit-h">
+    <div class="container split">
+      <div class="split__text">
+        <h2 id="edit-h">Edit without Hancom Office or Microsoft Office</h2>
+        <ul class="facts">
+          <li>Built-in editors for HWP, HWPX, DOCX, XLSX and PPTX work offline.</li>
+          <li>If Hancom Office or Microsoft Office is installed, Office Kit uses it for exact output.</li>
+          <li>Every change keeps a version you can restore.</li>
+        </ul>
+      </div>
+      <figure class="shot"><img src="../images/edit-docx.png" width="1583" height="974" loading="lazy" alt="The document editor window editing a Word file."></figure>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="ai-h">
+    <div class="container split split--flip">
+      <div class="split__text">
+        <h2 id="ai-h">Ask in plain words, with your own AI login</h2>
+        <p class="section__lead">Office Kit runs the Claude Code or Codex you installed and signed in to. It never handles your credentials.</p>
+      </div>
+      <figure class="shot"><img src="../images/ai-chat.png" width="1783" height="974" loading="lazy" alt="The AI assistant panel after filling a field in a document."><figcaption>An example conversation.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="section section--tint" aria-labelledby="pii-h">
+    <div class="container split">
+      <div class="split__text">
+        <h2 id="pii-h">Mask personal data before you share</h2>
+        <p class="section__lead">Finds Korean resident numbers, phone numbers, emails, card and account numbers, then writes a masked copy beside the original. Offline. Pattern based, so always check the copy.</p>
+      </div>
+      <figure class="shot"><img src="../images/pii.png" width="1783" height="974" loading="lazy" alt="The personal data finder listing ten matches and how each will be masked."></figure>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="inst-h">
+    <div class="container">
+      <h2 id="inst-h">Install</h2>
+      <table class="reqs">
+        <thead><tr><th scope="col">Item</th><th scope="col">Details</th></tr></thead>
+        <tbody>
+          <tr><td>Required</td><td>Windows 10 or 11, 64-bit</td></tr>
+          <tr><td>AI chat (optional)</td><td>Claude Code or Codex, installed and signed in by you</td></tr>
+          <tr><td>Exact output (optional)</td><td>Hancom Office, Word, Excel, PowerPoint</td></tr>
+        </tbody>
+      </table>
+      <p class="note">The installer is not code-signed yet. If Windows shows “Windows protected your PC”, choose More info, then Run anyway.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="container footer__grid">
+    <div>
+      <a class="brand" href="./"><img src="../images/icon.png" alt="" width="30" height="30">Office Kit</a>
+      <ul class="footer__links">
+        <li><a href="https://github.com/toxh13/office-kit">Source code</a></li>
+        <li><a href="https://github.com/toxh13/office-kit/releases">All releases</a></li>
+        <li><a href="https://github.com/toxh13/office-kit/issues">Report a problem</a></li>
+      </ul>
+    </div>
+    <div>
+      <p>Free and open source, with no warranty. Office Kit’s own code is MIT; the bundled office editor (a modified ONLYOFFICE Docs) is GNU AGPL v3, so the installed app as a whole is distributed under AGPL terms. Source is on GitHub and attached to each release.</p>
+      <p>When you use AI chat, document content is sent to Anthropic or OpenAI under your own account. Office Kit itself has no server and collects no usage data.</p>
+      <p>ONLYOFFICE is a trademark of Ascensio System SIA; Word, Excel and PowerPoint are trademarks of Microsoft; Hancom, Hangul and HWP are trademarks of Hancom Inc. Office Kit is not affiliated with them.</p>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
