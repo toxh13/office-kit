@@ -41,7 +41,7 @@ The installer adds shortcuts, an **"Open with Office Kit"** context-menu entry a
 
 ![Hangul editor](site/images/edit-hwp.png)
 
-**Edit Word, Excel and PowerPoint files in the app** — editor based on ONLYOFFICE Docs, offline, no Microsoft Office needed.
+**Edit Word, Excel and PowerPoint files in the app** — built-in editor (see License for its origin), offline, no Microsoft Office needed.
 
 | Document (docx) | Spreadsheet (xlsx) | Slides (pptx) |
 |---|---|---|
@@ -113,7 +113,7 @@ More details (in Korean): [README.md](README.md), [docs/FEATURES.md](docs/FEATUR
 
 ## License
 
-- Office Kit's own source files: [MIT](LICENSE) © toxh13. Bundled third-party components and their licenses are listed in [LICENSE](LICENSE).
+- Office Kit's own source files: [MIT](LICENSE) © toxh13. Bundled third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
 - **AGPL parts**: the office editor bundle (`vendor/office-editor/`, a modified ONLYOFFICE Docs Community Edition 9.4.0 with filex-office-editor) and files marked `SPDX-License-Identifier: AGPL-3.0-*` (filex patches, the font list generator) are under the **GNU AGPL v3** ([text](LICENSES/AGPL-3.0.txt), [ONLYOFFICE additional terms](LICENSES/ONLYOFFICE-additional-terms.txt)).
 - Because the AGPL font list generator is loaded into the app's main process, **the installed application as a whole is distributed under the AGPL-3.0**. Its complete source is this repository at the matching release tag, plus the `office-editor-source-<version>.zip` attached to each Release. Details: [docs/LICENSES-OFFICE-EDITOR.md](docs/LICENSES-OFFICE-EDITOR.md).
 - PDF.js (inside unpdf) is under the Apache License 2.0 ([text](LICENSES/Apache-2.0.txt)).

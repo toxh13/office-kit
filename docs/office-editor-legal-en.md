@@ -37,6 +37,7 @@ This editor window (Document editor · Spreadsheet editor · Slide editor) is ba
 - Office Kit source: [github.com/toxh13/office-kit (v{{appVersion}})](https://github.com/toxh13/office-kit/tree/v{{appVersion}})
 - filex-office-editor v0.3.1: [github.com/BRF-Tech/filex-office-editor](https://github.com/BRF-Tech/filex-office-editor/tree/v0.3.1)
 - ONLYOFFICE original source (tag `v9.4.0.129`): [sdkjs](https://github.com/ONLYOFFICE/sdkjs/tree/v9.4.0.129) · [web-apps](https://github.com/ONLYOFFICE/web-apps/tree/v9.4.0.129) · [core](https://github.com/ONLYOFFICE/core/tree/v9.4.0.129) · [build_tools](https://github.com/ONLYOFFICE/build_tools/tree/v9.4.0.129)
+- Upstream source copy (source archives of ONLYOFFICE, filex and x2t at the exact commits used, kept in case the original tags go away): [office-kit-upstream](https://github.com/toxh13/office-kit-upstream/releases/tag/office-editor-9.4.0.129)
 - The x2t converter is built from ONLYOFFICE core `v9.4.0.129` plus CryptPad's WebAssembly patches and BRF Tech's patches. How to build it is in `UPSTREAM.md` in the source package.
 
 ## Trademarks

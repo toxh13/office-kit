@@ -49,6 +49,7 @@ office-editor-legal-ko.md — Office 편집 창 '정보 · 라이선스' 대화�
 - Office Kit 소스: [github.com/toxh13/office-kit (v{{appVersion}})](https://github.com/toxh13/office-kit/tree/v{{appVersion}})
 - filex-office-editor v0.3.1: [github.com/BRF-Tech/filex-office-editor](https://github.com/BRF-Tech/filex-office-editor/tree/v0.3.1)
 - ONLYOFFICE 원본 소스 (태그 `v9.4.0.129`): [sdkjs](https://github.com/ONLYOFFICE/sdkjs/tree/v9.4.0.129) · [web-apps](https://github.com/ONLYOFFICE/web-apps/tree/v9.4.0.129) · [core](https://github.com/ONLYOFFICE/core/tree/v9.4.0.129) · [build_tools](https://github.com/ONLYOFFICE/build_tools/tree/v9.4.0.129)
+- 위쪽 소스 사본 (ONLYOFFICE·filex·x2t를 이룬 커밋 그대로의 소스 압축본, 원본 태그가 사라져도 받을 수 있게): [office-kit-upstream](https://github.com/toxh13/office-kit-upstream/releases/tag/office-editor-9.4.0.129)
 - 변환기 x2t는 ONLYOFFICE core `v9.4.0.129`에 CryptPad의 WebAssembly 패치와 BRF Tech의 패치를 더해 만든 것입니다. 만드는 방법은 소스 꾸러미의 `UPSTREAM.md`에 있습니다.
 
 ## 상표

@@ -260,6 +260,15 @@
             ],
             [
               {
+                "text": "Upstream source copy (source archives of ONLYOFFICE, filex and x2t at the exact commits used, kept in case the original tags go away): "
+              },
+              {
+                "text": "office-kit-upstream",
+                "href": "https://github.com/toxh13/office-kit-upstream/releases/tag/office-editor-9.4.0.129"
+              }
+            ],
+            [
+              {
                 "text": "The x2t converter is built from ONLYOFFICE core "
               },
               {

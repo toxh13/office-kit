@@ -62,7 +62,7 @@
 
 ### Word · Excel · PowerPoint 직접 편집
 
-docx·xlsx·pptx도 **직접 편집**으로 앱 안 편집 창(ONLYOFFICE Docs 기반)에서 고친다. **인터넷 없이, Microsoft Office 없이** 동작한다.
+docx·xlsx·pptx도 **직접 편집**으로 앱 안 편집 창(출처는 아래 라이선스 절)에서 고친다. **인터넷 없이, Microsoft Office 없이** 동작한다.
 
 | 문서 (docx) | 표 (xlsx) | 슬라이드 (pptx) |
 |---|---|---|
@@ -295,7 +295,7 @@ office-kit setup codex --remove     # 연결 해제 (다른 대상도 같음)
 ## 라이선스
 
 [MIT](LICENSE) © toxh13. 함께 배포하는 오픈소스(rhwp·rhwp-studio·@rhwp/editor — MIT, Edward Kim 외 / CanvasKit — BSD-3-Clause / @noble/hashes — MIT / pdf-lib — MIT / unpdf — MIT, 그 안의 PDF.js — Apache-2.0)는
-[LICENSE](LICENSE)의 THIRD-PARTY 항목과 `vendor/rhwp-studio/THIRD_PARTY_LICENSES.md` 참고. Apache-2.0 전문: [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
+[`THIRD-PARTY-NOTICES.txt`](THIRD-PARTY-NOTICES.txt)와 `vendor/rhwp-studio/THIRD_PARTY_LICENSES.md` 참고. Apache-2.0 전문: [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
 한글→PDF 변환 프로그램 `vendor/rhwp-cli/rhwp.exe`는 rhwp v0.8.7 Release의 바이너리 그대로다 (MIT, `vendor/rhwp-cli/`에 LICENSE·THIRD_PARTY_LICENSES.md 동봉).
 
 **예외 — AGPL인 것**: 문서·표·슬라이드 편집 창의 편집기 묶음 `vendor/office-editor/`와, 이 저장소에서 머리에

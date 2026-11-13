@@ -479,6 +479,8 @@ export function createBridge({ getDoc, getTheme = () => 'light', version = '', a
 // ── 정보 · 라이선스 (설계 8장) ─────────────────────────
 
 const GH = 'https://github.com';
+// 위쪽 소스 사본 (docs/LICENSES-OFFICE-EDITOR.md 9절)
+const UPSTREAM_MIRROR = 'https://github.com/toxh13/office-kit-upstream/releases/tag/office-editor-9.4.0.129';
 const OFFICE_KIT_REPO = `${GH}/toxh13/office-kit`;
 const short = (s, n = 12) => (typeof s === 'string' && s.length > n ? s.slice(0, n) : s);
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : typeof v === 'number' ? String(v) : null);
@@ -649,6 +651,8 @@ export function aboutModel(about, appUrl, legal = null) {
   }
   add(appVersion ? `Office Kit v${appVersion} 릴리스 (소스 꾸러미 office-editor-source-*.zip)` : 'Office Kit 릴리스 (소스 꾸러미)',
     appVersion ? `${OFFICE_KIT_REPO}/releases/tag/v${appVersion}` : `${OFFICE_KIT_REPO}/releases`);
+  // 위쪽 소스 사본: ONLYOFFICE·filex·x2t를 이룬 커밋 그대로의 소스 압축본 (위쪽 태그가 사라져도 받을 수 있게)
+  add('위쪽 소스 사본 (ONLYOFFICE·filex·x2t를 이룬 커밋 그대로)', UPSTREAM_MIRROR);
   const tag = oo.sourceTag;
   add(`ONLYOFFICE sdkjs${tag ? ` ${tag}` : ''}`, `${GH}/ONLYOFFICE/sdkjs${tag ? `/tree/${tag}` : ''}`);
   add(`ONLYOFFICE web-apps${tag ? ` ${tag}` : ''}`, `${GH}/ONLYOFFICE/web-apps${tag ? `/tree/${tag}` : ''}`);

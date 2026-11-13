@@ -11,10 +11,10 @@
   - 그 전문은 저장소의 `LICENSES/AGPL-3.0.txt`(filex `LICENSE`와 같은 바이트), 추가 조항은 `LICENSES/ONLYOFFICE-additional-terms.txt`(core `v9.4.0.129` `LICENSE` 끝부분 그대로).
 - **설치 파일을 남에게 주는 것 = AGPL 6조의 '목적 코드 배포'** → 소스를 줄 의무가 생긴다.
   - 릴리스마다 `office-editor-source-<버전>.zip`을 같은 Release에 붙인다 (`scripts/make-office-source.mjs`).
-  - ONLYOFFICE 원본 소스는 정확한 태그 주소 + **우리 거울 저장소**(아직 없음 — 할 일).
+  - ONLYOFFICE 원본 소스는 정확한 태그 주소 + **우리 거울**(9절, `toxh13/office-kit-upstream`).
 - 편집 창 위 막대의 **`정보 · 라이선스`** 가 ONLYOFFICE 추가 조항 3의 화면 고지다. 편집기 안 로고·'정보'는 지우지 않는다.
 - **'ONLYOFFICE'는 사실을 말할 때만** 쓴다 ("ONLYOFFICE Docs 기반"). 제품·창·메뉴·기능 이름, 설치 파일, 아이콘에는 쓰지 않는다.
-- **다음 행동 하나**: 아래 '배포 전 체크리스트'의 법률 검토와 거울 저장소를 사람이 처리한다.
+- **다음 행동 하나**: 아래 '배포 전 체크리스트'의 법률 검토를 사람이 처리한다.
 
 ---
 
@@ -43,7 +43,7 @@
 - 그래서 편집기 묶음과 Office Kit 앱은 MIT 프로그램과 AGPL 프로그램을 **함께 담은 것**(AGPL 5조 '집합물')으로 본다 — **검토 대상**이다.
 - **예외 — 글꼴 목록 생성기**: `src/app/office-editor/fonts/`(AGPL-3.0-only)는 Office Kit **메인 프로세스 안에서** `import`된다 (`src/app/editor-window.mjs`). 메시지로만 말하는 경계가 아니므로, **설치된 앱 전체는 AGPL-3.0 조건으로 배포한다**고 보고 그에 맞춘다:
   - 이 저장소를 공개하고, Release 태그마다 앱 전체 소스(= 그 태그의 저장소)를 받을 수 있게 둔다. 편집기 쪽은 지금처럼 `office-editor-source-<버전>.zip`.
-  - Office Kit이 직접 쓴 MIT 파일은 따로 떼어 MIT로 다시 쓸 수 있다 (`LICENSE` 첫머리).
+  - Office Kit이 직접 쓴 MIT 파일은 따로 떼어 MIT로 다시 쓸 수 있다 (`LICENSE`, 제3자·AGPL 범위는 `THIRD-PARTY-NOTICES.txt`).
   - 나중에 생성기를 자식 프로세스(`utilityProcess`)로 떼어 JSON으로만 주고받게 하면 다시 '집합물'로 돌아갈 수 있다 — 11절 질문 목록에 넣어 둔다.
 - 경계를 지키는 규칙:
   - ONLYOFFICE·filex·CryptPad 코드를 옮기거나 고친 파일은 AGPL로 둔다 (위 표의 두 종류). 실험(`tmp/spike-*`)에서 코드를 가져올 때도 같다.
@@ -68,7 +68,7 @@
 GitHub Release로 설치 파일을 올리는 것도, 메일·USB·사내 서버로 주는 것도 배포다.
 
 - [ ] **법률 검토** (11절 질문 목록을 들고)
-- [ ] **거울 저장소** 만들기 (9절 — 스크립트는 만들지 않는다, 사람이 한다)
+- [x] **거울 저장소** (9절 — `toxh13/office-kit-upstream`, 2026-11-13)
 - [ ] Release에 `office-editor-source-<버전>.zip`과 `.sha256`이 붙었는지 (CI가 확인하지만 눈으로도)
 - [ ] 꾸러미의 `MANIFEST.json`이 `"complete": true`인지 (`--allow-missing`으로 만든 개발용이 아닌지), `officeKit.dirty`가 `false`인지
 - [ ] 설치한 앱에서 Office 편집 창 → **`정보 · 라이선스`** 를 열어 본다: 원 개발사, 수정판 안내, 라이선스 전문(LICENSE.txt), 소스 주소가 **설치된 버전의 태그**를 가리키는지
@@ -134,43 +134,35 @@ node scripts/make-office-source.mjs --dry-run --allow-missing   # 확인만 (개
 - 편집기 파일은 공식 Docker 이미지 `docker.io/onlyoffice/documentserver:9.4.0.1` (`sha256:3ab6ebc7…88212`)에서 꺼낸 것이다.
 - 앱 안 링크는 **설치된 버전의 태그**를 가리킨다 (`{{appVersion}}`).
 
-## 9. 거울 저장소 — 할 일 (아직 없음)
+## 9. 거울 저장소 (위쪽 소스 사본)
 
 위쪽 태그가 지워지거나 옮겨져도, 이 판을 배포하는 동안 소스를 줄 수 있게 둔다 (AGPL 6조: 소스가 다른 서버에 있어도 **계속 받을 수 있게 할 책임은 배포하는 쪽**).
-Office Kit 스크립트·에이전트는 거울·포크를 만들지 않는다. 사람이 만들고 아래 표의 주소 칸을 채운다.
+2026-11-13: 아래 모두를 **커밋 그대로의 소스 압축본**(GitHub `codeload` tar.gz, 내려받은 파일은 그대로)으로 받아 [office-kit-upstream `office-editor-9.4.0.129`](https://github.com/toxh13/office-kit-upstream/releases/tag/office-editor-9.4.0.129)에 올렸다. 같은 Release의 `SHA256SUMS`·`sources.tsv`(파일 → 원래 주소)로 확인한다. 고정 값(pins)을 올리면 새 Release로 다시 만든다.
 
 | 원본 | 지킬 것 | 거울 주소 |
 |---|---|---|
-| ONLYOFFICE/sdkjs | 태그 `v9.4.0.129` | (비어 있음) |
-| ONLYOFFICE/web-apps | 태그 `v9.4.0.129` | (비어 있음) |
-| ONLYOFFICE/core | 태그 `v9.4.0.129` | (비어 있음) |
-| ONLYOFFICE/build_tools | 태그 `v9.4.0.129` | (비어 있음) |
-| ONLYOFFICE/server | 태그 `v9.4.0.129` | (비어 있음) |
-| BRF-Tech/filex-office-editor | 태그 `v0.3.1`(커밋 `57dda3da`), 릴리스 파일 `ui.zip`·`x2t.zip` | (비어 있음) |
-| cryptpad/onlyoffice-x2t-wasm | 태그 `v9.3.2+3`, `v9.3.0+0` | (비어 있음) |
-| x2t를 만드는 데 쓰는 제3자 소스 (filex `upstream/onlyoffice.json` `x2t.build.sources`) | boost 1.84.0 (`archives.boost.io` `boost_1_84_0.tar.bz2`, SHA-256 `cc4b893a…`), OpenSSL `OpenSSL_1_1_1f` 헤더, hunspell/hyphen `dcd90f00` | (비어 있음) |
-| core 받기 스크립트가 받는 것 (core `Common/3dParty/*/fetch.py`·`make.py`) | gumbo-parser `aa91b27b`, katana-parser `be6df458`, md4c `481fbfbd`, glm `33b4a621`, mdds `07831589`, librevenge `becd044b`, libodfgen `8ef8c171`, libetonyek `cb396b4a`, harfbuzz `894a1f72`, brotli `a47d7475` | (비어 있음) |
-| emscripten 4.0.11 ICU 포트 | unicode-org/icu `release-68-2` (`icu4c-68_2-src.zip`) | (비어 있음) |
-| filex 앱 UI (npm) | `@brftech/filex-app-ui` 0.53.0 (filex `package-lock.json`) | (비어 있음) |
+| ONLYOFFICE/sdkjs | 태그 `v9.4.0.129` | 사본 Release에 있음 |
+| ONLYOFFICE/web-apps | 태그 `v9.4.0.129` | 사본 Release에 있음 |
+| ONLYOFFICE/core | 태그 `v9.4.0.129` | 사본 Release에 있음 |
+| ONLYOFFICE/build_tools | 태그 `v9.4.0.129` | 사본 Release에 있음 |
+| ONLYOFFICE/server | 태그 `v9.4.0.129` | 사본 Release에 있음 |
+| BRF-Tech/filex-office-editor | 태그 `v0.3.1`(커밋 `57dda3da`), 릴리스 파일 `ui.zip`·`x2t.zip` | 사본 Release에 있음 |
+| cryptpad/onlyoffice-x2t-wasm | 태그 `v9.3.2+3`, `v9.3.0+0` | 사본 Release에 있음 |
+| x2t를 만드는 데 쓰는 제3자 소스 (filex `upstream/onlyoffice.json` `x2t.build.sources`) | boost 1.84.0 (`archives.boost.io` `boost_1_84_0.tar.bz2`, SHA-256 `cc4b893a…`), OpenSSL `OpenSSL_1_1_1f` 헤더, hunspell/hyphen `dcd90f00` | 사본 Release에 있음 |
+| core 받기 스크립트가 받는 것 (core `Common/3dParty/*/fetch.py`·`make.py`) | gumbo-parser `aa91b27b`, katana-parser `be6df458`, md4c `481fbfbd`, glm `33b4a621`, mdds `07831589`, librevenge `becd044b`, libodfgen `8ef8c171`, libetonyek `cb396b4a`, harfbuzz `894a1f72`, brotli `a47d7475` | 사본 Release에 있음 |
+| emscripten 4.0.11 ICU 포트 | unicode-org/icu `release-68-2` (`icu4c-68_2-src.zip`) | 사본 Release에 있음 |
+| filex 앱 UI (npm) | `@brftech/filex-app-ui` 0.53.0 (filex `package-lock.json`) | 사본 Release에 있음 |
 
 - 위쪽이 사라지면 소스를 줄 수 없게 되는 것은 ONLYOFFICE·filex 저장소만이 아니다: x2t.wasm의 대응 소스에는 위 제3자 소스도 들어간다. 거울 대신 그 소스 묶음(tarball)을 Release마다 붙여도 된다 (검토 11절 9번).
 
-```bash
-# 포크보다 --mirror가 확실하다 (태그까지 그대로 옮긴다)
-git clone --mirror https://github.com/ONLYOFFICE/sdkjs.git
-cd sdkjs.git
-git push --mirror https://github.com/<거울 계정>/sdkjs.git
-```
-
-- 거울을 만든 뒤: 이 표, `office-editor-legal-ko.md`의 '소스 코드' 절(거울 주소 한 줄), 소스 꾸러미 `UPSTREAM.md`(스크립트의 `PINS`)에 주소를 더한다.
-- 큰 저장소(core)는 그 태그만 밀어도 된다: `git push <거울> refs/tags/v9.4.0.129`.
+- 고정 값(pins)을 올려 위쪽 커밋이 바뀌면: 같은 방법으로 새 Release(`office-editor-<빌드>`)를 만들고, 이 표·`office-editor-legal-ko.md`·`office-editor-legal-en.md`의 '소스 코드' 절, `scripts/make-office-source.mjs`와 `src/app/office-editor/host.js`의 `UPSTREAM_MIRROR`를 함께 바꾼다.
 
 ## 10. 버전 올릴 때 함께 바꾸는 것
 
 - `scripts/build-office-editor.mjs`의 고정 값 (filex 태그·커밋·`ui.zip` 크기·SHA-256, x2t SHA-256)
 - `scripts/make-office-source.mjs`의 `PINS` (+ 새 태그의 커밋을 `git ls-remote`로 확인)
 - `docs/office-editor-legal-ko.md`의 판 번호·소스 주소 (스크립트가 맞는지 확인)
-- `LICENSE`의 THIRD-PARTY 항목, 이 문서의 1·8·9절, `README.md` 라이선스 절
+- `THIRD-PARTY-NOTICES.txt`, 이 문서의 1·8·9절, `README.md` 라이선스 절
 - 올린 뒤: e2e + Office 엄격 열기 전체 통과 (설계 12장)
 
 ## 11. 법률 검토 때 물을 것

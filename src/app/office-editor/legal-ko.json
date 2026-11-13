@@ -260,6 +260,15 @@
             ],
             [
               {
+                "text": "위쪽 소스 사본 (ONLYOFFICE·filex·x2t를 이룬 커밋 그대로의 소스 압축본, 원본 태그가 사라져도 받을 수 있게): "
+              },
+              {
+                "text": "office-kit-upstream",
+                "href": "https://github.com/toxh13/office-kit-upstream/releases/tag/office-editor-9.4.0.129"
+              }
+            ],
+            [
+              {
                 "text": "변환기 x2t는 ONLYOFFICE core "
               },
               {

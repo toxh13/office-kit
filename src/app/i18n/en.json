@@ -804,6 +804,7 @@
  "웹 페이지": "Web page",
  "위로": "Up",
  "위에서부터 차례로 하나의 PDF로 합쳐요. ↑↓로 순서를 바꿀 수 있어요.": "Merges into one PDF in order from top to bottom. Use ↑↓ to change the order.",
+ "위쪽 소스 사본 (ONLYOFFICE·filex·x2t를 이룬 커밋 그대로)": "Upstream source copy (ONLYOFFICE, filex, x2t at the exact commits used)",
  "응답 실패": "Response failed",
  "응답을 기다리는 중…": "Waiting for a response…",
  "이 대화 전으로 되돌리기": "Revert to before this chat",

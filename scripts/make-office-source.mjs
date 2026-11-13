@@ -21,7 +21,7 @@
 // - filex 소스: --filex-src → OFFICEKIT_FILEX_SRC → 캐시(OFFICEKIT_OFFICE_EDITOR_CACHE, 기본 tmp/office-editor-build)의
 //   git 폴더 중 그 커밋이 있는 것 → 없으면 그 커밋만 받는다 (--filex-repo·OFFICEKIT_FILEX_REPO = 거울 주소, 기본 GitHub.
 //   --offline이면 받지 않고 멈춤).
-// - 거울(포크) 저장소는 만들지 않는다 — UPSTREAM.md·docs/LICENSES-OFFICE-EDITOR.md의 할 일 목록.
+// - 위쪽 소스 사본은 UPSTREAM_MIRROR에 따로 올려 두었다 (이 스크립트는 받거나 올리지 않는다).
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -39,6 +39,8 @@ const DEFAULT_ROOT = resolve(dirname(SCRIPT), '..');
 // 여기에는 소스 주소만 더한다: 같은 태그의 저장소 커밋(2026-10-18 git ls-remote), 이미지 태그, x2t 빌드 방법의 출처.
 // 올릴 때: pins.mjs → 아래 REPOS·X2T_RECIPE → docs/office-editor-legal-ko.md (checkPins·checkLegalDoc이 맞는지 확인).
 const SRC_TAG = 'v9.4.0.129';
+// 위쪽 소스 사본 (커밋 그대로의 압축본 + SHA256SUMS) — docs/LICENSES-OFFICE-EDITOR.md 9절
+const UPSTREAM_MIRROR = 'https://github.com/toxh13/office-kit-upstream/releases/tag/office-editor-9.4.0.129';
 const REPOS = [
   { name: 'sdkjs', url: 'https://github.com/ONLYOFFICE/sdkjs', tag: SRC_TAG, commit: '75b53d504bfd81bfa35d59bb57dd9e56f7c9235d', main: true, role: '편집기 엔진 (묶음의 editor/sdkjs)' },
   { name: 'web-apps', url: 'https://github.com/ONLYOFFICE/web-apps', tag: SRC_TAG, commit: '1993a6d89731af0fcb5129ebf0ee380076fea5a9', main: true, role: '편집기 화면 (묶음의 editor/web-apps)' },
@@ -121,7 +123,8 @@ const PARTS = [
   { id: 'design', src: 'docs/OFFICE-EDITOR-DESIGN.md', dest: 'office-kit/docs/OFFICE-EDITOR-DESIGN.md', required: false, what: '설계' },
   { id: 'patches-doc', src: 'docs/office-editor-patches.md', dest: 'office-kit/docs/office-editor-patches.md', required: false, what: 'filex 패치 설명' },
   { id: 'package', src: 'package.json', dest: 'office-kit/package.json', required: true, what: 'npm 스크립트 이름·의존성 버전' },
-  { id: 'mit', src: 'LICENSE', dest: 'office-kit/LICENSE', required: true, what: 'Office Kit 라이선스 (MIT) + 제3자 목록' },
+  { id: 'mit', src: 'LICENSE', dest: 'office-kit/LICENSE', required: true, what: 'Office Kit 라이선스 (MIT)' },
+  { id: 'notices', src: 'THIRD-PARTY-NOTICES.txt', dest: 'office-kit/THIRD-PARTY-NOTICES.txt', required: true, what: '제3자 목록과 AGPL 범위' },
   { id: 'third-party', src: 'vendor/office-editor/THIRD-PARTY-NATIVE.txt', dest: 'licenses/THIRD-PARTY-NATIVE.txt', required: true, what: 'x2t·sdkjs WebAssembly 안 제3자 고지 (묶음의 것)' },
   { id: 'notice', src: 'vendor/office-editor/NOTICE-OfficeKit.md', dest: 'NOTICE-OfficeKit.md', required: true, what: '날짜 붙은 수정 고지 (묶음의 것)' },
   { id: 'version', src: 'vendor/office-editor/VERSION.json', dest: 'bundle/VERSION.json', required: true, what: '묶음의 고정 값·파일 목록' },
@@ -481,7 +484,7 @@ function upstreamJson(filexJson, office, version) {
     filex: { ...PINS.filex, note: 'commit = 태그가 가리키는 커밋 (릴리스 ui.zip을 만든 소스). mainCommit은 그 다음 README.md만 고친 커밋.' },
     onlyoffice: { ...P },
     x2t: { ...PINS.x2t, build: filexJson?.x2t?.build ?? null, howTo: 'filex-office-editor/scripts/x2t/build.sh (docker), filex-office-editor/README.md "x2t, the converter"' },
-    mirrors: { status: 'TODO', note: '아직 없음 — docs/LICENSES-OFFICE-EDITOR.md "거울 저장소" 참고' },
+    mirrors: { status: 'done', url: UPSTREAM_MIRROR, note: '위 커밋 그대로의 소스 압축본 + SHA256SUMS — docs/LICENSES-OFFICE-EDITOR.md 9절' },
   };
 }
 
@@ -545,24 +548,22 @@ function renderUpstream(filexJson, version) {
   lines.push(
     '- core의 받기 스크립트가 그 밖의 제3자 코드(harfbuzz 등)를 core가 적은 커밋으로 받는다 (core `3DPARTY.md`).',
     '',
-    '## 거울 저장소 — 할 일 (아직 없음)',
+    '## 거울 (위쪽 소스 사본)',
     '',
-    '위쪽 저장소의 태그가 지워지거나 옮겨져도 이 판을 배포하는 동안 소스를 줄 수 있게 거울을 둔다.',
-    'Office Kit 스크립트는 거울을 만들지 않는다. 사람이 아래를 하고 `docs/LICENSES-OFFICE-EDITOR.md`의 표에 주소를 적는다.',
+    `위쪽 저장소의 태그가 지워지거나 옮겨져도 소스를 받을 수 있게, 아래 모두를 커밋 그대로 압축해 ${UPSTREAM_MIRROR} 에 올려 두었다 (SHA256SUMS 포함).`,
     '',
-    ...P.repos.filter((r) => r.main || r.name === 'server').map((r) => `- [ ] ${r.name} \`${r.tag}\` (\`${r.commit.slice(0, 12)}\`)`),
-    `- [ ] filex-office-editor \`${PINS.filex.tag}\`·\`${PINS.filex.commit.slice(0, 12)}\` (+ 릴리스 \`ui.zip\`, \`x2t.zip\`)`,
-    `- [ ] onlyoffice-x2t-wasm (CryptPad) \`${PINS.x2t.recipe.release}\`·\`${PINS.x2t.recipe.changes}\``,
+    ...P.repos.map((r) => `- [x] ${r.name} \`${r.tag}\` (\`${r.commit.slice(0, 12)}\`)`),
+    `- [x] filex-office-editor \`${PINS.filex.tag}\`·\`${PINS.filex.commit.slice(0, 12)}\` (+ 릴리스 \`ui.zip\`, \`x2t.zip\`)`,
+    `- [x] onlyoffice-x2t-wasm (CryptPad) \`${PINS.x2t.recipe.release}\`·\`${PINS.x2t.recipe.changes}\``,
     ...Object.entries(src).filter(([name]) => name !== 'core' && name !== 'build_tools')
-      .map(([name, s]) => `- [ ] x2t 소스 ${name}: ${s.repository || s.url}${s.tag ? ` \`${s.tag}\`` : ''}${s.commit ? ` (\`${s.commit.slice(0, 12)}\`)` : ''}${s.url ? ' (내려받은 파일 그대로)' : ''}`),
-    '- [ ] core가 받는 제3자 코드 (core `Common/3dParty/*/fetch.py`·`make.py`의 커밋): gumbo-parser, katana-parser, md4c, glm, mdds, librevenge, libodfgen, libetonyek, harfbuzz, brotli — 목록과 커밋은 `licenses/THIRD-PARTY-NATIVE.txt`',
-    '- [ ] emscripten 4.0.11의 ICU 포트 (`icu4c-68_2-src.zip`, unicode-org/icu `release-68-2`)',
-    '- [ ] filex 앱 UI 패키지 `@brftech/filex-app-ui` (npm, filex `package-lock.json`의 판)',
+      .map(([name, s]) => `- [x] x2t 소스 ${name}: ${s.repository || s.url}${s.tag ? ` \`${s.tag}\`` : ''}${s.commit ? ` (\`${s.commit.slice(0, 12)}\`)` : ''}${s.url ? ' (내려받은 파일 그대로)' : ''}`),
+    '- [x] core가 받는 제3자 코드 (core `Common/3dParty/*/fetch.py`·`make.py`의 커밋): gumbo-parser, katana-parser, md4c, glm, mdds, librevenge, libodfgen, libetonyek, harfbuzz, brotli — 목록과 커밋은 `licenses/THIRD-PARTY-NATIVE.txt`',
+    '- [x] emscripten 4.0.11의 ICU 포트 (`icu4c-68_2-src.zip`, unicode-org/icu `release-68-2`)',
+    '- [x] filex 앱 UI 패키지 `@brftech/filex-app-ui` (npm, filex `package-lock.json`의 판)',
     '',
     '```bash',
-    '# 예: 태그까지 그대로 옮기기 (포크보다 확실하다 — 포크는 원본이 사라질 때 태그가 남는지 보장되지 않는다)',
-    `git clone --mirror ${P.repos[0].url}.git && cd sdkjs.git`,
-    'git push --mirror https://github.com/<거울 계정>/sdkjs.git',
+    '# 받은 뒤 확인: 사본 Release의 SHA256SUMS와 맞춰 본다',
+    'sha256sum -c SHA256SUMS',
     '```',
     '',
   );
