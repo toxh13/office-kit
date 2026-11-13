@@ -112,6 +112,10 @@ Tool messages and the command line (`office-kit help`) are in Korean.
 
 More details (in Korean): [README.md](README.md), [docs/FEATURES.md](docs/FEATURES.md). Building from source: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+## Code signing policy
+
+Office Kit plans to apply for free code signing from SignPath Foundation. What is signed, team roles and the privacy policy: [`docs/CODE-SIGNING-POLICY.md`](docs/CODE-SIGNING-POLICY.md). Current releases are not signed.
+
 ## License
 
 - Office Kit's own source files: [MIT](LICENSE) © toxh13. Bundled third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

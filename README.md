@@ -294,6 +294,10 @@ office-kit setup codex --remove     # 연결 해제 (다른 대상도 같음)
 
 ---
 
+## 코드 서명 정책 (Code signing policy)
+
+SignPath Foundation에 무료 코드 서명을 신청할 예정이다. 서명 대상·역할·개인정보 방침: [`docs/CODE-SIGNING-POLICY.md`](docs/CODE-SIGNING-POLICY.md). 지금 Release는 서명되지 않았다.
+
 ## 라이선스
 
 [MIT](LICENSE) © toxh13. 함께 배포하는 오픈소스(rhwp·rhwp-studio·@rhwp/editor — MIT, Edward Kim 외 / CanvasKit — BSD-3-Clause / @noble/hashes — MIT / pdf-lib — MIT / unpdf — MIT, 그 안의 PDF.js — Apache-2.0)는
