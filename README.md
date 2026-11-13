@@ -454,6 +454,6 @@ git push origin main v0.1.0
 - 그 편집기를 Document Server 없이 돌리는 앱 페이지·다리는 [filex-office-editor](https://github.com/BRF-Tech/filex-office-editor) v0.3.1 (BRF Tech, AGPL-3.0-or-later), 변환기 x2t는 ONLYOFFICE core + CryptPad·BRF Tech 패치 (AGPL).
 - 변환기 x2t·글꼴 엔진(WebAssembly) 안 제3자 코드(Boost, ICU, FreeType, libpng, libjpeg, Xpdf 등)와 x2t 안 URW++ PDF 기본 14 글꼴(AGPL-3.0 + PDF 포함 예외)의 고지: `vendor/office-editor/THIRD-PARTY-NATIVE.txt` ([`LICENSES/office-editor-third-party-native.txt`](LICENSES/office-editor-third-party-native.txt)). 편집용 글꼴 파일은 넣지 않는다 (이 PC의 글꼴을 읽는다).
 - 소스: Release마다 붙는 `office-editor-source-<버전>.zip` + ONLYOFFICE 소스 태그 `v9.4.0.129`. 앱 안에서는 편집 창 위 막대 **정보 · 라이선스**.
-- Office Kit 나머지는 MIT 그대로다 (편집기와는 메시지로만 주고받는 별개 프로그램). 자세한 경계·배포 전 할 일: [`docs/LICENSES-OFFICE-EDITOR.md`](docs/LICENSES-OFFICE-EDITOR.md).
+- Office Kit이 직접 쓴 나머지 파일은 MIT다 (편집기와는 메시지로만 주고받는 별개 프로그램). 다만 AGPL인 글꼴 목록 생성기를 앱 안에서 직접 불러 쓰므로, **설치된 앱 전체는 AGPL-3.0 조건으로 배포**하고 그 소스는 이 저장소의 해당 Release 태그다. 자세한 경계·배포 전 할 일: [`docs/LICENSES-OFFICE-EDITOR.md`](docs/LICENSES-OFFICE-EDITOR.md).
 - ONLYOFFICE®·ONLYOFFICE Docs™는 Ascensio System SIA의 상표다. Office Kit은 Ascensio System SIA와 관계가 없고 보증·후원을 받지 않는다.
   Word·Excel·PowerPoint는 Microsoft의 상표이며 파일 형식을 가리킬 때만 쓴다.

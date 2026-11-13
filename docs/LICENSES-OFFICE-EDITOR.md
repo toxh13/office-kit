@@ -40,7 +40,11 @@
 ## 2. 경계 — MIT 앱과 AGPL 편집기가 한 설치 파일에 있는 이유
 
 - 편집기는 **따로 도는 프로그램**으로 다룬다: 로컬 서버(127.0.0.3)가 파일을 내주고, 편집기는 sandbox 틀(opaque origin)·다른 렌더러 프로세스에서 돈다. Office Kit 호스트와는 **MessagePort 메시지**(filex 앱 SDK v1)로만 말한다. 서로의 코드를 링크하거나 한 파일로 묶지 않는다.
-- 그래서 설치 파일은 MIT 프로그램과 AGPL 프로그램을 **함께 담은 것**(AGPL 5조 '집합물')으로 본다 — **검토 대상**이다.
+- 그래서 편집기 묶음과 Office Kit 앱은 MIT 프로그램과 AGPL 프로그램을 **함께 담은 것**(AGPL 5조 '집합물')으로 본다 — **검토 대상**이다.
+- **예외 — 글꼴 목록 생성기**: `src/app/office-editor/fonts/`(AGPL-3.0-only)는 Office Kit **메인 프로세스 안에서** `import`된다 (`src/app/editor-window.mjs`). 메시지로만 말하는 경계가 아니므로, **설치된 앱 전체는 AGPL-3.0 조건으로 배포한다**고 보고 그에 맞춘다:
+  - 이 저장소를 공개하고, Release 태그마다 앱 전체 소스(= 그 태그의 저장소)를 받을 수 있게 둔다. 편집기 쪽은 지금처럼 `office-editor-source-<버전>.zip`.
+  - Office Kit이 직접 쓴 MIT 파일은 따로 떼어 MIT로 다시 쓸 수 있다 (`LICENSE` 첫머리).
+  - 나중에 생성기를 자식 프로세스(`utilityProcess`)로 떼어 JSON으로만 주고받게 하면 다시 '집합물'로 돌아갈 수 있다 — 11절 질문 목록에 넣어 둔다.
 - 경계를 지키는 규칙:
   - ONLYOFFICE·filex·CryptPad 코드를 옮기거나 고친 파일은 AGPL로 둔다 (위 표의 두 종류). 실험(`tmp/spike-*`)에서 코드를 가져올 때도 같다.
   - MIT 파일에 AGPL 코드를 붙여 넣지 않는다. 필요하면 그 부분을 AGPL 파일로 따로 둔다.
@@ -181,3 +185,4 @@ git push --mirror https://github.com/<거울 계정>/sdkjs.git
 8. 대화상자 문구([`office-editor-legal-ko.md`](office-editor-legal-ko.md))가 추가 조항 3의 (i)~(iii)을 채우는가.
 9. x2t.wasm 대응 소스의 제3자 부분(boost·ICU·hyphen·core 받기 스크립트가 받는 것, 9절 표): 거울로 둘지, Release마다 소스 묶음으로 붙일지.
 10. `THIRD-PARTY-NATIVE.txt`의 범위: core의 qmake 프로젝트·3DPARTY.md를 따라 엮었다 (링크된 것보다 넓을 수 있음). 특히 Xpdf 4.03(GPL-2.0 또는 GPL-3.0 — GPL-3.0으로 AGPL-3.0과 함께), DjVuLibre·JBIG-KIT(GPL-2.0-or-later), libpsd(LGPL-2.1-or-later)가 ONLYOFFICE core(AGPL-3.0) 안에 든 것을 그대로 내는 것.
+11. 글꼴 목록 생성기(`src/app/office-editor/fonts/`, AGPL-3.0-only)를 MIT 앱 메인 프로세스가 직접 `import`하는 것 (2절 예외). 앱 전체를 AGPL 조건으로 내고 저장소 태그를 대응 소스로 두는 지금 방식으로 충분한가, 아니면 자식 프로세스로 떼어 집합물로 되돌려야 하나.

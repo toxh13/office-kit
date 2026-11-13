@@ -38,8 +38,15 @@ list generator in src/app/office-editor/fonts/ (AGPL-3.0-only with the
 ONLYOFFICE additional terms, as it is derived from ONLYOFFICE core). Those are
 licensed under the GNU Affero General Public License version 3, whose text is
 in LICENSES/AGPL-3.0.txt; the ONLYOFFICE section 7 additional terms are in
-LICENSES/ONLYOFFICE-additional-terms.txt. The rest of Office Kit stays MIT; it talks to the
-office editor only through messages (a MessagePort) and a local file server.
+LICENSES/ONLYOFFICE-additional-terms.txt. The rest of Office Kit's own source
+files are MIT and may be reused under MIT on their own. The office editor runs
+as a separate program and talks to Office Kit only through messages (a
+MessagePort) and a local file server. The AGPL font list generator, however,
+is loaded into the Office Kit main process, so the installed application as a
+whole is distributed under the terms of the AGPL-3.0: its complete
+corresponding source is this repository at the matching release tag
+(https://github.com/toxh13/office-kit), together with the
+office-editor-source-<version>.zip attached to each Release.
 
 - Office editor bundle — the in-app document, spreadsheet and presentation
   editing windows (vendor/office-editor/, built by
@@ -143,8 +150,17 @@ office editor only through messages (a MessagePort) and a local file server.
   Stuart Knightley
   https://github.com/Stuk/jszip
 
+- pdf-lib — MIT License, Andrew Dillon
+  https://github.com/Hopding/pdf-lib
+
 - PptxGenJS — MIT License, Brent Ely
   https://github.com/gitbrent/PptxGenJS
+
+- unpdf — MIT License, Johann Schopplich
+  https://github.com/unjs/unpdf
+  It bundles a build of PDF.js (Mozilla Foundation and contributors),
+  licensed under the Apache License 2.0, full text in LICENSES/Apache-2.0.txt.
+  https://github.com/mozilla/pdf.js
 
 - Zod — MIT License, Colin McDonnell
   https://github.com/colinhacks/zod
