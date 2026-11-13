@@ -295,6 +295,8 @@ export function createPreviewCache(dir, { keep = PREVIEW_CACHE_KEEP, maxBytes = 
   const load = () => readJson(indexFile, []).filter((e) => e && typeof e.key === 'string' && existsSync(join(dir, `${e.key}.pdf`)));
   const keyOf = ({ path, size, mtimeMs, mode }) => createHash('sha1')
     .update(`${PREVIEW_CACHE_VERSION}|${process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)}|${size}|${mtimeMs}|${mode}`).digest('hex');
+  // 쓴 시각: 목록의 가장 늦은 것보다 늘 뒤로 (같은 밀리초에 여러 번 써도 순서가 남게)
+  const stampAfter = (list) => Math.max(Date.now(), ...list.map((x) => (x.usedAt ?? 0) + 1));
   return {
     dir,
     /** → { file(기억해 둔 PDF), engine, pages } | null. 쓴 시각을 새로 적는다 */
@@ -303,7 +305,7 @@ export function createPreviewCache(dir, { keep = PREVIEW_CACHE_KEEP, maxBytes = 
       const list = load();
       const e = list.find((x) => x.key === k);
       if (!e) return null;
-      e.usedAt = Date.now();
+      e.usedAt = stampAfter(list);
       try { writeJsonAtomic(indexFile, list); } catch {}
       return { file: join(dir, `${k}.pdf`), engine: e.engine ?? null, pages: e.pages ?? null };
     },
@@ -313,7 +315,7 @@ export function createPreviewCache(dir, { keep = PREVIEW_CACHE_KEEP, maxBytes = 
       const k = keyOf(what);
       copyFileSync(file, join(dir, `${k}.pdf`));
       const list = load().filter((x) => x.key !== k);
-      list.push({ key: k, engine, pages, size: statSync(join(dir, `${k}.pdf`)).size, usedAt: Date.now() });
+      list.push({ key: k, engine, pages, size: statSync(join(dir, `${k}.pdf`)).size, usedAt: stampAfter(list) });
       list.sort((a, b) => (a.usedAt ?? 0) - (b.usedAt ?? 0));
       let bytes = list.reduce((n, e) => n + (e.size ?? 0), 0);
       while (list.length > 1 && (list.length > keep || bytes > maxBytes)) {

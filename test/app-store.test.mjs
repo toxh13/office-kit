@@ -283,6 +283,25 @@ test('미리보기 기억: 경로·크기·수정 시각·방식이 같을 때�
   assert.equal(readdirSync(join(dir, 'preview-cache')).filter((f) => f.endsWith('.pdf')).length, 1);
 });
 
+test('미리보기 기억: 같은 밀리초 안에 다시 쓴 것도 나중에 쓴 것으로 친다 (시계 고정)', () => {
+  const dir = tmp();
+  const realNow = Date.now;
+  Date.now = () => 5000; // 모든 일이 같은 밀리초에
+  try {
+    const c = createPreviewCache(join(dir, 'preview-cache'), { keep: 2, maxBytes: 1e6 });
+    const pdf = (name) => { const p = join(dir, name); writeFileSync(p, `%PDF-${name}`); return p; };
+    const what = (n) => ({ path: join(dir, n), size: 10, mtimeMs: 1000, mode: 'auto' });
+    c.put(what('a.docx'), pdf('a.pdf'));
+    c.put(what('b.docx'), pdf('b.pdf'));
+    assert.ok(c.get(what('a.docx'))); // a를 다시 씀 → b가 가장 오래 안 씀
+    c.put(what('c.docx'), pdf('c.pdf'));
+    assert.ok(c.get(what('a.docx')), '방금 쓴 a는 남는다');
+    assert.equal(c.get(what('b.docx')), null, 'b가 밀려난다');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('최근 문서 고정: 고정한 것이 먼저, 지우기·밀려남에도 남는다', async () => {
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
