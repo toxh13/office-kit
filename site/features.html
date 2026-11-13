@@ -19,7 +19,7 @@
       <li><a href="guide.html">사용 안내</a></li>
       <li class="hide-s"><a href="about.html">만든 방법</a></li>
       <li class="hide-s"><a href="en/" lang="en">English</a></li>
-      <li><a class="btn btn--primary btn--s" href="https://github.com/toxh13/office-kit/releases/latest">내려받기</a></li>
+      <li><a class="btn btn--primary btn--s" href="download.html">내려받기</a></li>
     </ul>
   </div>
 </header>
@@ -44,12 +44,16 @@
 
   <main id="main" class="doc doc--wide">
     <h1>기능 안내</h1>
-    <p class="lead">실제 화면에 번호를 붙였습니다. 번호를 따라 아래 설명을 읽으세요. 설명에 마우스를 올리면 화면의 번호가 강조됩니다.</p>
+    <p class="lead">실제 화면에 번호를 붙였습니다. 사진 위에 마우스를 올리면 번호가 흐려지고, 설명에 올리면 그 번호만 보입니다. 번호 없이 보려면 크게 보기를 누르세요.</p>
 
     <section class="tour-sec" id="main-window" aria-labelledby="h-main">
       <h2 id="h-main">주 창</h2>
       <p class="lead">문서를 열면 왼쪽에 미리보기, 오른쪽에 AI 도우미가 뜹니다. 위쪽 막대에 자주 쓰는 일이 모여 있습니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-main.png" width="1783" height="974" loading="lazy" alt="Office Kit 주 창. 위쪽 막대, 왼쪽 문서 미리보기, 오른쪽 AI 도우미, 아래 상태 줄.">
         <span class="pin" data-n="1" style="left:8.42%;top:1.60%" aria-hidden="true">1</span>
@@ -100,6 +104,10 @@
       <h2 id="h-versions">버전과 되돌리기</h2>
       <p class="lead">문서를 열 때, 편집 창에서 저장하기 전, AI가 고치기 전마다 버전을 저절로 남깁니다. 문서마다 최근 30개까지 남습니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-versions.png" width="1783" height="974" loading="lazy" alt="원래대로 옆 화살표를 눌러 연 버전 목록. 처음 연 상태 항목과 바뀐 내용, 되돌리기 단추.">
         <span class="pin" data-n="1" style="left:62.83%;top:1.60%" aria-hidden="true">1</span>
@@ -122,6 +130,10 @@
       <h2 id="h-diff">바뀐 내용 보기</h2>
       <p class="lead">글이 어떻게 바뀌었는지 줄 단위로 보여 줍니다. 엑셀은 칸 주소와 전·후 값을 보여 줍니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-diff.png" width="1783" height="974" loading="lazy" alt="바뀐 내용 창. 노트북이 지워지고 태블릿이 더해진 것을 빨강과 초록으로 보여 준다.">
         <span class="pin" data-n="1" style="left:24.55%;top:14.25%" aria-hidden="true">1</span>
@@ -142,6 +154,10 @@
       <h2 id="h-ai">AI 대화</h2>
       <p class="lead">할 일을 말로 적으면 AI가 Office Kit 문서 도구로 고칩니다. 고친 결과는 미리보기에 바로 보이고, 대화마다 되돌릴 수 있습니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/ai-chat.png" width="1783" height="974" loading="lazy" alt="AI 도우미 창. 요청, AI가 쓴 도구, 결과 설명, 바뀐 내용 보기와 되돌리기 단추.">
         <span class="pin" data-n="1" style="left:77.14%;top:14.76%" aria-hidden="true">1</span>
@@ -169,6 +185,10 @@
       <h2 id="h-edit-hwp">한글 편집 창</h2>
       <p class="lead">한글 문서(hwp, hwpx)를 앱 안에서 고칩니다. 한컴오피스가 없어도 되고, 저장하면 원래 형식 그대로 씁니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-edit-hwp.png" width="1583" height="974" loading="lazy" alt="한글 편집 창. 위쪽 막대와 한글과 비슷한 메뉴, 서식 도구줄, 문서.">
         <span class="pin" data-n="1" style="left:1.20%;top:1.60%" aria-hidden="true">1</span>
@@ -197,6 +217,10 @@
       <h2 id="h-edit-office">Word, Excel, PowerPoint 편집 창</h2>
       <p class="lead">docx, xlsx, pptx 문서를 앱 안에서 고칩니다. Microsoft Office 없이, 이 PC의 글꼴로 동작합니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/edit-docx.png" width="1583" height="974" loading="lazy" alt="문서 편집 창. 위쪽 막대와 편집기 메뉴, 회의록 문서, 아래 라이선스 고지 줄.">
         <span class="pin" data-n="1" style="left:1.20%;top:1.60%" aria-hidden="true">1</span>
@@ -221,6 +245,10 @@
       <h2 id="h-pii">개인정보 찾아 가리기</h2>
       <p class="lead">문서에서 개인정보를 찾아, 고른 것만 가린 사본을 원본 옆에 만듭니다. 인터넷과 AI 없이 이 PC에서만 동작합니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-pii.png" width="1783" height="974" loading="lazy" alt="개인정보 찾아 가리기 창. 주민등록번호, 휴대전화, 이메일 등 찾은 항목 표와 가린 사본 만들기 단추.">
         <span class="pin" data-n="1" style="left:24.55%;top:18.36%" aria-hidden="true">1</span>
@@ -246,6 +274,10 @@
       <h2 id="h-new-doc">새 문서</h2>
       <p class="lead">형식과 이름, 시작 방법을 고르면 바로 열립니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-new-doc.png" width="1783" height="974" loading="lazy" alt="새 문서 만들기 창. 형식, 파일 이름, 저장 위치, 시작 방법, AI 요청 입력.">
         <span class="pin" data-n="1" style="left:29.59%;top:22.21%" aria-hidden="true">1</span>
@@ -272,6 +304,10 @@
       <h2 id="h-pdf">PDF 합치기, 나누기, 돌리기</h2>
       <p class="lead">원본은 그대로 두고 결과를 새 PDF로 저장합니다. 인터넷 없이 동작합니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/pdf-tools.png" width="1783" height="974" loading="lazy" alt="PDF 도구 창. 합치기, 쪽 뽑기, 쪽 지우기, 돌리기 탭과 파일 목록.">
         <span class="pin" data-n="1" style="left:24.83%;top:18.87%" aria-hidden="true">1</span>
@@ -292,6 +328,10 @@
       <h2 id="h-settings">설정 · AI</h2>
       <p class="lead">AI 대화에 쓸 프로그램을 고릅니다. Office Kit은 로그인 정보를 다루지 않고, 내 PC에 설치·로그인한 프로그램을 그대로 실행합니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-settings-ai.png" width="1783" height="974" loading="lazy" alt="설정 창의 AI 쪽. 왼쪽 메뉴, Claude와 Codex 선택, 다시 확인 단추, 모델 입력 칸.">
         <span class="pin" data-n="1" style="left:23.14%;top:18.36%" aria-hidden="true">1</span>
@@ -314,6 +354,10 @@
       <h2 id="h-connect">설정 · 외부 연결</h2>
       <p class="lead">Claude Desktop, Claude Code, Codex에 Office Kit 문서 도구(MCP)를 연결하거나, 터미널에서 office-kit 명령을 쓰게 합니다.</p>
       <figure class="tour">
+        <div class="tour__tools">
+          <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
+          <button type="button" class="btn btn--ghost btn--s" data-zoom>크게 보기</button>
+        </div>
         <div class="tour__stage">
         <img src="images/tour-settings-connect.png" width="1783" height="974" loading="lazy" alt="설정 창의 외부 연결 쪽. Claude Desktop, Claude Code, Codex, 명령줄 도구의 연결 상태와 단추.">
         <span class="pin" data-n="1" style="left:38.50%;top:24.26%" aria-hidden="true">1</span>
@@ -352,21 +396,9 @@
     </div>
   </div>
 </footer>
-<script>
-(() => {
-  // 설명에 마우스나 키보드 초점이 오면 같은 번호를 강조한다 (스크립트가 없어도 내용은 그대로 보인다)
-  for (const sec of document.querySelectorAll('.tour-sec')) {
-    const pins = sec.querySelectorAll('.pin');
-    const set = (n) => pins.forEach((p) => p.classList.toggle('is-on', p.dataset.n === n));
-    for (const li of sec.querySelectorAll('.tour__legend li')) {
-      li.tabIndex = 0;
-      li.addEventListener('mouseenter', () => set(li.dataset.n));
-      li.addEventListener('focus', () => set(li.dataset.n));
-      li.addEventListener('mouseleave', () => set(null));
-      li.addEventListener('blur', () => set(null));
-    }
-  }
-})();
-</script>
+<dialog class="lightbox" aria-label="크게 보기">
+  <div class="lightbox__bar"><p data-lightbox-title>크게 보기</p><button type="button" class="btn btn--ghost btn--s" data-close>닫기</button></div>
+</dialog>
+<script src="site.js"></script>
 </body>
 </html>
