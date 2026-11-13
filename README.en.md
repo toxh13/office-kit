@@ -12,6 +12,7 @@ A Windows desktop app to **open, check and edit** Hangul (HWP/HWPX), Word, Power
 - If those programs **are** installed, Office Kit uses them for exact previews and PDF export.
 - Hangul documents can be saved as **PDF** even without Hancom Office.
 - The AI uses the **Claude Code** or **Codex** CLI that you installed and signed in to yourself. Office Kit never handles your credentials.
+- Office Kit does not include Claude Code or Codex. It runs the official program you installed, unmodified; sign-in happens inside that program with your own account, and usage counts against your own account. Office Kit is not affiliated with Anthropic or OpenAI.
 - UI languages: Korean, English, Japanese (Settings → Preview · display → Language; follows Windows by default).
 
 ## Requirements

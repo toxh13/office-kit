@@ -175,6 +175,8 @@ Office Kit는 **로그인 정보를 다루지 않는다.** 내 PC에 설치·로
 | Codex | [Codex CLI](https://github.com/openai/codex) 설치 (`npm i -g @openai/codex`) | `codex login` → 내 ChatGPT 계정으로 로그인 |
 
 - 앱 **설정 → AI** 에서 어느 쪽을 쓸지 고른다. 모델 칸을 비우면 각 CLI의 기본 모델을 쓴다.
+- Office Kit에는 Claude Code나 Codex가 들어 있지 않다. 사용자가 직접 설치한 공식 프로그램을 고치지 않고 그대로 실행하며, 로그인은 그 프로그램 안에서 각자의 계정으로 한다. 사용량은 각자의 계정에 잡힌다.
+- Office Kit은 Anthropic·OpenAI와 관계가 없고, Claude Code나 Codex의 일부가 아니다.
 
 ![설정 → AI](site/images/settings-ai.png)
 
