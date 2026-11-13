@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>기능 안내, Office Kit</title>
+<meta name="description" content="Office Kit 화면의 단추와 기능을 실제 화면 사진에 번호를 붙여 하나씩 설명합니다.">
+<link rel="icon" href="images/icon.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+<header class="nav">
+  <div class="container nav__inner">
+    <a class="brand" href="./"><img src="images/icon.png" alt="" width="30" height="30">Office Kit</a>
+    <ul class="nav__links">
+      <li><a href="features.html" aria-current="page">기능 안내</a></li>
+      <li><a href="guide.html">사용 안내</a></li>
+      <li class="hide-s"><a href="about.html">만든 방법</a></li>
+      <li class="hide-s"><a href="en/" lang="en">English</a></li>
+      <li><a class="btn btn--primary btn--s" href="https://github.com/toxh13/office-kit/releases/latest">내려받기</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container tour-page">
+  <nav class="toc toc--chips" aria-label="목차">
+    <p>화면별 안내</p>
+    <ol>
+      <li><a href="#main-window">주 창</a></li>
+      <li><a href="#versions">버전과 되돌리기</a></li>
+      <li><a href="#diff">바뀐 내용 보기</a></li>
+      <li><a href="#ai">AI 대화</a></li>
+      <li><a href="#edit-hwp">한글 편집 창</a></li>
+      <li><a href="#edit-office">Word, Excel, PowerPoint 편집 창</a></li>
+      <li><a href="#pii">개인정보 찾아 가리기</a></li>
+      <li><a href="#new-doc">새 문서</a></li>
+      <li><a href="#pdf">PDF 합치기, 나누기, 돌리기</a></li>
+      <li><a href="#settings">설정 · AI</a></li>
+      <li><a href="#connect">설정 · 외부 연결</a></li>
+    </ol>
+  </nav>
+
+  <main id="main" class="doc doc--wide">
+    <h1>기능 안내</h1>
+    <p class="lead">실제 화면에 번호를 붙였습니다. 번호를 따라 아래 설명을 읽으세요. 설명에 마우스를 올리면 화면의 번호가 강조됩니다.</p>
+
+    <section class="tour-sec" id="main-window" aria-labelledby="h-main">
+      <h2 id="h-main">주 창</h2>
+      <p class="lead">문서를 열면 왼쪽에 미리보기, 오른쪽에 AI 도우미가 뜹니다. 위쪽 막대에 자주 쓰는 일이 모여 있습니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-main.png" width="1783" height="974" loading="lazy" alt="Office Kit 주 창. 위쪽 막대, 왼쪽 문서 미리보기, 오른쪽 AI 도우미, 아래 상태 줄.">
+        <span class="pin" data-n="1" style="left:8.42%;top:1.60%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:16.20%;top:1.60%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:23.49%;top:1.60%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:40.81%;top:1.60%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:48.60%;top:1.60%" aria-hidden="true">5</span>
+        <span class="pin" data-n="6" style="left:55.61%;top:1.60%" aria-hidden="true">6</span>
+        <span class="pin" data-n="7" style="left:63.39%;top:6.80%" aria-hidden="true">7</span>
+        <span class="pin" data-n="8" style="left:64.10%;top:1.60%" aria-hidden="true">8</span>
+        <span class="pin" data-n="9" style="left:75.04%;top:1.60%" aria-hidden="true">9</span>
+        <span class="pin" data-n="10" style="left:82.96%;top:1.60%" aria-hidden="true">10</span>
+        <span class="pin" data-n="11" style="left:91.31%;top:1.60%" aria-hidden="true">11</span>
+        <span class="pin" data-n="12" style="left:93.97%;top:1.60%" aria-hidden="true">12</span>
+        <span class="pin" data-n="13" style="left:96.63%;top:1.60%" aria-hidden="true">13</span>
+        <span class="pin" data-n="14" style="left:89.06%;top:7.32%" aria-hidden="true">14</span>
+        <span class="pin" data-n="15" style="left:94.81%;top:7.32%" aria-hidden="true">15</span>
+        <span class="pin" data-n="16" style="left:74.05%;top:39.41%" aria-hidden="true">16</span>
+        <span class="pin" data-n="17" style="left:73.63%;top:85.88%" aria-hidden="true">17</span>
+        <span class="pin" data-n="18" style="left:59.33%;top:89.22%" aria-hidden="true">18</span>
+        <span class="pin" data-n="19" style="left:1.20%;top:95.63%" aria-hidden="true">19</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>파일 열기</strong> 문서를 고릅니다(Ctrl+O). 창에 파일을 끌어다 놓아도 됩니다.</li>
+        <li data-n="2"><strong>새 문서</strong> 한글·Word·PowerPoint·Excel 새 문서를 만듭니다(Ctrl+N).</li>
+        <li data-n="3"><strong>열린 문서</strong> 형식과 파일 이름. 오른쪽 ✕로 문서를 닫습니다.</li>
+        <li data-n="4"><strong>직접 편집</strong> 앱 안 편집 창을 엽니다(Ctrl+E). 인터넷과 한컴오피스·MS Office 없이 동작합니다.</li>
+        <li data-n="5"><strong>새로고침</strong> 미리보기를 파일에서 다시 그립니다(F5).</li>
+        <li data-n="6"><strong>원래대로</strong> 마지막 변경 전으로 되돌립니다. 한 번 더 누르면 되돌리기 전으로 돌아갑니다.</li>
+        <li data-n="7"><strong>버전 목록</strong> 남겨 둔 버전을 보고, 바뀐 내용을 비교하거나 그때로 되돌립니다.</li>
+        <li data-n="8"><strong>프로그램에서 열기</strong> 설치된 Word·Excel·PowerPoint·한컴오피스에서 엽니다.</li>
+        <li data-n="9"><strong>PDF로 저장</strong> 지금 문서를 PDF로 저장합니다. 한글 문서는 한컴오피스 없이도 됩니다.</li>
+        <li data-n="10"><strong>폴더 열기</strong> 문서가 있는 폴더를 탐색기로 엽니다.</li>
+        <li data-n="11"><strong>도구</strong> 개인정보 찾아 가리기, PDF 합치기·나누기·돌리기, 한글→HWPX 일괄 변환.</li>
+        <li data-n="12"><strong>AI 창 열고 닫기</strong> 오른쪽 AI 도우미를 보이거나 숨깁니다.</li>
+        <li data-n="13"><strong>설정</strong> AI 프로그램, 화면 언어, 파일 열기 방식, 외부 연결을 정합니다(Ctrl+,).</li>
+        <li data-n="14"><strong>AI 고르기</strong> 내 PC에 로그인해 둔 Claude Code 또는 Codex 중 하나를 고릅니다.</li>
+        <li data-n="15"><strong>새 대화</strong> 지난 대화를 접고 새로 시작합니다.</li>
+        <li data-n="16"><strong>추천 요청</strong> 누르면 바로 보냅니다. 형식에 맞는 요청이 나옵니다.</li>
+        <li data-n="17"><strong>입력창</strong> 할 일을 적고 Enter로 보냅니다. 줄바꿈은 Shift+Enter.</li>
+        <li data-n="18"><strong>확대·축소</strong> 미리보기 배율. 가운데 숫자를 누르면 100%, 오른쪽은 너비에 맞추기.</li>
+        <li data-n="19"><strong>상태 줄</strong> 읽은 엔진, 쪽 수, 마지막 저장 시각, 편집 창이 열려 있는지 보여 줍니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="versions" aria-labelledby="h-versions">
+      <h2 id="h-versions">버전과 되돌리기</h2>
+      <p class="lead">문서를 열 때, 편집 창에서 저장하기 전, AI가 고치기 전마다 버전을 저절로 남깁니다. 문서마다 최근 30개까지 남습니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-versions.png" width="1783" height="974" loading="lazy" alt="원래대로 옆 화살표를 눌러 연 버전 목록. 처음 연 상태 항목과 바뀐 내용, 되돌리기 단추.">
+        <span class="pin" data-n="1" style="left:62.83%;top:1.60%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:36.19%;top:14.25%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:52.32%;top:16.82%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:57.86%;top:16.82%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:57.08%;top:24.65%" aria-hidden="true">5</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>버전 목록 열기</strong> 원래대로 옆 ▾를 누릅니다.</li>
+        <li data-n="2"><strong>버전 하나</strong> 언제, 어떤 일 전에 남았는지 보여 줍니다.</li>
+        <li data-n="3"><strong>바뀐 내용</strong> 그 버전 뒤로 바뀐 글을 비교합니다(아래 그림).</li>
+        <li data-n="4"><strong>되돌리기</strong> 문서를 그 버전으로 돌립니다. 되돌리기 전 상태도 버전으로 남습니다.</li>
+        <li data-n="5"><strong>백업 폴더 열기</strong> 버전 파일이 있는 폴더를 엽니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="diff" aria-labelledby="h-diff">
+      <h2 id="h-diff">바뀐 내용 보기</h2>
+      <p class="lead">글이 어떻게 바뀌었는지 줄 단위로 보여 줍니다. 엑셀은 칸 주소와 전·후 값을 보여 줍니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-diff.png" width="1783" height="974" loading="lazy" alt="바뀐 내용 창. 노트북이 지워지고 태블릿이 더해진 것을 빨강과 초록으로 보여 준다.">
+        <span class="pin" data-n="1" style="left:24.55%;top:14.25%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:24.55%;top:18.61%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:24.83%;top:29.65%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:62.62%;top:83.70%" aria-hidden="true">4</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>비교 범위</strong> 어느 버전과 지금을 비교하는지.</li>
+        <li data-n="2"><strong>요약</strong> 더한 곳과 지운 곳의 수.</li>
+        <li data-n="3"><strong>바뀐 줄</strong> 지운 글은 빨강(−), 더한 글은 초록(+). 서식과 그림 변화는 나오지 않습니다.</li>
+        <li data-n="4"><strong>이 버전으로 되돌리기</strong> 비교한 버전으로 문서를 돌립니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="ai" aria-labelledby="h-ai">
+      <h2 id="h-ai">AI 대화</h2>
+      <p class="lead">할 일을 말로 적으면 AI가 Office Kit 문서 도구로 고칩니다. 고친 결과는 미리보기에 바로 보이고, 대화마다 되돌릴 수 있습니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/ai-chat.png" width="1783" height="974" loading="lazy" alt="AI 도우미 창. 요청, AI가 쓴 도구, 결과 설명, 바뀐 내용 보기와 되돌리기 단추.">
+        <span class="pin" data-n="1" style="left:77.14%;top:14.76%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:75.32%;top:21.69%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:75.32%;top:26.57%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:76.16%;top:46.08%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:84.01%;top:46.08%" aria-hidden="true">5</span>
+        <span class="pin" data-n="6" style="left:75.32%;top:59.95%" aria-hidden="true">6</span>
+        <span class="pin" data-n="7" style="left:95.86%;top:86.39%" aria-hidden="true">7</span>
+        </div>
+      <figcaption>시연용 예시 대화입니다.</figcaption>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>내 요청</strong> 보낸 말이 오른쪽 말풍선으로 남습니다.</li>
+        <li data-n="2"><strong>AI가 쓴 도구</strong> 문서 읽기, 칸 채우기, 찾아 바꾸기처럼 AI가 실제로 한 일입니다.</li>
+        <li data-n="3"><strong>결과 설명</strong> 무엇을 바꿨는지 짧게 알려 줍니다.</li>
+        <li data-n="4"><strong>바뀐 내용 보기</strong> 이 대화로 바뀐 글을 비교합니다.</li>
+        <li data-n="5"><strong>이 대화 전으로 되돌리기</strong> 대화가 고친 것을 한 번에 되돌립니다.</li>
+        <li data-n="6"><strong>진행 표시</strong> AI가 일하는 중이면 지금 하는 일이 보입니다.</li>
+        <li data-n="7"><strong>멈추기</strong> AI 작업을 멈춥니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="edit-hwp" aria-labelledby="h-edit-hwp">
+      <h2 id="h-edit-hwp">한글 편집 창</h2>
+      <p class="lead">한글 문서(hwp, hwpx)를 앱 안에서 고칩니다. 한컴오피스가 없어도 되고, 저장하면 원래 형식 그대로 씁니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-edit-hwp.png" width="1583" height="974" loading="lazy" alt="한글 편집 창. 위쪽 막대와 한글과 비슷한 메뉴, 서식 도구줄, 문서.">
+        <span class="pin" data-n="1" style="left:1.20%;top:1.60%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:58.14%;top:1.60%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:66.04%;top:1.60%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:72.36%;top:1.60%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:86.57%;top:1.60%" aria-hidden="true">5</span>
+        <span class="pin" data-n="6" style="left:93.52%;top:1.60%" aria-hidden="true">6</span>
+        <span class="pin" data-n="7" style="left:1.42%;top:7.06%" aria-hidden="true">7</span>
+        <span class="pin" data-n="8" style="left:1.42%;top:17.07%" aria-hidden="true">8</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>문서 상태</strong> 형식, 파일 이름, 저장됨 또는 저장 안 됨.</li>
+        <li data-n="2"><strong>AI · 도구</strong> 옆에 AI 대화, 버전, 개인정보 가리기를 붙여 엽니다.</li>
+        <li data-n="3"><strong>저장</strong> 원래 형식 그대로 저장합니다(Ctrl+S). 덮어쓰기 전 내용은 백업으로 남습니다.</li>
+        <li data-n="4"><strong>다른 이름으로 저장</strong> hwpx, hwp, PDF로 저장합니다(Ctrl+Shift+S).</li>
+        <li data-n="5"><strong>인쇄</strong> Windows 인쇄 창을 엽니다(Ctrl+P).</li>
+        <li data-n="6"><strong>닫기</strong> 저장 안 한 내용이 있으면 먼저 묻습니다(Ctrl+W).</li>
+        <li data-n="7"><strong>편집 메뉴</strong> 파일·편집·보기·입력·서식·쪽·표·도구. 한글과 비슷한 배치입니다.</li>
+        <li data-n="8"><strong>서식 도구줄</strong> 글꼴, 크기, 굵게, 정렬 같은 자주 쓰는 서식.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="edit-office" aria-labelledby="h-edit-office">
+      <h2 id="h-edit-office">Word, Excel, PowerPoint 편집 창</h2>
+      <p class="lead">docx, xlsx, pptx 문서를 앱 안에서 고칩니다. Microsoft Office 없이, 이 PC의 글꼴로 동작합니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/edit-docx.png" width="1583" height="974" loading="lazy" alt="문서 편집 창. 위쪽 막대와 편집기 메뉴, 회의록 문서, 아래 라이선스 고지 줄.">
+        <span class="pin" data-n="1" style="left:1.20%;top:1.60%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:80.73%;top:4.62%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:87.28%;top:4.62%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:95.18%;top:4.62%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:1.11%;top:7.70%" aria-hidden="true">5</span>
+        <span class="pin" data-n="6" style="left:1.20%;top:97.43%" aria-hidden="true">6</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>문서 상태</strong> 형식(문서·표·슬라이드), 파일 이름, 저장 상태.</li>
+        <li data-n="2"><strong>AI · 도구</strong> 옆에 AI 대화와 도구를 붙여 엽니다.</li>
+        <li data-n="3"><strong>저장</strong> 원래 형식 그대로 저장합니다(Ctrl+S).</li>
+        <li data-n="4"><strong>정보 · 라이선스</strong> 편집기의 원 개발사, 라이선스, 이 판의 소스 주소.</li>
+        <li data-n="5"><strong>편집기 메뉴</strong> 파일·홈·삽입·레이아웃 같은 편집 기능.</li>
+        <li data-n="6"><strong>고지 줄</strong> 편집기 출처와 라이선스를 늘 보여 줍니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="pii" aria-labelledby="h-pii">
+      <h2 id="h-pii">개인정보 찾아 가리기</h2>
+      <p class="lead">문서에서 개인정보를 찾아, 고른 것만 가린 사본을 원본 옆에 만듭니다. 인터넷과 AI 없이 이 PC에서만 동작합니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-pii.png" width="1783" height="974" loading="lazy" alt="개인정보 찾아 가리기 창. 주민등록번호, 휴대전화, 이메일 등 찾은 항목 표와 가린 사본 만들기 단추.">
+        <span class="pin" data-n="1" style="left:24.55%;top:18.36%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:25.11%;top:28.11%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:34.36%;top:28.37%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:44.46%;top:28.37%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:54.63%;top:28.37%" aria-hidden="true">5</span>
+        <span class="pin" data-n="6" style="left:60.87%;top:83.70%" aria-hidden="true">6</span>
+        </div>
+      <figcaption>예시 문서의 정보는 모두 가짜입니다.</figcaption>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>찾은 종류</strong> 종류별로 몇 개 찾았는지.</li>
+        <li data-n="2"><strong>고르기</strong> 가릴 것만 고릅니다. 맨 위 칸은 모두 고르기.</li>
+        <li data-n="3"><strong>찾은 값</strong> 문서에 있는 그대로의 값.</li>
+        <li data-n="4"><strong>가린 모양</strong> 사본에서 바뀔 모양.</li>
+        <li data-n="5"><strong>앞뒤 글</strong> 어디서 찾았는지 확인용 문맥.</li>
+        <li data-n="6"><strong>가린 사본 만들기</strong> 원본은 그대로 두고 &lt;이름&gt;_가림 사본을 만든 뒤, 남은 것이 없는지 다시 읽어 확인합니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="new-doc" aria-labelledby="h-new-doc">
+      <h2 id="h-new-doc">새 문서</h2>
+      <p class="lead">형식과 이름, 시작 방법을 고르면 바로 열립니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-new-doc.png" width="1783" height="974" loading="lazy" alt="새 문서 만들기 창. 형식, 파일 이름, 저장 위치, 시작 방법, AI 요청 입력.">
+        <span class="pin" data-n="1" style="left:29.59%;top:22.21%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:29.66%;top:37.10%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:29.66%;top:46.08%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:29.59%;top:54.56%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:29.59%;top:62.90%" aria-hidden="true">5</span>
+        <span class="pin" data-n="6" style="left:29.59%;top:76.12%" aria-hidden="true">6</span>
+        <span class="pin" data-n="7" style="left:56.80%;top:82.67%" aria-hidden="true">7</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>형식</strong> 한글(hwpx), 한글 호환(hwp), Word, PowerPoint, Excel.</li>
+        <li data-n="2"><strong>파일 이름</strong> 같은 이름이 있으면 바꿀 이름을 알려 줍니다.</li>
+        <li data-n="3"><strong>저장 위치</strong> 열린 문서의 폴더가 기본입니다. 바꾸기로 다른 곳을 고릅니다.</li>
+        <li data-n="4"><strong>시작 방법</strong> 빈 문서, 서식 파일(회의록·기안문·이력서·예산표 등), AI에게 부탁하기.</li>
+        <li data-n="5"><strong>AI 요청</strong> 만들 내용을 적습니다. 아래 예시를 눌러도 됩니다.</li>
+        <li data-n="6"><strong>바로 편집 창</strong> 만든 뒤 편집 창을 바로 엽니다.</li>
+        <li data-n="7"><strong>만들기</strong> 문서를 만들고, AI 요청이 있으면 이어서 AI가 채웁니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="pdf" aria-labelledby="h-pdf">
+      <h2 id="h-pdf">PDF 합치기, 나누기, 돌리기</h2>
+      <p class="lead">원본은 그대로 두고 결과를 새 PDF로 저장합니다. 인터넷 없이 동작합니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/pdf-tools.png" width="1783" height="974" loading="lazy" alt="PDF 도구 창. 합치기, 쪽 뽑기, 쪽 지우기, 돌리기 탭과 파일 목록.">
+        <span class="pin" data-n="1" style="left:24.83%;top:18.87%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:24.83%;top:26.57%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:24.83%;top:33.25%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:70.41%;top:83.95%" aria-hidden="true">4</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>작업 고르기</strong> 합치기, 쪽 뽑기(예: 1-3,5), 쪽 지우기, 돌리기.</li>
+        <li data-n="2"><strong>파일 목록</strong> 위에서부터 차례로 합칩니다. ↑↓로 순서를 바꾸고 ✕로 뺍니다.</li>
+        <li data-n="3"><strong>PDF 추가</strong> 합칠 PDF를 더합니다.</li>
+        <li data-n="4"><strong>저장</strong> 새 PDF로 저장합니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="settings" aria-labelledby="h-settings">
+      <h2 id="h-settings">설정 · AI</h2>
+      <p class="lead">AI 대화에 쓸 프로그램을 고릅니다. Office Kit은 로그인 정보를 다루지 않고, 내 PC에 설치·로그인한 프로그램을 그대로 실행합니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-settings-ai.png" width="1783" height="974" loading="lazy" alt="설정 창의 AI 쪽. 왼쪽 메뉴, Claude와 Codex 선택, 다시 확인 단추, 모델 입력 칸.">
+        <span class="pin" data-n="1" style="left:23.14%;top:18.36%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:38.43%;top:24.26%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:38.43%;top:33.76%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:68.30%;top:43.26%" aria-hidden="true">4</span>
+        <span class="pin" data-n="5" style="left:38.43%;top:56.48%" aria-hidden="true">5</span>
+        </div>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>설정 메뉴</strong> AI, 미리보기·화면(화면 언어 포함), 파일 열기, 외부 연결, 한글 자동화.</li>
+        <li data-n="2"><strong>Claude</strong> 내 Claude Code 로그인을 씁니다. 설치되어 있으면 버전이 보입니다.</li>
+        <li data-n="3"><strong>Codex</strong> 내 ChatGPT 계정으로 로그인한 Codex를 씁니다.</li>
+        <li data-n="4"><strong>다시 확인</strong> 설치·로그인 상태를 다시 찾습니다.</li>
+        <li data-n="5"><strong>모델</strong> 비워 두면 각 프로그램의 기본 모델을 씁니다.</li>
+      </ol>
+    </section>
+
+    <section class="tour-sec" id="connect" aria-labelledby="h-connect">
+      <h2 id="h-connect">설정 · 외부 연결</h2>
+      <p class="lead">Claude Desktop, Claude Code, Codex에 Office Kit 문서 도구(MCP)를 연결하거나, 터미널에서 office-kit 명령을 쓰게 합니다.</p>
+      <figure class="tour">
+        <div class="tour__stage">
+        <img src="images/tour-settings-connect.png" width="1783" height="974" loading="lazy" alt="설정 창의 외부 연결 쪽. Claude Desktop, Claude Code, Codex, 명령줄 도구의 연결 상태와 단추.">
+        <span class="pin" data-n="1" style="left:38.50%;top:24.26%" aria-hidden="true">1</span>
+        <span class="pin" data-n="2" style="left:38.50%;top:32.48%" aria-hidden="true">2</span>
+        <span class="pin" data-n="3" style="left:38.50%;top:40.82%" aria-hidden="true">3</span>
+        <span class="pin" data-n="4" style="left:38.50%;top:49.16%" aria-hidden="true">4</span>
+        </div>
+      <figcaption>사진의 사용자 폴더 이름은 가렸습니다.</figcaption>
+      </figure>
+      <ol class="tour__legend">
+        <li data-n="1"><strong>Claude Desktop</strong> 연결을 누르고 Claude Desktop을 다시 시작하면 문서 도구가 생깁니다.</li>
+        <li data-n="2"><strong>Claude Code</strong> 사용자 범위로 연결합니다. 연결 해제로 뺍니다.</li>
+        <li data-n="3"><strong>Codex</strong> Codex 설정 파일에 문서 도구를 더합니다. 고칠 때마다 백업을 남깁니다.</li>
+        <li data-n="4"><strong>명령줄 도구</strong> 새 터미널부터 office-kit 명령을 쓸 수 있습니다.</li>
+      </ol>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <div class="container footer__grid">
+    <div>
+      <a class="brand" href="./"><img src="images/icon.png" alt="" width="30" height="30">Office Kit</a>
+      <ul class="footer__links">
+        <li><a href="./">소개</a></li>
+        <li><a href="guide.html">사용 안내</a></li>
+        <li><a href="about.html">만든 방법</a></li>
+        <li><a href="https://github.com/toxh13/office-kit">소스 코드 (GitHub)</a></li>
+        <li><a href="https://github.com/toxh13/office-kit/releases">모든 버전</a></li>
+        <li><a href="https://github.com/toxh13/office-kit/blob/main/docs/CODE-SIGNING-POLICY.md">코드 서명 정책 (Code signing policy)</a></li>
+      </ul>
+    </div>
+    <div>
+      <p>Office Kit은 무료 오픈소스이며 아무런 보증이 없습니다. 앱 코드는 MIT이고, 함께 담긴 문서 편집기(ONLYOFFICE Docs 기반 수정판)가 GNU AGPL 3판이라 설치된 앱 전체는 AGPL 조건으로 배포합니다. 자세한 내용은 <a href="https://github.com/toxh13/office-kit/blob/main/LICENSE">라이선스 문서</a>에 있습니다.</p>
+      <p>ONLYOFFICE는 Ascensio System SIA의, Word·Excel·PowerPoint는 Microsoft의, 한컴·한글·HWP는 한글과컴퓨터의 상표입니다. Office Kit은 이들 회사와 관계가 없습니다.</p>
+    </div>
+  </div>
+</footer>
+<script>
+(() => {
+  // 설명에 마우스나 키보드 초점이 오면 같은 번호를 강조한다 (스크립트가 없어도 내용은 그대로 보인다)
+  for (const sec of document.querySelectorAll('.tour-sec')) {
+    const pins = sec.querySelectorAll('.pin');
+    const set = (n) => pins.forEach((p) => p.classList.toggle('is-on', p.dataset.n === n));
+    for (const li of sec.querySelectorAll('.tour__legend li')) {
+      li.tabIndex = 0;
+      li.addEventListener('mouseenter', () => set(li.dataset.n));
+      li.addEventListener('focus', () => set(li.dataset.n));
+      li.addEventListener('mouseleave', () => set(null));
+      li.addEventListener('blur', () => set(null));
+    }
+  }
+})();
+</script>
+</body>
+</html>

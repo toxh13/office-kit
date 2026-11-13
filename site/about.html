@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>만든 방법, Office Kit</title>
+<meta name="description" content="Office Kit을 무엇으로, 어떻게 만들었는지: 기술 구성, 데이터가 가는 곳, AI와 함께 만든 과정, 서명되지 않은 이유.">
+<link rel="icon" href="images/icon.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+<header class="nav">
+  <div class="container nav__inner">
+    <a class="brand" href="./"><img src="images/icon.png" alt="" width="30" height="30">Office Kit</a>
+    <ul class="nav__links">
+      <li><a href="features.html">기능 안내</a></li>
+      <li><a href="guide.html">사용 안내</a></li>
+      <li class="hide-s"><a href="about.html" aria-current="page">만든 방법</a></li>
+      <li class="hide-s"><a href="en/" lang="en">English</a></li>
+      <li><a class="btn btn--primary btn--s" href="https://github.com/toxh13/office-kit/releases/latest">내려받기</a></li>
+    </ul>
+  </div>
+</header>
+
+<div class="container guide">
+  <nav class="toc" aria-label="목차">
+    <p>목차</p>
+    <ol>
+      <li><a href="#stack">무엇으로 만들었나</a></li>
+      <li><a href="#data">데이터가 가는 곳</a></li>
+      <li><a href="#ai">AI와 함께 만든 과정</a></li>
+      <li><a href="#checks">어떻게 확인하나</a></li>
+      <li><a href="#unsigned">서명되지 않은 이유</a></li>
+      <li><a href="#source">소스와 라이선스</a></li>
+    </ol>
+  </nav>
+
+  <main id="main" class="doc">
+    <h1>만든 방법</h1>
+    <p class="lead">Office Kit은 개발자 한 명이 AI 코딩 도구와 함께 만든 Windows용 오픈소스 문서 도구입니다. 무엇으로 만들었고, 어떻게 확인하는지 정리했습니다.</p>
+
+    <section id="stack" aria-labelledby="h-stack">
+      <h2 id="h-stack">무엇으로 만들었나</h2>
+      <p>앱은 여러 오픈소스 부품을 하나로 묶은 구조입니다. 문서를 실제로 읽고 쓰는 일은 각 형식에 맞는 엔진이 맡습니다.</p>
+      <table>
+        <thead><tr><th scope="col">부분</th><th scope="col">쓰는 것</th><th scope="col">하는 일</th></tr></thead>
+        <tbody>
+          <tr><td>앱 틀</td><td><a href="https://www.electronjs.org/">Electron</a> 44 (Chromium, Node.js)</td><td>주 창, 편집 창, 설치 파일</td></tr>
+          <tr><td>한글 문서</td><td><a href="https://github.com/edwardkim/rhwp">rhwp</a> 0.8.7 (Rust, WebAssembly)와 rhwp-studio</td><td>hwp, hwpx 읽기·쓰기, 미리보기, PDF 저장, 한글 편집 창</td></tr>
+          <tr><td>Word, Excel, PowerPoint 편집 창</td><td>ONLYOFFICE Docs Community Edition 9.4.0 기반 수정판, <a href="https://github.com/BRF-Tech/filex-office-editor">filex-office-editor</a> 0.3.1</td><td>docx, xlsx, pptx 편집. 서버 없이 이 PC 안에서만 돕니다</td></tr>
+          <tr><td>문서 만들기·고치기</td><td>docx, ExcelJS, PptxGenJS, JSZip</td><td>새 문서, 칸 채우기, 찾아 바꾸기, 형식별 편집</td></tr>
+          <tr><td>PDF</td><td>pdf-lib, unpdf (PDF.js)</td><td>합치기, 나누기, 돌리기, 글 읽기</td></tr>
+          <tr><td>설치된 프로그램 연동</td><td>Windows PowerShell과 COM 자동화</td><td>Word, Excel, PowerPoint, 한컴오피스가 있으면 그 프로그램으로 정확한 미리보기와 PDF</td></tr>
+          <tr><td>AI 연결</td><td>사용자가 설치한 Claude Code 또는 Codex, <a href="https://modelcontextprotocol.io/">MCP</a> SDK</td><td>AI가 쓸 수 있는 문서 도구 22개를 제공합니다</td></tr>
+          <tr><td>빌드·배포</td><td>GitHub Actions, electron-builder (NSIS)</td><td>태그를 올리면 설치 파일과 소스 꾸러미를 만들어 Release에 올립니다</td></tr>
+        </tbody>
+      </table>
+      <p>부품마다 라이선스와 출처는 <a href="https://github.com/toxh13/office-kit/blob/main/THIRD-PARTY-NOTICES.txt">제3자 고지</a>에 있습니다.</p>
+    </section>
+
+    <section id="data" aria-labelledby="h-data">
+      <h2 id="h-data">데이터가 가는 곳</h2>
+      <ul>
+        <li>Office Kit에는 자체 서버가 없고, 사용 기록을 모으지 않습니다. 자동 업데이트도 없습니다.</li>
+        <li>직접 편집, 개인정보 가리기, PDF 도구는 인터넷 없이 이 PC 안에서만 동작합니다. 편집 창은 앱 밖으로 나가는 요청을 막습니다.</li>
+        <li>AI 대화를 쓸 때만 문서 내용이 내 계정으로 Anthropic(Claude Code) 또는 OpenAI(Codex)에 전송됩니다. Office Kit은 로그인 정보를 다루지 않고, 내 PC에 설치된 공식 프로그램을 고치지 않고 그대로 실행합니다.</li>
+      </ul>
+    </section>
+
+    <section id="ai" aria-labelledby="h-ai">
+      <h2 id="h-ai">AI와 함께 만든 과정</h2>
+      <p>코드, 테스트, 문서는 개발자가 Anthropic의 <a href="https://code.claude.com/docs">Claude Code</a>와 함께 작성했습니다. 저장소의 모든 커밋에 Claude가 공동 작성자로 기록되어 있습니다.</p>
+      <ul>
+        <li>개발자가 정한 것: 무엇을 만들지, 설계 방향, 배포와 공개 여부, 라이선스와 약관 판단.</li>
+        <li>AI와 함께 한 것: 코드와 테스트 작성, 버그 찾기, 문서와 이 사이트, 화면 사진 촬영.</li>
+        <li>AI가 쓴 코드도 사람이 쓴 코드와 같은 자동 테스트와 점검을 거쳐야 Release에 들어갑니다.</li>
+      </ul>
+      <p>앱의 AI 대화 기능은 이 개발 과정과 별개입니다. 사용자가 자기 PC에 설치하고 로그인한 AI를 씁니다.</p>
+    </section>
+
+    <section id="checks" aria-labelledby="h-checks">
+      <h2 id="h-checks">어떻게 확인하나</h2>
+      <ul>
+        <li>자동 테스트 약 670개가 GitHub에 올릴 때마다 돕니다. 실패하면 설치 파일을 만들지 않습니다.</li>
+        <li>보안 점검: 창과 앱 사이 통신, AI와 명령줄의 파일 접근, 편집기 서버를 나눠 코드를 읽고 고쳤습니다 (<a href="https://github.com/toxh13/office-kit/blob/main/docs/SECURITY-REVIEW.md">점검 기록</a>).</li>
+        <li>공개 전 점검: 비밀값과 개인정보가 저장소에 없는지, 라이선스 의무를 지키는지 확인했습니다.</li>
+        <li>이 사이트의 화면 사진은 실제 앱에서 가짜 데이터 문서를 열어 찍었습니다.</li>
+      </ul>
+    </section>
+
+    <section id="unsigned" aria-labelledby="h-unsigned">
+      <h2 id="h-unsigned">서명되지 않은 이유</h2>
+      <p>처음 실행할 때 “Windows의 PC 보호” 창이 뜰 수 있습니다. 설치 파일에 코드 서명이 없어서입니다. 코드 서명 인증서는 보통 회사나 유료 구매가 필요하고, 개인 오픈소스 프로젝트는 무료 서명 서비스를 쓰려면 일정한 사용자 수와 인지도가 먼저 있어야 합니다. Office Kit은 아직 그 단계 전이라 당분간 서명 없이 배포합니다.</p>
+      <ul>
+        <li>창이 뜨면 <strong>추가 정보</strong>를 누르고 <strong>실행</strong>을 고르면 설치됩니다.</li>
+        <li>받은 파일이 GitHub Release의 파일과 같은지 PowerShell로 확인할 수 있습니다.</li>
+      </ul>
+<pre><code>Get-FileHash .\OfficeKit-Setup-0.1.12.exe -Algorithm SHA256
+# 결과가 아래와 같아야 합니다 (0.1.12)
+# A5F2765F76D6BFC7BA547331E3E5A70A6C376A05E7DC5B1D7768B7D0F1E48B7B</code></pre>
+      <p>서명 방침과 준비 상황: <a href="https://github.com/toxh13/office-kit/blob/main/docs/CODE-SIGNING-POLICY.md">코드 서명 정책</a>.</p>
+    </section>
+
+    <section id="source" aria-labelledby="h-source">
+      <h2 id="h-source">소스와 라이선스</h2>
+      <ul>
+        <li>모든 소스는 <a href="https://github.com/toxh13/office-kit">GitHub 저장소</a>에 있습니다. Release 태그마다 그 판의 소스입니다.</li>
+        <li>Office Kit이 직접 쓴 코드는 MIT입니다. 함께 담긴 문서 편집기가 GNU AGPL 3판이라, 설치된 앱 전체는 AGPL 조건으로 배포합니다.</li>
+        <li>편집기를 이룬 원본 소스는 커밋 그대로 <a href="https://github.com/toxh13/office-kit-upstream">사본 저장소</a>에도 두었습니다.</li>
+      </ul>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <div class="container footer__grid">
+    <div>
+      <a class="brand" href="./"><img src="images/icon.png" alt="" width="30" height="30">Office Kit</a>
+      <ul class="footer__links">
+        <li><a href="./">소개</a></li>
+        <li><a href="features.html">기능 안내</a></li>
+        <li><a href="guide.html">사용 안내</a></li>
+        <li><a href="https://github.com/toxh13/office-kit">소스 코드 (GitHub)</a></li>
+        <li><a href="https://github.com/toxh13/office-kit/releases">모든 버전</a></li>
+        <li><a href="https://github.com/toxh13/office-kit/blob/main/docs/CODE-SIGNING-POLICY.md">코드 서명 정책 (Code signing policy)</a></li>
+      </ul>
+    </div>
+    <div>
+      <p>Office Kit은 무료 오픈소스이며 아무런 보증이 없습니다. 앱 코드는 MIT이고, 함께 담긴 문서 편집기(ONLYOFFICE Docs 기반 수정판)가 GNU AGPL 3판이라 설치된 앱 전체는 AGPL 조건으로 배포합니다. 자세한 내용은 <a href="https://github.com/toxh13/office-kit/blob/main/LICENSE">라이선스 문서</a>에 있습니다.</p>
+      <p>ONLYOFFICE는 Ascensio System SIA의, Word·Excel·PowerPoint는 Microsoft의, 한컴·한글·HWP는 한글과컴퓨터의 상표입니다. Office Kit은 이들 회사와 관계가 없습니다.</p>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

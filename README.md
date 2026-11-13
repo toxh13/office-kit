@@ -4,7 +4,7 @@
 
 한글(HWP·HWPX)·Word·PowerPoint·Excel 문서를 **열고, 확인하고, 직접 또는 AI 대화로 고치는** Windows 데스크톱 도구.
 
-[안내 사이트](https://toxh13.github.io/office-kit/) · [내려받기 (Releases)](https://github.com/toxh13/office-kit/releases/latest) · [English](README.en.md)
+[안내 사이트](https://toxh13.github.io/office-kit/) · [기능 안내 (화면별 설명)](https://toxh13.github.io/office-kit/features.html) · [만든 방법](https://toxh13.github.io/office-kit/about.html) · [내려받기 (Releases)](https://github.com/toxh13/office-kit/releases/latest) · [English](README.en.md)
 
 ![Office Kit 주 창: 왼쪽 문서 미리보기, 오른쪽 AI 도우미](site/images/main.png)
 
