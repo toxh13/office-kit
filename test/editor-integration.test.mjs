@@ -1029,6 +1029,22 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.deepEqual(mainWin.getMinimumSize(), [1000, 680]);
   });
 
+  await t.test('IPC 표: 편집 창 ↔ 주 창 채널은 서로 거절, 하위 틀 거절, 열린 채널은 누구에게나 답', async () => {
+    // 편집 창 → 주 창 채널
+    let r = await fake.invokeFrom(officeWin.webContents, 'ai:send', { prompt: 'x' });
+    assert.deepEqual([r.ok, r.error], [false, '허용되지 않은 요청입니다']);
+    // 주 창 → 편집 창 채널
+    r = await call('editor:get-document');
+    assert.deepEqual([r.ok, r.error], [false, '허용되지 않은 요청입니다']);
+    // 주 창 안의 하위 틀
+    r = await fake.invokeAs(fake.evOf(mainWc, { url: 'file:///sub.html' }), 'doc:versions');
+    assert.equal(r.ok, false);
+    // 어느 창에도 속하지 않은 화면도 번역 사전(열린 채널)은 받는다
+    const stray = new fake.WebContentsView({}).webContents;
+    assert.ok(fake.emitSync(stray, 'i18n:get'));
+    assert.notEqual(fake.emitSync(stray, 'editor:i18n'), undefined);
+  });
+
   await t.test('탐색기에서 연 옛 형식(csv) → 새 형식(xlsx)으로 바꿔 편집 창, 첫 저장은 원본 옆 새 파일 (원본 그대로)', async () => {
     const csv = join(docs, '명단.csv');
     writeFileSync(csv, '이름,점수\n홍길동,90\n김영희,85\n', 'utf8');

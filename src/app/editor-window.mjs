@@ -12,6 +12,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
+import { allows, channelSpec } from './ipc-channels.mjs';
 import { editorAvailable, editorDirs, officeEditorAvailable, startEditorServer } from './editor-server.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -548,11 +549,13 @@ export function createEditorManager({
     return entry;
   }
 
-  function handle(channel, fn, { kinds = ['hwp', 'office'] } = {}) {
+  // 채널과 보낸 쪽 종류(한글 hwp · 문서·표·슬라이드 office)는 IPC 표(ipc-channels.mjs)로 검사한다
+  function handle(channel, fn) {
+    channelSpec(channel, 'invoke');
     ipcMain.handle(channel, async (e, ...args) => {
       try {
         const entry = senderEntry(e);
-        if (!entry || !kinds.includes(entry.kind)) throw fail('허용되지 않은 요청입니다');
+        if (!entry || !allows(channel, [entry.kind])) throw fail('허용되지 않은 요청입니다');
         return { ok: true, value: await fn(entry, ...args) };
       } catch (err) {
         if (!err?.expected) log(`[${channel}]`, err);
@@ -561,15 +564,31 @@ export function createEditorManager({
     });
   }
   function on(channel, fn) {
+    channelSpec(channel, 'on');
     ipcMain.on(channel, (e, ...args) => {
       const entry = senderEntry(e);
-      if (!entry) return;
+      if (!entry || !allows(channel, [entry.kind])) return;
       try { fn(entry, ...args); } catch (err) { log(`[${channel}]`, err); }
     });
   }
 
+  /** ipcMain.on 등록 (이벤트 e를 그대로 넘김). 열린 채널(표에서 open)은 보낸 쪽을 가리지 않고, 아니면 on과 같은 검사 */
+  function onIpc(channel, fn) {
+    channelSpec(channel, 'on');
+    ipcMain.on(channel, (e, ...args) => {
+      const entry = senderEntry(e);
+      if (!allows(channel, entry ? [entry.kind] : null)) return;
+      fn(e, ...args);
+    });
+  }
+  /** 편집 창 host 페이지로 보내기 (표에 있는 send 채널만) */
+  function sendToEditor(entry, channel, payload) {
+    channelSpec(channel, 'send');
+    entry.win.webContents.send(channel, payload);
+  }
+
   // 화면 번역 사전 (편집 창 preload가 처음에 sendSync로 받는다 — 앱에 든 공개 글이라 보낸 쪽을 가리지 않는다. 답은 꼭 준다)
-  ipcMain.on('editor:i18n', (e) => { try { e.returnValue = i18nData() ?? null; } catch { e.returnValue = null; } });
+  onIpc('editor:i18n', (e) => { try { e.returnValue = i18nData() ?? null; } catch { e.returnValue = null; } });
 
   // 편집 창의 'AI · 도구' 단추 → main이 그 문서의 옆 창(AI 대화·버전·도구)을 이 창 옆에 띄운다
   // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
@@ -730,7 +749,7 @@ export function createEditorManager({
     log(`내려받기: ${target} (${bytes.length}바이트)`);
     try { onDownloaded?.(target); } catch (err) { log('onDownloaded 오류:', err); }
     return res;
-  }, { kinds: ['office'] });
+  });
 
   // 인쇄: 편집기가 만든 PDF → 임시 파일 → 기본 PDF 앱으로 (PDF 앱이 없으면 저장 대화상자)
   // 편집기 틀이 만든 PDF가 이 창 밖(기본 PDF 앱)으로 나가는 유일한 길이므로: 한 번에 하나, 3초 간격, 창마다 처음 한 번 묻는다
@@ -744,7 +763,7 @@ export function createEditorManager({
     }
     entry.printing = true;
     try { return await printPdf(entry, pdf); } finally { entry.printing = false; entry.lastPrintAt = Date.now(); }
-  }, { kinds: ['office'] });
+  });
 
   // 한글 편집 창: 지금 내용(저장 안 한 것 포함)을 PDF로 → 인쇄(기본 PDF 앱) 또는 PDF로 저장. 바이트는 hwp 형식
   handle('editor:hwp-pdf', async (entry, bytes, op) => {
@@ -770,7 +789,7 @@ export function createEditorManager({
       if (typeof toPrint === 'function') return await toPrint(bytes, entry.win);
       return await printPdf(entry, await toPdf(bytes));
     } finally { entry.printing = false; entry.lastPrintAt = Date.now(); }
-  }, { kinds: ['hwp'] });
+  });
 
   async function printPdf(entry, pdf) {
     if (!entry.printAllowed) {
@@ -817,7 +836,7 @@ export function createEditorManager({
     else if (v === null) memoryState.delete(key);
     else if (memoryState.size < 256 || memoryState.has(key)) memoryState.set(key, v);
     return null;
-  }, { kinds: ['office'] });
+  });
 
   on('editor:dirty', (entry, dirty) => {
     dirty = dirty === true;
@@ -838,13 +857,14 @@ export function createEditorManager({
 
   /** host 페이지에 묻고 답(boolean | null)을 기다린다. 시간이 지나거나 창이 없어지면 null */
   function ask(entry, channel, payload = {}, timeoutMs = REPLY_TIMEOUT_MS) {
+    channelSpec(channel, 'send'); // 표에 없는 채널은 null로 삼키지 않고 바로 던진다
     if (channel === 'editor:command') entry.userActAt = Date.now(); // 단축키·닫기 확인창의 '저장'은 사용자가 고른 것
     if (!entry.win || entry.win.isDestroyed()) return Promise.resolve(null);
     const id = `${++seq}`;
     return new Promise((res) => {
       const timer = setTimeout(() => { pending.delete(id); res(null); }, timeoutMs);
       pending.set(id, { resolve: res, timer, entry });
-      try { entry.win.webContents.send(channel, { ...payload, id }); } catch { clearTimeout(timer); pending.delete(id); res(null); }
+      try { sendToEditor(entry, channel, { ...payload, id }); } catch { clearTimeout(timer); pending.delete(id); res(null); }
     });
   }
 
@@ -1099,7 +1119,7 @@ export function createEditorManager({
     if (!st) {
       if (entry.known.missing) return false;
       entry.known = { ...entry.known, missing: true };
-      entry.win.webContents.send('editor:external-change', { missing: true, size: 0, mtimeMs: null });
+      sendToEditor(entry, 'editor:external-change', { missing: true, size: 0, mtimeMs: null });
       return true;
     }
     if (!force && !entry.known.missing && st.mtimeMs === entry.known.mtimeMs && st.size === entry.known.size) return false;
@@ -1108,7 +1128,7 @@ export function createEditorManager({
     const { hash: before, missing: wasMissing } = entry.known;
     entry.known = { mtimeMs: st.mtimeMs, size: st.size, hash, missing: false };
     if (!force && (before === null || hash === before) && !wasMissing) return false; // before null = 내용을 몰랐다 → 이번 것을 기준으로만
-    entry.win.webContents.send('editor:external-change', { missing: false, size: st.size, mtimeMs: st.mtimeMs, reason });
+    sendToEditor(entry, 'editor:external-change', { missing: false, size: st.size, mtimeMs: st.mtimeMs, reason });
     return true;
   }
 

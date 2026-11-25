@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { allows, channelSpec, HUB_KINDS } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
 
@@ -156,6 +157,7 @@ async function start() {
   }
 
   function send(channel, data) {
+    channelSpec(channel, 'send');
     if (win && !win.isDestroyed()) win.webContents.send(channel, data);
   }
 
@@ -1747,19 +1749,33 @@ async function start() {
 
   // ── IPC ──────────────────────────────────────────────
 
-  // 모든 요청은 { ok, value } / { ok:false, error, code } 로 돌려준다
+  /** 보낸 쪽이 주 창의 최상위 틀이면 그 뷰 종류(HUB_KINDS), 아니면 null */
+  function hubKindsOf(e) {
+    if (!win || win.isDestroyed() || e.sender !== win.webContents || !e.senderFrame || e.senderFrame !== win.webContents.mainFrame) return null;
+    return HUB_KINDS;
+  }
+
+  // 모든 요청은 { ok, value } / { ok:false, error, code } 로 돌려준다. 채널과 보낸 쪽은 IPC 표(ipc-channels.mjs)로 검사한다
   function handle(channel, fn) {
+    channelSpec(channel, 'invoke');
     ipcMain.handle(channel, async (e, ...args) => {
       try {
-        if (!win || e.sender !== win.webContents || !e.senderFrame || e.senderFrame !== win.webContents.mainFrame) {
-          throw fail('허용되지 않은 요청입니다');
-        }
+        if (!allows(channel, hubKindsOf(e))) throw fail('허용되지 않은 요청입니다');
         return { ok: true, value: await fn(...args) };
       } catch (err) {
         if (!err?.expected && err?.code !== 'MODULE_MISSING') console.error(`[${channel}]`, err);
         // detail: 엔진이 낸 원래 글 (화면이 '자세히'로 접어 보여 준다)
         return { ok: false, error: err?.message ?? String(err), code: err?.code ?? null, ...(err?.detail ? { detail: String(err.detail).slice(0, 4000) } : {}) };
       }
+    });
+  }
+
+  /** ipcMain.on 등록 (send·sendSync). 열린 채널이 아니면 주 창 최상위 틀이 보낸 것만 받는다 */
+  function onIpc(channel, fn) {
+    channelSpec(channel, 'on');
+    ipcMain.on(channel, (e, ...args) => {
+      if (!allows(channel, hubKindsOf(e))) return;
+      return fn(e, ...args);
     });
   }
 
@@ -2009,8 +2025,7 @@ async function start() {
       return { ok, kind, state, phase, fonts, about, aboutInfo, reason: reason || null, title: ew.getTitle(), png, size: img.getSize() };
     }
 
-    ipcMain.on('smoke:ready', async (e, info = {}) => {
-      if (!win || e.sender !== win.webContents) return;
+    onIpc('smoke:ready', async (e, info = {}) => {
       try {
         // 열면 바로 편집 창 (OFFICEKIT_SMOKE_AUTOEDIT=1): 화면이 편집 창을 띄웠는지 (30초까지 기다림)
         let autoEditor = null;
@@ -2230,7 +2245,7 @@ async function start() {
   await app.whenReady();
   i18n = createI18n(resolveLang(settings.get('lang'), app.getPreferredSystemLanguages?.() ?? [app.getLocale?.() ?? 'ko']));
   // 화면(주 창·편집 창의 preload)이 처음 그리기 전에 받는다 (sendSync) — 번역 사전은 앱에 들어 있는 공개 글이다
-  ipcMain.on('i18n:get', (e) => { e.returnValue = { lang: i18n.lang, setting: settings.get('lang'), dict: i18n.dict }; });
+  onIpc('i18n:get', (e) => { e.returnValue = { lang: i18n.lang, setting: settings.get('lang'), dict: i18n.dict }; });
   nativeTheme.themeSource = ['light', 'dark'].includes(settings.get('theme')) ? settings.get('theme') : 'system';
   // 맞춤법 검사는 쓰지 않는다. 창을 만들기만 해도 Chromium이 인터넷에서 사전(ko-3-0.bdic, 11MB)을 받으므로 받을 곳을 막는다
   try { session.defaultSession.setSpellCheckerDictionaryDownloadURL('http://127.0.0.1:9/'); } catch {}
