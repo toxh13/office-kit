@@ -206,3 +206,9 @@ test('다리: call하는 이름은 모두 다른 쪽이 provide한다', () => {
   for (const n of names(core, 'call')) assert.ok(homeGives.has(n) || panelGives.has(n), 'core.js가 부르는 ' + n + '을 아무도 provide하지 않음');
   assert.equal(names(core, 'provide').size, 0);
 });
+
+test('main.mjs: 전역 current·watcher·pendingFile·rendererReady 선언 없음', () => {
+  // 열린 문서·파일 감시·대기 파일·화면 준비는 보낸 쪽 허브(hub)마다 둔다 (탭 창이 여러 개가 될 때 섞이지 않게)
+  const main = readFileSync(join(ROOT, 'src', 'app', 'main.mjs'), 'utf8');
+  assert.doesNotMatch(main, /^\s{2}let (current|watcher|pendingFile|rendererReady)\b/m);
+});
