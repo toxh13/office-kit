@@ -20,5 +20,6 @@
  "PDF로 저장하지 못했습니다: {0}": "Couldn't save as PDF: {0}",
  "Office Kit로 열기": "Open with Office Kit",
  "위쪽 소스 사본 (ONLYOFFICE·filex·x2t를 이룬 커밋 그대로)": "Upstream source copy (ONLYOFFICE, filex, x2t at the exact commits used)",
- "지금 내용을 버전으로 남기지 못해 되돌리지 않았습니다. 디스크 공간을 확인하세요.": "Didn't restore because the current content couldn't be saved as a version. Check your disk space."
+ "지금 내용을 버전으로 남기지 못해 되돌리지 않았습니다. 디스크 공간을 확인하세요.": "Didn't restore because the current content couldn't be saved as a version. Check your disk space.",
+ "‘{0}’ 파일을 다른 프로그램이 쓰고 있거나 쓸 권한이 없어 저장하지 못했습니다.": "Couldn't save because ‘{0}’ is in use by another program or you don't have permission to write it."
 }

@@ -1,11 +1,12 @@
 // ppt.mjs — PowerPoint 전용 기능: 살펴보기(pptInspect)와 편집(pptEdit). 설치된 PowerPoint(COM)가 필요하다.
 // 작업 실행은 scripts/com/ppt-ops.ps1 (office.ps1이 불러옴). 규칙은 docs/FEATURES.md.
-import { existsSync, openSync, readSync, closeSync, statSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, readSync, closeSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import JSZip from 'jszip';
 import { z } from 'zod';
+import { saveZip } from './officefile.mjs';
 import { comCall, comAvailableFor } from './com.mjs';
 
 export const PPT_EXTS = ['pptx', 'ppt', 'odp'];
@@ -399,7 +400,7 @@ async function writableCopy(path) {
   zip.file(name, xml.replace(MODIFY_VERIFIER, ''));
   const dir = mkdtempSync(join(tmpdir(), 'officekit-ppt-'));
   const file = join(dir, basename(path));
-  writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  await saveZip(zip, file);
   return { dir, file, verifier };
 }
 
@@ -414,7 +415,7 @@ async function putVerifier(output, verifier) {
   if (at < 0) throw new Error('presentation.xml 끝을 찾지 못함');
   xml = xml.slice(0, at) + verifier + xml.slice(at);
   zip.file(name, xml);
-  writeFileSync(output, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  await saveZip(zip, output);
 }
 
 const samePath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);

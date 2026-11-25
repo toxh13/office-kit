@@ -1,10 +1,11 @@
 // officefile.mjs — 프로그램 없이 docx/pptx/xlsx/csv를 읽고 쓰는 파일 엔진.
 // 쓰기는 ZIP 안의 XML을 직접 고친다 (차트·그림·매크로 등 모르는 부분은 그대로 남긴다).
 // xlsx 읽기는 exceljs를 쓴다.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
+import { writeFileAtomic } from './atomic.mjs';
 
 const ENT = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'" };
 const decode = (s) => s.replace(/&(amp|lt|gt|quot|apos);|&#(\d+);|&#x([0-9a-f]+);/gi,
@@ -26,7 +27,16 @@ async function partText(zip, name, path) {
   if (!f) throw damaged(path);
   return f.async('string');
 }
-const saveZip = async (zip, output) => writeFileSync(output, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+// 임시 파일에 쓴 뒤 바꿔 넣는다 — 저장이 실패해도 원본은 그대로. 잠김·권한 오류는 한국어로 감싼다(cause 유지)
+export async function saveZip(zip, output) {
+  const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  try { writeFileAtomic(output, buf); } catch (e) {
+    if (['EBUSY', 'EPERM', 'EACCES'].includes(e?.code)) {
+      throw new Error(`‘${basename(output)}’ 파일을 다른 프로그램이 쓰고 있거나 쓸 권한이 없어 저장하지 못했습니다.`, { cause: e });
+    }
+    throw e;
+  }
+}
 
 function numbered(zip, re) {
   return Object.keys(zip.files).filter((f) => re.test(f))

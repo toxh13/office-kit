@@ -45,6 +45,7 @@
  "‘{0}’ 파일은 이름만 .{1}이고 내용은 옛 형식(.doc·.xls·.ppt 등)이라 직접 편집할 수 없습니다. 프로그램에서 여세요.": "‘{0}’ is named .{1} but its contents are in an old format (.doc, .xls, .ppt, etc.), so it can't be edited here. Open it in the app.",
  "‘{0}’ 파일은 읽기 전용이라 저장할 수 없습니다. 다른 이름으로 저장하세요.": "‘{0}’ is read-only and can't be saved. Save it under a different name.",
  "‘{0}’ 파일은 읽기 전용이라 저장할 수 없습니다. 다른 이름을 고르세요.": "‘{0}’ is read-only and can't be saved. Choose a different name.",
+ "‘{0}’ 파일을 다른 프로그램이 쓰고 있거나 쓸 권한이 없어 저장하지 못했습니다.": "Couldn't save because ‘{0}’ is in use by another program or you don't have permission to write it.",
  "‘{0}’ 파일을 다른 프로그램이 쓰고 있거나 쓸 권한이 없어 저장하지 못했습니다. 그 프로그램을 닫고 다시 저장하거나, 다른 이름으로 저장하세요.": "Couldn't save ‘{0}’ because another program is using it or you don't have permission to write to it. Close that program and save again, or save under a different name.",
  "‘{0}’ 파일을 읽을 수 없습니다. 다른 프로그램이 쓰고 있으면 닫고 다시 시도하세요.": "Can't read ‘{0}’. If another program is using it, close that program and try again.",
  "‘{0}’ 파일을 읽지 못했습니다: {1}": "Couldn't read ‘{0}’: {1}",
