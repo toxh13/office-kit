@@ -621,6 +621,17 @@ export function runCli({ provider, command, args = [], cwd, env = process.env, i
   };
 }
 
+/** 앱 안 AI 대화가 쓸 MCP 서버 환경값. 경로에 ;가 있어도 갈라지지 않게 모두 JSON 배열로 넘긴다
+ *  저장·읽기는 열린 문서의 폴더만, 고치기는 열린 문서만 */
+export function aiMcpEnv(docPath) {
+  const dir = dirname(docPath);
+  return {
+    OFFICEKIT_WRITE_ROOTS: JSON.stringify([dir]),
+    OFFICEKIT_READ_ROOTS: JSON.stringify([dir]),
+    OFFICEKIT_EDIT_FILES: JSON.stringify([docPath]),
+  };
+}
+
 /** 대화 기록(세션)이 쌓이는 고정 작업 폴더. 같은 폴더여야 이어 하기가 된다 */
 export function defaultWorkspace(env = process.env) {
   return join(envGet(env, 'LOCALAPPDATA') ?? tmpdir(), 'office-kit', 'ai');

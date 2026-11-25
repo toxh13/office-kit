@@ -338,6 +338,24 @@ describe('앱 안 AI 대화의 제한 (열린 문서만 고치기, 그 폴더만
   });
 });
 
+describe('앱 안 AI 대화: 경로에 ;가 있을 때', () => {
+  test('OFFICEKIT_EDIT_FILES가 JSON 배열이면 ;로 자르지 않는다', async () => {
+    const root = tmp.path('ai;semi');
+    mkdirSync(root, { recursive: true });
+    const opened = join(root, '열린;문서.docx');
+    const { client: setup } = await connect([SERVER]);
+    try {
+      const r = await setup.callTool({ name: 'office_create', arguments: { output: opened, markdown: '# 제목\n\n본문', overwrite: true } }, undefined, { timeout: 60_000 });
+      assert.ok(!r.isError, textOf(r));
+    } finally { await setup.close(); }
+    const { client: c } = await connect([SERVER], { OFFICEKIT_WRITE_ROOTS: JSON.stringify([root]), OFFICEKIT_READ_ROOTS: JSON.stringify([root]), OFFICEKIT_EDIT_FILES: JSON.stringify([opened]) });
+    try {
+      const r = await c.callTool({ name: 'office_create', arguments: { output: opened, markdown: '# 덮어쓰기', overwrite: true } }, undefined, { timeout: 60_000 });
+      assert.ok(!r.isError, textOf(r));
+    } finally { await c.close(); }
+  });
+});
+
 describe('PDF 도구', () => {
   test('office_pdf_tools: 합치기 → 쪽 뽑기 → 돌리기', async () => {
     copyFileSync(join(ROOT, 'test', 'fixtures', 'pdf', '신청서.pdf'), tmp.path('p1.pdf'));

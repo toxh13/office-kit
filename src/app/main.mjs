@@ -1407,7 +1407,7 @@ async function start() {
     const base = await mcpSpec();
     // 앱 안 AI는 열린 문서의 폴더에만 저장할 수 있다 (MCP 서버가 OFFICEKIT_WRITE_ROOTS로 막는다)
     // 읽기는 그 폴더 안만, 고치기는 열린 문서와 AI가 새로 만든 파일만 (다른 파일은 덮어쓰지 않음)
-    const mcp = { ...base, env: { ...(base.env ?? {}), OFFICEKIT_WRITE_ROOTS: dirname(path), OFFICEKIT_READ_ROOTS: dirname(path), OFFICEKIT_EDIT_FILES: path } };
+    const mcp = { ...base, env: { ...(base.env ?? {}), ...ai.aiMcpEnv(path) } };
     // 준비하는 사이 '원래대로'를 눌렀으면 시작하지 않는다 (되돌린 파일을 다시 고치지 않게)
     if (restoring.has(k) || (restoreGen.get(k) ?? 0) !== gen) throw fail('문서를 원래대로 되돌려서 이 요청은 보내지 않았습니다.');
     // AI가 고치기 전 상태를 버전으로 남긴다 (대화 한 번마다. 내용이 같으면 있던 것을 다시 씀)

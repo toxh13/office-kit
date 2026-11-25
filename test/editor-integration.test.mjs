@@ -215,6 +215,7 @@ function makeOfficeVendor(dir) {
 const FAKE_AI = `
 export async function detectProviders() { return [{ id: 'claude', name: 'Claude (시험)', available: true, version: '1', hint: '' }]; }
 export function defaultWorkspace() { return process.env.OFFICEKIT_TEST_WS; }
+export function aiMcpEnv() { return {}; }
 export function startChat({ prompt, onEvent }) {
   globalThis.__okPrompts = [...(globalThis.__okPrompts ?? []), prompt];
   const done = Promise.resolve().then(() => { onEvent({ type: 'done', sessionId: 's1', text: '네' }); return { sessionId: 's1', text: '네' }; });

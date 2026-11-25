@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createLineDecoder, createClaudeParser, createCodexParser, claudeArgs, codexArgs, friendlyError, summarize,
   toolLabel, shortToolName, systemPrompt, startChat, runCli, detectProviders, resolveClaude, resolveCodex,
-  cmdShimTarget, findOnPath, PROVIDERS,
+  cmdShimTarget, findOnPath, PROVIDERS, aiMcpEnv,
 } from '../src/app/ai.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -648,4 +648,12 @@ test('runCli: onEvent 가 예외를 던져도 대화는 끝까지 간다', async
 test('처리되지 않은 거부(unhandled rejection) 없음', async () => {
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(unhandled, []);
+});
+
+test('aiMcpEnv는 세미콜론·괄호·공백 경로를 JSON 배열로 넘긴다', () => {
+  const doc = 'D:\회의;자료 (최종)\견적서;최종.docx';
+  const env = aiMcpEnv(doc);
+  assert.deepEqual(JSON.parse(env.OFFICEKIT_WRITE_ROOTS), [dirname(doc)]);
+  assert.deepEqual(JSON.parse(env.OFFICEKIT_READ_ROOTS), [dirname(doc)]);
+  assert.deepEqual(JSON.parse(env.OFFICEKIT_EDIT_FILES), [doc]);
 });
