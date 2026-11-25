@@ -6,7 +6,7 @@ import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import JSZip from 'jszip';
-import { josa, koreanComError, comCall, LOCK_WAIT_MS, killRegisteredOffice } from '../src/core/com.mjs';
+import { josa, koreanComError, comCall, LOCK_WAIT_MS, killRegisteredOffice, OFFICE_PROCESS_NAMES } from '../src/core/com.mjs';
 import { convertDocument, createDocument, openInApp, readDocument, replaceText } from '../src/core/index.mjs';
 import { COM_TESTS, MANUSCRIPT, tempDir } from './helpers/fixtures.mjs';
 
@@ -285,15 +285,69 @@ describe('프로그램 엔진 — OFFICEKIT_COM_TESTS=1 일 때만', { skip: !CO
 
 // ── AI 작업을 멈췄을 때 남은 Office 정리 ─────────────────────
 
-describe('killRegisteredOffice', () => {
-  test('적힌 PID의 프로세스를 끝내고 파일을 지운다 → 끝낸 개수', async () => {
-    const dir = tmp.path('com-pids-live');
+describe('killRegisteredOffice', { skip: !WIN && 'Windows 전용 (PowerShell로 프로세스 확인)' }, () => {
+  const startIdle = () => spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+  test('기본 이름 목록: Office가 아닌 프로세스(node)는 끝내지 않고 파일만 지운다', async () => {
+    assert.equal(OFFICE_PROCESS_NAMES.word, 'WINWORD');
+    const dir = tmp.path('com-pids-other');
     mkdirSync(dir, { recursive: true });
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+    const child = startIdle();
     const exited = new Promise((r) => child.once('exit', () => r(true)));
     try {
+      await sleep(300);
+      writeFileSync(join(dir, `${child.pid}.pid`), JSON.stringify({ pid: child.pid, app: 'word', since: Date.now() - 1000, registered: Date.now() }), 'utf8');
+      assert.equal(killRegisteredOffice(dir), 0);
+      assert.deepEqual(readdirSync(dir), []);
+      assert.equal(await Promise.race([exited, sleep(1000).then(() => false)]), false, '다른 프로그램을 끝냈다');
+    } finally {
+      try { child.kill(); } catch { /* 이미 끝남 */ }
+    }
+  });
+  test('등록 시각이 없거나 프로세스가 등록 뒤에 시작됐으면(PID 재사용) 끝내지 않는다', async () => {
+    const dir = tmp.path('com-pids-reused');
+    mkdirSync(dir, { recursive: true });
+    const child = startIdle();
+    const exited = new Promise((r) => child.once('exit', () => r(true)));
+    try {
+      await sleep(300);
+      const names = { word: 'node' };
+      writeFileSync(join(dir, `${child.pid}.pid`), JSON.stringify({ pid: child.pid, app: 'word', registered: Date.now() - 60_000 }), 'utf8');
+      assert.equal(killRegisteredOffice(dir, names), 0);
       writeFileSync(join(dir, `${child.pid}.pid`), JSON.stringify({ pid: child.pid, app: 'word' }), 'utf8');
-      assert.equal(killRegisteredOffice(dir), 1);
+      assert.equal(killRegisteredOffice(dir, names), 0);
+      assert.deepEqual(readdirSync(dir), []);
+      assert.equal(await Promise.race([exited, sleep(500).then(() => false)]), false);
+    } finally {
+      try { child.kill(); } catch { /* 이미 끝남 */ }
+    }
+  });
+  test('다른 프로세스가 Office 작업 중(공유 잠금을 쥠)이면 끝내지 않는다', { timeout: 300_000 }, async (t) => {
+    const holder = await holdLock(9000);
+    if (!holder) return t.skip('다른 Office 작업이 잠금을 오래 쥐고 있음');
+    const dir = tmp.path('com-pids-locked');
+    mkdirSync(dir, { recursive: true });
+    const child = startIdle();
+    const exited = new Promise((r) => child.once('exit', () => r(true)));
+    try {
+      await sleep(300);
+      writeFileSync(join(dir, `${child.pid}.pid`), JSON.stringify({ pid: child.pid, app: 'word', registered: Date.now() }), 'utf8');
+      assert.equal(killRegisteredOffice(dir, { word: 'node' }), 0);
+      assert.deepEqual(readdirSync(dir), []);
+      assert.equal(await Promise.race([exited, sleep(300).then(() => false)]), false, '잠금을 잡지 못했는데 끝냈다');
+    } finally {
+      try { child.kill(); } catch { /* 이미 끝남 */ }
+      await holder.done;
+    }
+  });
+  test('적힌 PID의 프로세스를 끝내고 파일을 지운다 → 끝낸 개수 (이름 목록을 바꿔 끼움)', async () => {
+    const dir = tmp.path('com-pids-live');
+    mkdirSync(dir, { recursive: true });
+    const child = startIdle();
+    const exited = new Promise((r) => child.once('exit', () => r(true)));
+    try {
+      await sleep(300);
+      writeFileSync(join(dir, `${child.pid}.pid`), JSON.stringify({ pid: child.pid, app: 'word', registered: Date.now() }), 'utf8');
+      assert.equal(killRegisteredOffice(dir, { word: 'node' }), 1);
       assert.equal(await Promise.race([exited, sleep(10_000).then(() => false)]), true, '프로세스가 끝나지 않음');
       assert.deepEqual(readdirSync(dir), []);
     } finally {

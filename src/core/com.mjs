@@ -1,6 +1,6 @@
 // com.mjs — 설치된 한컴/Word/PowerPoint/Excel을 PowerShell COM으로 조작한다.
 // 네이티브 모듈 없이 동작하도록 요청·응답을 임시 JSON 파일로 주고받는다.
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve, basename } from 'node:path';
@@ -20,6 +20,8 @@ const APP_NAME = { hwp: '한글', word: 'Word', ppt: 'PowerPoint', excel: 'Excel
 
 // office.ps1이 공유 잠금(Local\OfficeKitCom)을 잡고 일하는 프로그램. 잠금을 잡으면 startedFile을 쓴다.
 const LOCKED_APPS = new Set(['hwp', 'word', 'ppt', 'excel']);
+// 앱별 Office 실행 파일 이름 (office.ps1 New-OfficeApp이 새로 뜬 프로세스를 찾는 이름과 같다)
+export const OFFICE_PROCESS_NAMES = Object.freeze({ hwp: 'Hwp', word: 'WINWORD', ppt: 'POWERPNT', excel: 'EXCEL' });
 // 다른 프로세스(앱 미리보기·AI의 MCP 서버)의 Office 작업이 끝나기를 기다리는 최대 시간
 export const LOCK_WAIT_MS = 15 * 60_000;
 const POLL_MS = 200;
@@ -152,27 +154,66 @@ function removeOwnerFiles(request, since) {
   }
 }
 
+// 정리할 때 공유 잠금(다른 프로세스의 Office 작업)을 기다리는 최대 시간: 못 잡으면 아무것도 끝내지 않는다
+const REAP_LOCK_WAIT_MS = 5_000;
+
+/**
+ * office.ps1의 'reap' 요청: 공유 잠금(Local\OfficeKitCom)을 잡은 채로 PID마다 확인하고 끝낸다 → 끝낸 PID 집합.
+ * 끝내는 조건 (하나라도 아니면 그대로 둔다): 프로세스가 있고, 실행 파일 이름이 그 앱의 것이고,
+ * 등록한 시각보다 늦게 시작하지 않았고(PID 재사용 아님), 보이는 창이 없다(사용자 문서가 열리면 창이 생긴다).
+ */
+function reapOffice(entries) {
+  const dir = mkdtempSync(join(tmpdir(), 'officekit-'));
+  const reqPath = join(dir, 'req.json');
+  const resPath = join(dir, 'res.json');
+  try {
+    writeFileSync(reqPath, JSON.stringify({
+      app: 'reap', lockWaitMs: REAP_LOCK_WAIT_MS,
+      entries: entries.map((e) => ({ pid: e.pid, name: e.image, before: e.registered })),
+    }), 'utf8');
+    try {
+      execFileSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT, reqPath, resPath],
+        { windowsHide: true, stdio: 'ignore', timeout: REAP_LOCK_WAIT_MS + 25_000 });
+    } catch { /* 실패해도 응답 파일을 본다 */ }
+    const res = JSON.parse(readFileSync(resPath, 'utf8').replace(/^\uFEFF/, ''));
+    return new Set(res?.ok && Array.isArray(res.killed) ? res.killed.map(Number) : []);
+  } catch {
+    return new Set();
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* 임시 폴더 */ }
+  }
+}
+
 /**
  * AI 대화의 MCP 서버가 띄운 Office를 대화가 멈춘 뒤 끝낸다 (MCP 서버째 끝내도 DCOM이 띄운 Office는 남는다).
- * pidDir의 '<pid>.pid'마다 프로세스를 끝내고(이미 없으면 무시) 파일을 지운다 → 끝낸 개수
+ * pidDir의 '<pid>.pid'마다 그 Office가 아직 자동화용(창 없음)으로 떠 있을 때만 끝내고, 파일은 모두 지운다 → 끝낸 개수
+ * 사용자가 같은 Office에서 자기 문서를 열었거나(PowerPoint는 프로그램이 하나), PID가 다른 프로그램에 다시 쓰였으면 끝내지 않는다.
  * 파일 내용(JSON)에 문서 경로가 있으면 그 Office가 남긴 '~$' 소유자 파일도 지운다.
+ * processNames: 앱 → 실행 파일 이름 (시험용으로 바꿔 끼우기, 기본은 OFFICE_PROCESS_NAMES)
  */
-export function killRegisteredOffice(pidDir) {
+export function killRegisteredOffice(pidDir, processNames = OFFICE_PROCESS_NAMES) {
   let names = [];
   try { names = readdirSync(pidDir); } catch { return 0; }
-  let killed = 0;
+  const entries = [];
   for (const name of names) {
     const m = /^(\d+)\.pid$/.exec(name);
     if (!m) continue;
-    const file = join(pidDir, name);
     let info = null;
-    try { info = JSON.parse(readFileSync(file, 'utf8')); } catch { /* PID만 적힌 파일 */ }
-    const pid = Number(m[1]);
-    let ok = false;
-    if (pid > 0) { try { process.kill(pid); ok = true; } catch { /* 이미 끝남 */ } }
-    try { rmSync(file, { force: true }); } catch { /* 지우기 실패 */ }
-    if (!ok) continue;
+    try { info = JSON.parse(readFileSync(join(pidDir, name), 'utf8')); } catch { /* PID만 적힌 파일 */ }
+    if (!info || typeof info !== 'object') info = null;
+    const app = typeof info?.app === 'string' ? info.app : '';
+    const image = Object.hasOwn(processNames ?? {}, app) ? processNames[app] : null;
+    entries.push({ file: join(pidDir, name), pid: Number(m[1]), info, image, registered: Number(info?.registered) });
+  }
+  // 앱·등록 시각을 모르는 파일(예전 형식)은 확인할 수 없으니 끝내지 않는다
+  const candidates = entries.filter((e) => e.pid > 0 && typeof e.image === 'string' && e.image && Number.isFinite(e.registered) && e.registered > 0);
+  const done = candidates.length && process.platform === 'win32' ? reapOffice(candidates) : new Set();
+  let killed = 0;
+  for (const e of entries) {
+    try { rmSync(e.file, { force: true }); } catch { /* 지우기 실패 */ }
+    if (!done.has(e.pid)) continue;
     killed++;
+    const info = e.info;
     if (info && typeof info === 'object' && typeof info.app === 'string') {
       removeOwnerFiles({ app: info.app, path: info.path, save: info.save }, Number(info.since) || 0);
     }
@@ -205,7 +246,8 @@ function runPs(request, timeoutMs, lockTimeoutMs) {
         clearInterval(pidPoll);
         try {
           const f = join(pidDir, `${pid}.pid`);
-          writeFileSync(f, JSON.stringify({ pid, app: request.app, path: request.path, save: request.save, since }), 'utf8');
+          // registered: 이 시각보다 늦게 시작한 같은 PID는 다른 프로그램이다 (PID 재사용)
+          writeFileSync(f, JSON.stringify({ pid, app: request.app, path: request.path, save: request.save, since, registered: Date.now() }), 'utf8');
           registered = f;
         } catch { /* 폴더가 없으면 적지 않는다 */ }
       }, POLL_MS);

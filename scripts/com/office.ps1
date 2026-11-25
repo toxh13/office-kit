@@ -645,8 +645,41 @@ function Invoke-Pdf($req) {
   }
 }
 
+# Ends Office instances that an AI chat's MCP server started and left behind (Node: killRegisteredOffice).
+# Runs while holding the shared Office lock so no request is using the instance right now.
+# Each entry is ended only when all hold: the process exists, its image name is the expected one,
+# it did not start after it was registered (a reused PID), and it has no visible main window
+# (the hidden automation instance gets one when the user opens their own document in it).
+function Invoke-Reap($req) {
+  $mutex = New-Object System.Threading.Mutex($false, 'Local\OfficeKitCom')
+  $held = $false
+  try { $held = $mutex.WaitOne([int]$req.lockWaitMs) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+  $killed = @()
+  try {
+    if ($held) {
+      foreach ($e in @($req.entries)) {
+        try {
+          $p = Get-Process -Id ([int]$e.pid) -ErrorAction Stop
+          if ($p.ProcessName -ne [string]$e.name) { continue }
+          $limit = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$e.before).UtcDateTime.AddSeconds(1)
+          if ($p.StartTime.ToUniversalTime() -gt $limit) { continue }
+          if ($p.MainWindowHandle -ne [IntPtr]::Zero) { continue }
+          $p.Kill()
+          [void]$p.WaitForExit(5000)
+          $killed += [int]$e.pid
+        } catch {}
+      }
+    }
+  } finally {
+    if ($held) { try { $mutex.ReleaseMutex() } catch {} }
+    $mutex.Dispose()
+  }
+  return @{ ok = $true; locked = $held; killed = $killed }
+}
+
 try {
   switch ($req.app) {
+    'reap'  { Write-Response (Invoke-Reap $req) }
     'probe' {
       $mods = $null
       try { $mods = Get-ItemProperty 'HKCU:\Software\HNC\HwpAutomation\Modules' -ErrorAction Stop } catch {}
