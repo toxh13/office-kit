@@ -279,7 +279,11 @@
    * body: 문자열 | 노드 배열. alt: 세 번째 단추 이름 (누르면 'alt'), cancel: null이면 취소 단추 없음
    * → Promise<true | false | 'alt'>
    */
-  function confirmDialog({ title, body, ok = '확인', cancel = '취소', alt = null, tone = 'info' }) {
+  // 확인 창은 하나뿐이라 대기열로 하나씩 띄운다 (앞 창이 닫힌 뒤 다음 창)
+  const dialogQueue = window.OKDialogQueue.createDialogQueue();
+  function confirmDialog(opts) { return dialogQueue.run(() => showConfirm(opts)); }
+
+  function showConfirm({ title, body, ok = '확인', cancel = '취소', alt = null, tone = 'info' }) {
     const dlg = el.confirm;
     $('#confirm-title').textContent = title;
     const bodyEl = $('#confirm-body');
@@ -877,7 +881,12 @@
   /** 버전으로 되돌리기. file을 주지 않으면 마지막 변경 전으로 (지금과 다른 가장 최근 버전) */
   async function actRestore(file) {
     const d = state.doc;
-    if (!d?.backup || state.restoring) return;
+    if (!d?.backup || state.restoring || state.restoreAsking) return;
+    state.restoreAsking = true; // 확인 창이 떠 있는 동안에도 다시 누름을 무시한다
+    try { await restoreFlow(file, d); } finally { state.restoreAsking = false; }
+  }
+
+  async function restoreFlow(file, d) {
     closeVersions();
     let target;
     try {
