@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { EventEmitter } from 'node:events';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync,
@@ -581,6 +581,35 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
       writeFileSync(docPath, original);
     }
     assert.equal(sha(docPath), before);
+  });
+
+  await t.test('원래대로: 문서가 다른 프로그램에 잠겨 버전을 남기지 못하면 "열려 있어" 안내 (BACKUP_FAILED 아님)', { skip: process.platform !== 'win32' && 'Windows 전용 (파일 잠금)' }, async () => {
+    const v0 = (await call('doc:versions')).value;
+    const target = v0.versions.find((e) => e.reason === 'open');
+    assert.ok(target, '되돌릴 버전');
+    // 다른 프로그램이 문서를 나눠 쓰기 없이 열어 둔 흉내 (읽기도 EBUSY)
+    const ready = join(ud, `lock-ready-${Date.now()}.txt`);
+    const q = (s) => s.replace(/'/g, "''");
+    const ps = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const script = `$f = [System.IO.File]::Open('${q(docPath)}', 'Open', 'ReadWrite', 'None'); [System.IO.File]::WriteAllText('${q(ready)}', 'held'); Start-Sleep -Seconds 60; $f.Dispose()`;
+    const holder = spawn(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, stdio: 'ignore' });
+    const gone = new Promise((r) => holder.once('exit', r));
+    try {
+      const t0 = Date.now();
+      while (!existsSync(ready)) {
+        if (holder.exitCode !== null || Date.now() - t0 > 60_000) throw new Error('문서를 잠그는 PowerShell이 시작하지 않음');
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const r = await call('doc:restore', { file: target.file });
+      assert.equal(r.ok, false);
+      assert.notEqual(r.code, 'BACKUP_FAILED');
+      assert.match(r.error, /문서가 다른 프로그램에서 열려 있어 되돌릴 수 없습니다/);
+    } finally {
+      holder.kill();
+      await gone;
+      rmSync(ready, { force: true });
+    }
+    assert.equal(sha(docPath), before, '되돌리지 않고 그대로');
   });
 
   // ── 문서·표·슬라이드 편집 창 (Office) ──
