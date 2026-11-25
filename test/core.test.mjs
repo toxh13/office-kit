@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   createDocument, readDocument, documentInfo, listFields, fillFields, replaceText, setCells, convertDocument,
-  assertTrustedForApp, UNTRUSTED_APP_MESSAGE,
+  assertTrustedForApp, UNTRUSTED_APP_MESSAGE, isFromInternet, openInApp,
 } from '../src/core/index.mjs';
 import { pageImage } from '../src/core/render.mjs';
 import { MANUSCRIPT, COM_TESTS, ROOT, tempDir, makePdf, isPng, pngSize, xlsxWithChart, zipParts, zipText } from './helpers/fixtures.mjs';
@@ -828,6 +828,25 @@ describe('인터넷에서 받은 문서는 프로그램(COM)으로 열지 않음
       await untrusted(fillFields(files.docx, { 담당자: '홍길동' }, { output: tmp.path('web-fill.docx'), engine: 'app' }));
     });
     assert.equal(calls.length, 0, JSON.stringify(calls));
+  });
+
+  test('openInApp: 인터넷에서 받은 문서는 PowerShell을 부르지 않고 UNTRUSTED', async () => {
+    await withFakePowerShell(async () => { await untrusted(openInApp(files.docx)); });
+    assert.equal(calls.length, 0, JSON.stringify(calls));
+  });
+
+  test('파일 엔진으로 그 자리에 저장(saveZip)해도 인터넷에서 받은 표시가 남는다', async () => {
+    const f = tmp.path('web-save.docx');
+    await createDocument(f, MANUSCRIPT);
+    markInternet(f);
+    assert.equal(isFromInternet(f), true);
+    const { saveZip } = await import('../src/core/officefile.mjs');
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(readFileSync(f));
+    zip.file('customXml/okit-test.txt', '저장 시험');
+    await saveZip(zip, f);
+    assert.ok((await JSZip.loadAsync(readFileSync(f))).file('customXml/okit-test.txt'), '저장됨');
+    assert.equal(isFromInternet(f), true, '저장한 뒤 인터넷 표시가 사라졌다');
   });
 
   test('파일 엔진으로 되는 일은 그대로 (자동 엔진)', async () => {

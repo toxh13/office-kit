@@ -424,6 +424,8 @@ export async function renderPreview(path, outDir, { mode = 'auto', maxPages = 40
 /** 설치된 프로그램 창으로 열기 (사람이 직접 확인·편집) */
 export async function openInApp(path) {
   path = mustExist(path);
+  // 앱(main.mjs)은 인터넷에서 받은 문서를 이미 기본 프로그램으로 넘기지만, 다른 호출에서도 보호된 보기를 건너뛰지 않게
+  assertTrustedForApp(path);
   const ext = extOf(path);
   if (!(await comAvailableFor(ext, { interactive: true }))) throw new Error(`${kindOf(path)} 프로그램이 설치돼 있지 않습니다`);
   // 사람이 고치도록 읽기·쓰기로 연다. 쓰기 암호가 있거나 다른 프로그램이 쥐고 있으면 읽기 전용 (readOnlyReason)

@@ -3,15 +3,34 @@
 // 안 되면 이름 바꾸기 → 끝에 임시 파일 삭제.
 import { randomBytes } from 'node:crypto';
 import {
-  closeSync, copyFileSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeSync,
+  closeSync, copyFileSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const busy = (err) => ['EBUSY', 'EPERM', 'EACCES'].includes(err?.code);
 
+// Windows '웹에서 받은 파일' 표시(Zone.Identifier 스트림): 바꿔 끼우면 사라질 수 있어 읽어 두었다가 다시 쓴다 (최선만)
+function readZone(path) {
+  if (process.platform !== 'win32') return null;
+  try { return readFileSync(`${path}:Zone.Identifier`); } catch { return null; }
+}
+function restoreZone(path, zone) {
+  if (!zone) return;
+  try {
+    const now = readZone(path);
+    if (!now || !now.equals(zone)) writeFileSync(`${path}:Zone.Identifier`, zone);
+  } catch { /* 표시를 다시 쓰지 못해도 저장은 끝났다 */ }
+}
+
 /** data(Buffer)를 path에 원자적으로 쓴다. 실패하면 원본은 그대로이고 첫 오류를 던진다 */
-export function writeFileAtomic(path, data, { retries = 8 } = {}) {
+export function writeFileAtomic(path, data, opts = {}) {
+  const zone = readZone(path);
+  replaceAtomic(path, data, opts);
+  restoreZone(path, zone);
+}
+
+function replaceAtomic(path, data, { retries = 8 } = {}) {
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
   const fd = openSync(tmp, 'wx');
   try {
