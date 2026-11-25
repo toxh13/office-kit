@@ -9,6 +9,7 @@
   <script src="../i18n/translate.js" defer></script>
   <script src="md.js" defer></script>
   <script src="dialog-queue.js" defer></script>
+  <script src="target-chips.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -153,6 +154,7 @@
           <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
         </div>
         <div class="composer" id="composer">
+          <div class="target-chips" id="target-chips" hidden></div>
           <div class="editor-warn" id="editor-warn" role="status" hidden>
             <svg class="i"><use href="#i-alert"/></svg>
             <span class="ew-text">편집 창에 저장하지 않은 내용이 있어요. AI는 저장된 파일을 고치므로 먼저 저장해 주세요.</span>

@@ -177,7 +177,9 @@
     providers: null,        // { providers, selected } 또는 null
     providerError: null,
     providersReady: null,   // 처음 AI 확인이 끝나면 풀리는 Promise
-    chats: new Map(),       // 문서 경로 → { items, busy, chatId }
+    chats: new Map(),       // 문서 경로 → { items, busy, chatId, materials, outDir }
+    targetInfo: null,       // 마지막 ai:materials 결과 { edit, open }
+    targetSeq: 0,
     busy: new Map(),
     smoke: null,
     smokeSent: false,
@@ -199,7 +201,7 @@
     recent: $('#recent'), recentList: $('#recent-list'),
     docinfo: $('#docinfo'), docKind: $('#doc-kind'), docName: $('#doc-name'), docEngine: $('#doc-engine'),
     chat: $('#chat'), chatBody: $('#chat-body'), chatLog: $('#chat-log'), provider: $('#provider'),
-    composer: $('#composer'), prompt: $('#prompt'), send: $('#btn-send'), composerHint: $('#composer-hint'),
+    composer: $('#composer'), targetChips: $('#target-chips'), prompt: $('#prompt'), send: $('#btn-send'), composerHint: $('#composer-hint'),
     splitter: $('#splitter'), toggleChat: $('#btn-toggle-chat'),
     stEngine: $('#st-engine'), stPages: $('#st-pages'), stSaved: $('#st-saved'), stEditor: $('#st-editor'),
     stBusy: $('#st-busy'), stBusyText: $('#st-busy-text'), stReady: $('#st-ready'),
@@ -401,6 +403,7 @@
     renderTopbar();
     renderStatus();
     renderChat();
+    refreshTargetInfo();
     if (!doc) {
       el.preview.hidden = true;
       el.preview.replaceChildren();
@@ -613,6 +616,7 @@
     state.doc = { ...state.doc, editor: { open: !!ev.open, dirty: !!ev.dirty } };
     renderTopbar();
     renderStatus();
+    refreshTargetInfo();
   }
 
   // ── 미리보기 ─────────────────────────────────────────
@@ -1386,8 +1390,60 @@
   function chatFor(path) {
     const k = pathKey(path);
     let c = state.chats.get(k);
-    if (!c) { c = { items: [], busy: false, chatId: null }; state.chats.set(k, c); }
+    if (!c) { c = { items: [], busy: false, chatId: null, materials: [], outDir: null }; state.chats.set(k, c); }
     return c;
+  }
+
+  // ── AI 대상 칩 (고칠 문서 + 읽기 재료) ─────────────────
+
+  /** 열린 문서 목록을 새로 받아 칩을 다시 그린다. 받는 사이 문서가 바뀌었으면 버린다. */
+  async function refreshTargetInfo() {
+    const seq = ++state.targetSeq;
+    if (!state.doc) { state.targetInfo = null; renderTargetChips(); return; }
+    try {
+      const info = await call(K.ai.materials());
+      if (seq !== state.targetSeq) return;
+      state.targetInfo = info;
+    } catch { return; }
+    renderTargetChips();
+  }
+
+  function targetModel() {
+    const chat = chatCurrent();
+    if (!state.targetInfo || !chat) return null;
+    return OKTargetChips.model({ info: state.targetInfo, materials: chat.materials, outDir: chat.outDir });
+  }
+
+  function renderTargetChips() {
+    const root = el.targetChips;
+    const m = state.doc && !chatBlocker() ? targetModel() : null;
+    root.hidden = !m;
+    if (!m) { root.replaceChildren(); return; }
+    OKTargetChips.render(root, m, {
+      h, icon,
+      onRemove(path) {
+        const chat = chatCurrent();
+        const gone = chat.materials.find((x) => pathKey(x.path) === pathKey(path));
+        chat.materials = chat.materials.filter((x) => pathKey(x.path) !== pathKey(path));
+        // 인터넷 재료를 뺀 뒤에는 main이 다음 보내기에서 세션을 지운다
+        if (gone?.zone3 && chat.items.length) chat.items.push({ role: 'note', text: '자료가 바뀌어 다음 메시지부터 새 대화로 시작해요.' });
+        renderChat();
+      },
+      onAdd(path) {
+        const chat = chatCurrent();
+        const m2 = state.targetInfo?.open.find((x) => pathKey(x.path) === pathKey(path));
+        if (m2 && !chat.materials.some((x) => pathKey(x.path) === pathKey(path))) chat.materials = [...chat.materials, m2];
+        renderChat();
+      },
+      onOpenMenu() { refreshTargetInfo(); },
+      async onPickOutDir() {
+        const chat = chatCurrent();
+        const cur = targetModel();
+        let folder = null;
+        try { folder = await call(K.doc.pickFolder(cur?.outDir ?? undefined)); } catch (err) { showError(err); return; }
+        if (folder && chatCurrent() === chat) { chat.outDir = folder; renderTargetChips(); }
+      },
+    });
   }
 
   async function loadProviders(refresh = false) {
@@ -1496,6 +1552,7 @@
     el.prompt.placeholder = off ? (state.doc ? 'AI 프로그램을 먼저 준비해 주세요' : '문서를 열면 대화할 수 있어요') : '문서에 대해 물어보거나 고칠 내용을 적어 주세요';
     $('#btn-new-chat').disabled = off || !chat?.items.length || chat?.busy;
     renderSendButton();
+    renderTargetChips();
     scrollChat(true);
   }
 
@@ -1629,7 +1686,7 @@
     return r === true ? 'editor' : r === 'alt' ? 'send' : 'cancel';
   }
 
-  async function sendPrompt(text, { editorOk = false } = {}) {
+  async function sendPrompt(text, { editorOk = false, materialsOk = false, saveMaterials = false } = {}) {
     text = String(text ?? '').trim();
     if (!text || !state.doc || chatBlocker()) return;
     const path = state.doc.path;
@@ -1641,12 +1698,44 @@
       if (choice !== 'send' || !state.doc || pathKey(state.doc.path) !== pathKey(path) || chatFor(path).busy) return;
       editorOk = true;
     }
+    // 보내기 직전에 열린 문서 목록을 새로 받아 대상을 다시 만든다 (받지 못하면 마지막 값)
+    try { state.targetInfo = await call(K.ai.materials()); } catch {}
+    if (!state.doc || pathKey(state.doc.path) !== pathKey(path) || chatFor(path).busy) return;
+    const tm = targetModel();
+    if (!tm) { toast('대화 대상을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요', { type: 'warn' }); return; }
+    if (tm.busyMaterial) {
+      toast(`‘${tm.busyMaterial.name}’은(는) AI가 고치는 중이라 재료로 넘길 수 없어요`, { type: 'warn' });
+      renderTargetChips();
+      return;
+    }
     el.prompt.value = '';
     autoGrow();
     const { chat, msg } = queueChat(path, text);
     try {
-      chatStarted(chat, msg, (await call(K.ai.send({ prompt: text, editorOk }))).chatId);
+      const sent = await call(K.ai.send({
+        prompt: text, editorOk, target: OKTargetChips.targetOf(tm),
+        outDir: tm.materialOnly ? tm.outDir : undefined, materialsOk, saveMaterials,
+      }));
+      chatStarted(chat, msg, sent.chatId);
     } catch (err) {
+      if (err.code === 'MATERIAL_DIRTY') {
+        // 저장 안 한 재료: 대화를 빼고 글을 되돌린 뒤 묻는다 (EDITOR_DIRTY와 같은 방식)
+        dropQueuedChat(path, { chat, msg });
+        renderChat();
+        if (!el.prompt.value.trim()) { el.prompt.value = text; autoGrow(); }
+        const r = await confirmDialog({
+          title: '저장 안 한 재료가 있어요', tone: 'warn', body: [err.message],
+          ok: '저장하고 보내기', alt: '그대로 보내기', cancel: '취소',
+        });
+        if (r === true) sendPrompt(text, { editorOk, saveMaterials: true });
+        else if (r === 'alt') sendPrompt(text, { editorOk, materialsOk: true });
+        return;
+      }
+      if (['MATERIAL_BUSY', 'MATERIAL_NOT_OPEN', 'TARGET_CHANGED', 'MATERIAL_SAVE_FAILED', 'BAD_OUT_DIR', 'AI_BUSY'].includes(err.code)) {
+        chatFailed(chat, msg, path, err);
+        refreshTargetInfo();
+        return;
+      }
       if (err.code !== 'EDITOR_DIRTY') { chatFailed(chat, msg, path, err); return; }
       // 화면이 편집 창 상태를 아직 몰랐던 경우: 대화를 빼고 글을 되돌린 뒤 묻는다
       dropQueuedChat(path, { chat, msg });
@@ -1744,6 +1833,7 @@
         if (chat.chatId === ev.chatId) chat.chatId = null;
         chat.busy = false;
         clearBusy(`ai:${pathKey(ev.path)}`);
+        refreshTargetInfo();
         if (isCurrent) {
           refreshPreview({ ifChanged: true, reason: 'ai' });
           renderChat();

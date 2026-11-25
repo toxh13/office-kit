@@ -809,6 +809,38 @@ body.resizing { cursor: col-resize; }
 .send-btn:hover:not(:disabled) { background: var(--accent-hover); }
 .send-btn:disabled { opacity: 0.35; cursor: default; }
 .send-btn.stop { background: var(--text); color: var(--surface); }
+/* AI 대상 칩 */
+.target-chips { margin: 0 0 8px; font-size: 12px; }
+.target-chips[hidden] { display: none; }
+.tc-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tc-chip {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; max-width: 100%;
+  padding: 3px 8px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text);
+}
+.tc-edit { border: 2px solid var(--accent); }
+.tc-read { border: 1px dashed var(--border-strong); }
+.tc-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.tc-role { color: var(--muted); font-size: 11px; }
+.tc-badge { padding: 0 6px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: 11px; }
+.tc-x { display: inline-flex; padding: 2px; border-radius: var(--radius-sm); color: var(--muted); }
+.tc-x:hover { background: var(--hover); color: var(--text); }
+.tc-x svg.i { width: 12px; height: 12px; }
+.tc-add {
+  padding: 3px 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--accent-text); background: transparent;
+}
+.tc-add:hover { background: var(--hover); }
+.tc-menu {
+  display: flex; flex-direction: column; margin-top: 4px; padding: 4px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-md);
+}
+.tc-item { display: flex; gap: 6px; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: var(--radius-sm); text-align: left; color: var(--text); }
+.tc-item:hover { background: var(--hover); }
+.tc-item[aria-disabled="true"] { color: var(--faint); cursor: not-allowed; }
+.tc-empty { padding: 6px 8px; color: var(--muted); }
+.tc-note { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 6px; color: var(--muted); line-height: 1.5; }
+.tc-out { color: var(--text-2); overflow-wrap: anywhere; }
+.tc-note .link-btn { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
 .composer-hint { font-size: 11px; color: var(--faint); padding: 6px 4px 0; }
 .composer.disabled .composer-box { background: var(--surface-2); }
 

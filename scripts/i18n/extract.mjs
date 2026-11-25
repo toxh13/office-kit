@@ -14,7 +14,7 @@ const OUT = join(ROOT, 'src', 'app', 'i18n', 'strings.json');
 
 /** 번역할 파일 (앱 화면에 글이 나오는 곳) */
 export const SOURCES = [
-  'src/app/renderer/index.html', 'src/app/renderer/app.js',
+  'src/app/renderer/index.html', 'src/app/renderer/app.js', 'src/app/renderer/target-chips.js',
   'src/app/main.mjs', 'src/app/editor-window.mjs', 'src/app/store.mjs',
   'src/app/editor/host.html', 'src/app/editor/host.js',
   'src/app/office-editor/host.html', 'src/app/office-editor/host.js',

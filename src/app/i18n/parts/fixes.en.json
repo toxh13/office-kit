@@ -38,5 +38,20 @@
  "열린 문서만 재료로 넘길 수 있어요: {0}": "Only open documents can be passed as material: {0}",
  "출력 폴더를 찾을 수 없어요": "The output folder could not be found",
  "{0}에 저장 안 한 편집이 있어 저장된 내용을 읽습니다.": "{0} has unsaved edits, so the saved content will be read.",
- "‘{0}’을(를) 저장하지 못했어요. 편집 창에서 저장한 뒤 다시 보내 주세요.": "Couldn’t save ‘{0}’. Please save it in the editor window and send again."
+ "‘{0}’을(를) 저장하지 못했어요. 편집 창에서 저장한 뒤 다시 보내 주세요.": "Couldn’t save ‘{0}’. Please save it in the editor window and send again.",
+ "‘{0}’은(는) AI가 고치는 중이라 재료로 넘길 수 없어요": "‘{0}’ is being edited by the AI, so it can’t be passed as material",
+ "{0} 재료에서 빼기": "Remove {0} from materials",
+ "+ 열린 탭 추가": "+ Add open tab",
+ "고칠 문서": "Document to edit",
+ "고칠 문서 없이 새 파일만 만들어요": "No document to edit; only new files will be created",
+ "대화 대상을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요": "Couldn’t confirm the chat target. Please try again in a moment",
+ "인터넷 재료가 있어 읽기 범위를 좁혔습니다": "Reading scope is narrowed because there is internet material",
+ "인터넷 파일": "Internet file",
+ "읽기 재료": "Reference material",
+ "자료가 바뀌어 다음 메시지부터 새 대화로 시작해요.": "The materials changed, so a new conversation starts with the next message.",
+ "저장 안 한 재료가 있어요": "Some materials are unsaved",
+ "저장하고 보내기": "Save and send",
+ "추가할 수 있는 열린 문서가 없어요": "No open documents to add",
+ "출력 폴더 바꾸기": "Change output folder",
+ "AI 작업 중": "AI is working"
 }
