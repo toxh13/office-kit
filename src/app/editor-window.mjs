@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { isIP } from 'node:net';
 import { tmpdir, userInfo } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 import { editorAvailable, editorDirs, officeEditorAvailable, startEditorServer } from './editor-server.mjs';
@@ -648,7 +648,7 @@ export function createEditorManager({
     entry.convertedFrom = null; // 제목을 새 파일 이름으로 (rekey가 제목을 고친다)
     rekey(entry, target);
     if (!entry.draftPending) removeDraft(temp);
-    try { rmSync(dirname(temp), { recursive: true, force: true }); } catch {}
+    dropConvertedTemp(entry, temp);
     return res;
   }
 
@@ -673,10 +673,15 @@ export function createEditorManager({
     const oldPath = entry.path;
     const res = await saveTo(entry, target, bytes, ext);
     if (keyOf(target) !== entry.key) {
+      // 옛 형식에서 바꿔 연 문서: 이제 사용자가 고른 새 파일을 편집한다. convertedFrom을 남겨 두면
+      // 닫기·Ctrl+S가 새 파일의 폴더(사용자 폴더)를 임시 사본 폴더로 알고 지운다 (v0.1.13 버그 1·15)
+      const temp = entry.convertedFrom ? oldPath : null;
+      if (temp) entry.convertedFrom = null;
       rekey(entry, target);
       // 편집 내용은 새 파일에 저장됐다. 단 '복구 / 버리기'에 답하지 않은 사본은 옛 파일 몫으로 남긴다
       if (office && !entry.draftPending) removeDraft(oldPath);
       entry.draftPending = false;
+      if (temp) dropConvertedTemp(entry, temp);
     }
     return res;
   });
@@ -1021,11 +1026,29 @@ export function createEditorManager({
     entry.path = target;
     entry.key = keyOf(target);
     entries.set(entry.key, entry);
-    const buf = readFileSync(target);
-    const st = statOf(target);
-    entry.known = { mtimeMs: st?.mtimeMs ?? 0, size: buf.length, hash: hashOf(buf), missing: false };
+    // 저장은 끝났다. 다시 읽기가 실패해도(백신·동기화가 잠깐 잡음 EBUSY 등) 저장 실패로 돌려주지 않는다 → 내용은 '모름'으로 두고 감시는 켠다
+    try {
+      const buf = readFileSync(target);
+      const st = statOf(target);
+      entry.known = { mtimeMs: st?.mtimeMs ?? 0, size: buf.length, hash: hashOf(buf), missing: false };
+    } catch (err) {
+      log('다른 이름으로 저장한 파일을 다시 읽지 못했습니다:', err?.message ?? err);
+      entry.known = { mtimeMs: 0, size: -1, hash: null, missing: false };
+    }
     updateTitle(entry);
     startWatch(entry);
+  }
+
+  /** 바꿔 연 문서의 임시 사본 폴더를 지운다. userData/converted 안일 때만 (밖이면 사용자 폴더일 수 있어 지우지 않고 기록만) */
+  function dropConvertedTemp(entry, tempPath) {
+    const dir = dirname(resolve(tempPath));
+    const root = userData ? resolve(userData, 'converted') : null;
+    const rel = root ? relative(keyOf(root), keyOf(dir)) : '';
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+      log(`바꿔 연 임시 사본 폴더가 아니라 지우지 않았습니다: ${dir} (${basename(entry?.path ?? '')})`);
+      return;
+    }
+    try { rmSync(dir, { recursive: true, force: true }); } catch (err) { log('바꿔 연 임시 사본을 지우지 못했습니다:', err?.message ?? err); }
   }
 
   // ── 바깥 변경 감시 ────────────────────────────────────
@@ -1049,7 +1072,7 @@ export function createEditorManager({
     try { hash = hashOf(readFileSync(entry.path)); } catch { return false; } // 쓰는 중이면 다음 알림에서
     const { hash: before, missing: wasMissing } = entry.known;
     entry.known = { mtimeMs: st.mtimeMs, size: st.size, hash, missing: false };
-    if (!force && hash === before && !wasMissing) return false;
+    if (!force && (before === null || hash === before) && !wasMissing) return false; // before null = 내용을 몰랐다 → 이번 것을 기준으로만
     entry.win.webContents.send('editor:external-change', { missing: false, size: st.size, mtimeMs: st.mtimeMs, reason });
     return true;
   }
@@ -1308,7 +1331,7 @@ export function createEditorManager({
       // 정상 닫기 → 복구 사본을 지운다. 단 '복구 / 버리기'에 아직 답하지 않았으면 남긴다 (다음에 열 때 다시 묻는다)
       if (entry.cleanClose && !entry.draftPending) removeDraft(entry.path);
       // 옛 형식에서 바꿔 연 임시 사본은 저장하지 않고 닫으면 지운다 (원본은 그대로)
-      if (entry.convertedFrom) { try { rmSync(dirname(entry.path), { recursive: true, force: true }); } catch {} }
+      if (entry.convertedFrom) dropConvertedTemp(entry, entry.path);
       entry.win = null;
       try { onClosed?.(entry.path); } catch (err) { log('onClosed 오류:', err); }
     });

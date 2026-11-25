@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -834,5 +834,108 @@ test('Office 편집 창 (가짜 electron)', async (t) => {
     assert.equal(ow.isDestroyed(), true);
     assert.equal(existsSync(od), true, '강제로 닫으면 복구 사본을 남긴다');
     assert.deepEqual(mgr.list(), []);
+  });
+});
+
+// 옛 형식에서 바꿔 연 문서(convertedFrom)를 '다른 이름으로 저장'한 뒤 사용자 폴더가 지워지지 않는다 (v0.1.13 버그 1·15)
+test('바꿔 연 문서: 다른 이름으로 저장 뒤 사용자 폴더를 지우지 않는다', async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'ok-office-conv-'));
+  const ud = join(base, 'ud');
+  const userDir = join(base, '사용자 문서');
+  mkdirSync(userDir, { recursive: true });
+  const dirs = makeBundles(join(base, 'vendor'));
+  const original = join(userDir, '옛 문서.doc');
+  put(original, 'old');
+  const fake = makeFake();
+  const logs = [];
+  let onSavedHook = null;
+  const mgr = createEditorManager({
+    app: fake.app, BrowserWindow: fake.BrowserWindow, ipcMain: fake.ipcMain, session: fake.session, dialog: fake.dialog,
+    shell: fake.shell, nativeTheme: fake.nativeTheme, appRoot: base, userData: ud, dirs,
+    onSaved: (p) => onSavedHook?.(p),
+    fonts: { async ensureFonts() { return { allFontsJsPath: join(base, 'AllFonts.js'), thumbnailsDir: join(base, 'thumbs'), fontFileByIndex: () => null }; } },
+    fixups: { async applyFixups(_ext, bytes) { return { bytes, applied: [] }; } },
+    log: (...a) => logs.push(a.join(' ')),
+    userName: '홍길동',
+  });
+  t.after(async () => {
+    await mgr.closeAll({ force: true });
+    fake.app.emit('will-quit');
+    await mgr.dispose();
+    rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  const call = (w, channel, ...args) => fake.invoke(w.webContents, channel, ...args);
+  let seq = 0;
+  /** userData/converted/<id>/옛 문서.docx 를 만들어 바꿔 연 문서로 연다 → { w, temp, tempDir, bytes } */
+  async function openConverted() {
+    const tempDir = join(ud, 'converted', `시험-${++seq}`);
+    mkdirSync(tempDir, { recursive: true });
+    const temp = join(tempDir, '옛 문서.docx');
+    await createBlankDocument(temp);
+    await mgr.openEditor(temp, { convertedFrom: original });
+    const w = fake.windows.at(-1);
+    return { w, temp, tempDir, bytes: new Uint8Array(readFileSync(temp)) };
+  }
+
+  await t.test('converted 문서를 다른 이름으로 저장하고 닫아도 저장한 폴더는 남는다', async () => {
+    const { w, tempDir, bytes } = await openConverted();
+    const target = join(userDir, 'a.docx');
+    fake.saveDialogAnswers.push({ canceled: false, filePath: target });
+    const r = await call(w, 'editor:save-as', bytes, 'docx');
+    assert.equal(r.ok, true, r.error);
+    w.close();
+    assert.ok(await until(() => w.isDestroyed()));
+    assert.equal(existsSync(target), true, '저장한 파일은 남는다');
+    assert.equal(existsSync(userDir), true, '사용자 폴더는 남는다');
+    assert.equal(existsSync(original), true, '원본도 그대로');
+    assert.equal(existsSync(tempDir), false, '임시 사본 폴더는 지운다');
+  });
+
+  await t.test('converted 문서를 다른 이름으로 저장한 뒤 Ctrl+S도 사용자 폴더를 지우지 않는다', async () => {
+    const { w, tempDir, bytes } = await openConverted();
+    const myDir = join(base, '사용자 문서 2'); // 시험마다 따로 (앞 시험이 실패해도 영향 없게)
+    mkdirSync(myDir, { recursive: true });
+    const target = join(myDir, 'b.docx');
+    fake.saveDialogAnswers.push({ canceled: false, filePath: target });
+    assert.equal((await call(w, 'editor:save-as', bytes, 'docx')).ok, true);
+    // 예전에는 Ctrl+S가 바꿔 연 문서의 첫 저장으로 다시 묻고, 저장 뒤 '임시' 폴더(=사용자 폴더)를 지웠다
+    const d0 = fake.saveDialogs.length;
+    fake.saveDialogAnswers.push({ canceled: false, filePath: join(myDir, 'c.docx') });
+    const r = await call(w, 'editor:save', bytes, { reason: 'user' });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(fake.saveDialogs.length, d0, '같은 파일에 바로 저장 (다시 묻지 않는다)');
+    fake.saveDialogAnswers.length = 0;
+    assert.equal(existsSync(target), true);
+    assert.equal(existsSync(myDir), true);
+    assert.equal(existsSync(tempDir), false);
+    w.close();
+    assert.ok(await until(() => w.isDestroyed()));
+    assert.equal(existsSync(target), true);
+    assert.equal(existsSync(original), true);
+  });
+
+  await t.test('다른 이름으로 저장 직후 다시 읽기가 EBUSY여도 저장 성공으로 돌려준다', async () => {
+    const { w, bytes } = await openConverted();
+    const myDir = join(base, '사용자 문서 3');
+    mkdirSync(myDir, { recursive: true });
+    const target = join(myDir, 'd.docx');
+    const aside = `${target}.잠김`;
+    // 저장 직후 다른 프로그램(백신·동기화)이 파일을 잡은 흉내: 잠깐 치워 두어 다시 읽기가 실패하게 한다
+    onSavedHook = (p) => { if (p === target) renameSync(target, aside); };
+    fake.saveDialogAnswers.push({ canceled: false, filePath: target });
+    const r = await call(w, 'editor:save-as', bytes, 'docx');
+    onSavedHook = null;
+    if (existsSync(aside)) renameSync(aside, target);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(mgr.isOpen(target), true, '창은 새 파일을 편집한다');
+    assert.deepEqual(mgr.list().filter((p) => p === target), [target]);
+    // 감시가 켜져 있다: 처음 본 내용은 기준으로만 삼고, 그다음 바깥 변경은 알린다
+    const sent = () => w.webContents.sent.filter((s) => s.channel === 'editor:external-change').length;
+    const s0 = sent();
+    assert.equal(mgr.notifyExternalChange(target), false, '모르는 상태 → 기준만 잡는다');
+    writeFileSync(target, await withPart(bytes, 'changed.txt', '바깥'));
+    assert.equal(mgr.notifyExternalChange(target), true, '다음 바깥 변경은 알린다');
+    assert.equal(sent(), s0 + 1);
+    assert.equal(existsSync(myDir), true);
   });
 });
