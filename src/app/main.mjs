@@ -876,7 +876,7 @@ async function start() {
     const k = key(plan.path);
     restorePoints.delete(k);
     sessions.delete(k);
-    const tw = ctx.tw && tabWindows.has(ctx.tw.shell.id) ? ctx.tw : lastTw() ?? createTabWindowFor({ bounds: initialBounds() });
+    const tw = ctx.tw && tabWindows.has(ctx.tw.shell.id) ? ctx.tw : recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
     // 지워진 그 문서의 문서 탭이 남아 있으면 닫고 새로 연다
     const old = findTab(plan.path);
     if (old?.tab.type === 'doc') closeDocTab(old.tw, old.tab.id);
@@ -1249,7 +1249,7 @@ async function start() {
 
   /** 편집 탭의 Ctrl+O: 문서를 골라 그 탭 창에 열기 (이미 열린 문서면 그 탭으로). parent: 그 탭 창 (BaseWindow) */
   async function pickAndOpen(parent) {
-    const tw = twOfWin(parent) ?? lastTw();
+    const tw = twOfWin(parent) ?? recentWindow();
     const target = targetOf(tw);
     const r = await dialog.showOpenDialog(parent && !parent.isDestroyed() ? parent : winOf(null), {
       title: '문서 열기', properties: ['openFile', 'multiSelections'],
@@ -1338,7 +1338,7 @@ async function start() {
    */
   async function openAsDocument(p, tw = null) {
     p = docPath(p);
-    tw = tw && tabWindows.has(tw.shell.id) ? tw : lastTw() ?? createTabWindowFor({ bounds: initialBounds() });
+    tw = tw && tabWindows.has(tw.shell.id) ? tw : recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
     const hit = findTab(p);
     if (hit) { activateTab(hit.tw, hit.tab.id); focusShell(hit.tw); return { path: p, mode: 'reused' }; }
     const ext = extOf(p);
@@ -1384,12 +1384,13 @@ async function start() {
   // 탭 창 = 껍데기(tab-window.mjs) + 탭 목록(tabs.mjs) + 홈 뷰(?view=home, 탭 'home') + AI 패널 뷰(?view=panel).
   // 편집 탭 뷰는 editor-window가 만들고 정리한다 (hostFor로 이 탭 창 껍데기를 받는다). 문서 탭 뷰(?view=doc)는 여기서
 
-  const lastTw = () => {
+  /** 마지막으로 초점 받은 살아 있는 탭 창 (없으면 아무 탭 창, 하나도 없으면 null) */
+  const recentWindow = () => {
     for (const id of windowOrder) { const tw = tabWindows.get(id); if (tw) return tw; }
     return tabWindows.values().next().value ?? null;
   };
   /** 그 허브(없으면 최근 탭 창)의 대화상자 부모 창 (판정 12) */
-  const winOf = (hub) => ((hub?.tw && tabWindows.has(hub.tw.shell.id) ? hub.tw : lastTw())?.shell.dialogParent() ?? undefined);
+  const winOf = (hub) => ((hub?.tw && tabWindows.has(hub.tw.shell.id) ? hub.tw : recentWindow())?.shell.dialogParent() ?? undefined);
   const twOfWin = (w) => [...tabWindows.values()].find((tw) => tw.shell.win === w) ?? null;
   const homeHubOf = (tw) => (tw?.home ? hubOf(tw.home.webContents) : null);
 
@@ -1581,6 +1582,11 @@ async function start() {
       const t = tw.tabs.active;
       // 홈 탭은 닫지 않는다 (판정 6)
       if (t && t.type !== 'home') void closeTab(tw, t.id).catch((err) => console.error('[tabs] 탭 닫기:', err?.message ?? err));
+    } else if (cmd.cmd === 'new-window') {
+      // Ctrl+N: 새 탭 창(홈 탭만). 누른 창(= 최근 창) 자리에서 30px 어긋나게 (D1)
+      const b = tw.shell.win.getNormalBounds?.() ?? tw.shell.win.getBounds();
+      const nw = createTabWindowFor({ bounds: { ...b, x: b.x + 30, y: b.y + 30 } });
+      nw.shell.win.focus?.();
     }
   }
 
@@ -1632,7 +1638,7 @@ async function start() {
   /** editor-window의 hostFor: 편집 뷰를 붙일 탭 창 껍데기. 탭을 더하거나 문서 탭을 같은 자리에서 바꾼다 (판정 7) */
   function editorHostFor(info) {
     const pl = placings.get(docKey(info.path)) ?? null;
-    const tw = (pl && tabWindows.has(pl.tw.shell.id) ? pl.tw : null) ?? lastTw() ?? createTabWindowFor({ bounds: initialBounds() });
+    const tw = (pl && tabWindows.has(pl.tw.shell.id) ? pl.tw : null) ?? recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
     const convertedFrom = info.convertedFrom ?? null;
     const tab = { type: 'editor', path: info.path, convertedFrom, title: basename(convertedFrom ?? info.path) };
     let t;
@@ -1747,7 +1753,7 @@ async function start() {
       if (!SMOKE) { try { settings.addRecent(hit.tab.path); } catch {} }
       return { tabId: hit.tab.id, mode: 'reused', path: hit.tab.path, reused: true, editor: editorState(hit.tab.path), notice: null };
     }
-    tw = tw && tabWindows.has(tw.shell.id) ? tw : lastTw() ?? createTabWindowFor({ bounds: initialBounds() });
+    tw = tw && tabWindows.has(tw.shell.id) ? tw : recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
     if (wantsEditor(p)) {
       try {
         editorCheck(p);
@@ -1979,16 +1985,25 @@ async function start() {
     const model = settings.get('models')?.[selected] || undefined;
     let errored = false;
     const path = uiPath;
+    // 대화를 시작한 패널로만 보낸다. 그 탭 창이 닫혔으면 버리고 대화마다 한 번만 알린다 (대화 정리는 그대로 끝까지)
+    let dropped = false;
+    const toPanel = (data) => {
+      if (!ownerWc || ownerWc.isDestroyed()) {
+        if (!dropped) { dropped = true; console.warn('[ai] 패널이 닫혀 이벤트를 버렸습니다', chatId); }
+        return;
+      }
+      sendTo(ownerWc, 'ai:event', data);
+    };
     const onEvent = (ev) => {
       if (!ev || typeof ev !== 'object') return;
       if (ev.type === 'done' && ev.sessionId) sessions.set(k, { provider: selected, sessionId: String(ev.sessionId) });
       if (ev.type === 'error') errored = true;
-      try { sendTo(ownerWc, 'ai:event', { ...ev, chatId, path }); } catch {
-        sendTo(ownerWc, 'ai:event', { type: ev.type, text: ev.text, message: ev.message, id: ev.id, name: ev.name, ok: ev.ok, summary: ev.summary, delta: ev.delta, chatId, path });
+      try { toPanel({ ...ev, chatId, path }); } catch {
+        toPanel({ type: ev.type, text: ev.text, message: ev.message, id: ev.id, name: ev.name, ok: ev.ok, summary: ev.summary, delta: ev.delta, chatId, path });
       }
     };
     // 패널이 대화를 만들도록 다른 이벤트보다 먼저 알린다
-    if (announce) sendTo(ownerWc, 'ai:event', { type: 'start', chatId, path, prompt: typeof announce === 'string' ? announce : prompt });
+    if (announce) toPanel({ type: 'start', chatId, path, prompt: typeof announce === 'string' ? announce : prompt });
     let handle;
     try {
       handle = ai.startChat({
@@ -2007,14 +2022,14 @@ async function start() {
     pushAiState();
     Promise.resolve(handle.done)
       .then((r) => { if (r?.sessionId) sessions.set(k, { provider: selected, sessionId: String(r.sessionId) }); })
-      .catch((err) => { if (!errored) sendTo(ownerWc, 'ai:event', { type: 'error', message: err?.message ?? String(err), chatId, path }); })
+      .catch((err) => { if (!errored) toPanel({ type: 'error', message: err?.message ?? String(err), chatId, path }); })
       .finally(() => {
         chats.delete(chatId);
         killChatOffice(pidDir, true);
         // 바뀜 확인은 고친 문서로 (재료 전용이면 before가 없어 바뀜 알림도 없다)
         let changed = false;
         try { changed = !!before?.hash && existsSync(edit) && currentHash(edit) !== before.hash; } catch {}
-        sendTo(ownerWc, 'ai:event', { type: 'end', chatId, path, ...(changed ? { changed: true, before: before.file } : {}) });
+        try { toPanel({ type: 'end', chatId, path, ...(changed ? { changed: true, before: before.file } : {}) }); } catch (err) { console.error('[ai] 끝 알림', err?.message ?? err); }
         pushAiState();
       });
     return { chatId, provider: list.find((p) => p.id === selected)?.name ?? selected, newChat };
@@ -2521,7 +2536,7 @@ async function start() {
         aboutInfo = { titles, legal: Array.isArray(titles) && titles.includes('수정된 판일 수 있습니다'), text: textShown, png: infoPng, textsPng };
       }
       // 탭 창을 앞으로
-      const front = lastTw()?.shell.win;
+      const front = recentWindow()?.shell.win;
       if (front && !front.isDestroyed()) { front.moveTop(); front.focus(); }
       const ok = state === 'saved' && (kind !== 'office' || phase === 'ready');
       return { ok, kind, state, phase, fonts, about, aboutInfo, reason: reason || null, title: ew.getTitle(), png, size: img.getSize() };
@@ -2564,7 +2579,7 @@ async function start() {
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'bad';
     const { isPrivateHost } = await import('./editor-window.mjs');
     if (isPrivateHost(u.hostname)) {
-      sendTo(from ?? lastTw()?.home?.webContents, 'toast', { type: 'warn', message: `이 PC나 내부망 주소는 열지 않아요: ${u.host}` });
+      sendTo(from ?? recentWindow()?.home?.webContents, 'toast', { type: 'warn', message: `이 PC나 내부망 주소는 열지 않아요: ${u.host}` });
       return 'private';
     }
     if (!TRUSTED_LINK_HOSTS.has(u.hostname.toLowerCase())) {
@@ -2608,14 +2623,14 @@ async function start() {
 
   /** 최근 탭 창에서 보이는 뷰의 webContents (개발 메뉴용) */
   function activeWc() {
-    const tw = lastTw();
+    const tw = recentWindow();
     const view = tw ? viewOfTab(tw, tw.tabs.active) : null;
     return view?.webContents ?? null;
   }
 
   /** 메뉴 명령 → 최근 탭 창: 문서 탭이면 그 뷰, 아니면 홈 탭으로 가서 홈 뷰 (문서 명령은 문서 탭에서만) */
   function sendMenu(cmd) {
-    const tw = lastTw();
+    const tw = recentWindow();
     if (!tw) return;
     const t = tw.tabs.active;
     if (t?.type === 'doc') { sendTo(tw.docViews.get(t.id)?.webContents, 'menu', cmd); return; }
@@ -2662,7 +2677,7 @@ async function start() {
 
   app.on('second-instance', (_e, argv, cwd) => {
     const f = fileFromArgv(argv, cwd);
-    const tw = lastTw();
+    const tw = recentWindow();
     if (!tw) { if (f) earlyFile = f; return; }
     focusShell(tw);
     if (!f) return;

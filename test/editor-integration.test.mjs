@@ -1273,9 +1273,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     await callAs('tabstrip', 'tabs:activate', ids().at(-1));
     assert.equal(press(edWc, 'KeyT'), true);
     assert.equal(tabList().active, 'home', '편집 뷰 Ctrl+T도 홈');
-    // Ctrl+Alt 조합·Ctrl+N(새 창은 아직 없음)은 탭을 건드리지 않는다
+    // Ctrl+Alt 조합은 탭을 건드리지 않는다 (Ctrl+N 새 탭 창은 아래 여러 탭 창 시험에서)
     assert.equal(press(panelWc, 'Tab', { alt: true }), false);
-    assert.equal(press(panelWc, 'KeyN'), true);
     assert.equal(tabList().active, 'home');
     assert.equal(fake.windows.length, wins, '새 창을 만들지 않는다');
   });
@@ -1401,6 +1400,141 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r2.ok, true, r2.error);
     assert.equal(r2.value.name, '명단.xlsx');
     assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(target).id)).ok, true);
+  });
+
+  // ── 여러 탭 창 (D1 · Section 1 #1): Ctrl+N, AI 이벤트는 대화를 시작한 창의 패널로, AI 대상은 창마다 ──
+  const pressCtrl = (wc, code) => {
+    const e = { prevented: false, preventDefault() { this.prevented = true; } };
+    wc.emit('before-input-event', e, { type: 'keyDown', code, control: true, shift: false, alt: false, meta: false });
+    return e.prevented;
+  };
+  /** fromWc에서 Ctrl+N → 새 탭 창과 그 창의 홈·패널·탭 줄 뷰 */
+  const newTabWindow = async (fromWc) => {
+    const nWin = fake.windows.length;
+    const nView = fake.views.length;
+    assert.equal(pressCtrl(fromWc, 'KeyN'), true, 'Ctrl+N은 가로챈다');
+    assert.ok(await until(() => fake.windows.length > nWin), '새 탭 창이 열려야 한다');
+    const fresh = fake.views.slice(nView).map((v) => v.webContents);
+    const w = {
+      win: fake.windows.at(-1),
+      home: fresh.find((wc) => wc.mainFrame.url.endsWith('?view=home')),
+      panel: fresh.find((wc) => wc.mainFrame.url.endsWith('?view=panel')),
+      tabstrip: fresh.find((wc) => /tabstrip\.html$/.test(wc.mainFrame.url)),
+    };
+    assert.ok(w.home && w.panel && w.tabstrip, '새 탭 창의 홈·패널·탭 줄 뷰');
+    return w;
+  };
+  const tabsOf = (w) => w.tabstrip.sent.filter((s) => s.channel === 'tabs:list').at(-1)?.data ?? { tabs: [], active: null };
+  /** 그 패널 뷰가 받은 ai:event의 chatId들 */
+  const chatIdsOf = (wc) => new Set(wc.sent.filter((s) => s.channel === 'ai:event' && s.data?.chatId).map((s) => s.data.chatId));
+  const sameFile = (a, b) => resolve(a).toLowerCase() === resolve(b).toLowerCase();
+  const pdfB = join(docs, '둘째 창.pdf');
+  let win2 = null;
+
+  await t.test('탭 창 2개: 각 창 AI 답은 자기 창 패널에만 (D1, Section 1 #1)', async () => {
+    tw0.emit('focus');
+    const before = fake.windows.length;
+    win2 = await newTabWindow(homeWc);
+    assert.equal(fake.windows.length, before + 1, '탭 창 하나만 더');
+    assert.equal(tw0.isDestroyed(), false);
+    assert.equal(win2.win.isDestroyed(), false);
+    // 새 창은 최근 창에서 30px 어긋나게, 홈 탭만
+    assert.equal(win2.win.opts.x, tw0.getBounds().x + 30);
+    assert.equal(win2.win.opts.y, tw0.getBounds().y + 30);
+    assert.deepEqual(tabsOf(win2).tabs.map((x) => x.type), ['home']);
+    assert.equal(tabsOf(win2).active, 'home');
+    // 창1: 문서 A(보고서.hwpx 편집 탭), 창2: 문서 B(PDF 문서 탭)
+    assert.equal((await callAs('home', 'doc:open', docPath)).ok, true);
+    writeFileSync(pdfB, makePdf(1));
+    assert.equal((await fake.invokeFrom(win2.home, 'doc:open', pdfB)).ok, true);
+    assert.ok(tabsOf(win2).tabs.some((x) => x.path && sameFile(x.path, pdfB)), '창2에 문서 B 탭');
+    assert.equal(tabOf(pdfB), null, '창1에는 문서 B 탭이 없다');
+    const r1 = await callAs('panel', 'ai:send', { prompt: '요약해줘', editorOk: true });
+    assert.equal(r1.ok, true, r1.error);
+    const r2 = await fake.invokeFrom(win2.panel, 'ai:send', { prompt: '요약해줘' });
+    assert.equal(r2.ok, true, r2.error);
+    assert.ok(await endOf(r1.value.chatId));
+    assert.ok(await endOf(r2.value.chatId));
+    assert.equal(chatIdsOf(panelWc).has(r1.value.chatId), true);
+    assert.equal(chatIdsOf(panelWc).has(r2.value.chatId), false, '창2 대화의 이벤트는 창1 패널에 가지 않는다');
+    assert.deepEqual([...chatIdsOf(win2.panel)], [r2.value.chatId], '창2 패널은 자기 대화만');
+    for (const s of win2.panel.sent.filter((x) => x.channel === 'ai:event')) assert.ok(sameFile(s.data.path, pdfB));
+    // D14는 창을 넘어서도: 창1이 고치는 중인 문서 A는 창2 대화의 재료가 될 수 없다
+    const held = await callAs('panel', 'ai:send', { prompt: '[hold] 고쳐줘', editorOk: true });
+    assert.equal(held.ok, true, held.error);
+    try {
+      const m = await fake.invokeFrom(win2.panel, 'ai:materials');
+      assert.equal(m.ok, true, m.error);
+      assert.equal(m.value.open.find((x) => sameFile(x.path, docPath))?.busy, true, '창2 재료 목록에도 고치는 중으로');
+      const r = await fake.invokeFrom(win2.panel, 'ai:send', { prompt: '참고해줘', target: { read: [docPath] } });
+      assert.equal(r.code, 'MATERIAL_BUSY');
+      assert.equal(chatIdsOf(win2.panel).has(held.value.chatId), false);
+    } finally {
+      globalThis.__okRelease();
+    }
+    assert.ok(await endOf(held.value.chatId));
+  });
+
+  await t.test('AI 답이 오는 중 그 탭 창을 닫으면 이벤트는 버리고, 대화 정리는 끝까지 (Review Focus)', async () => {
+    const r = await fake.invokeFrom(win2.panel, 'ai:send', { prompt: '[hold] 요약해줘' });
+    assert.equal(r.ok, true, r.error);
+    const chatId = r.value.chatId;
+    const pidDir = join(ud, 'com-pids', chatId);
+    assert.equal(existsSync(pidDir), true, '대화마다 PID 폴더');
+    const warns = [];
+    const warn0 = console.warn;
+    console.warn = (...a) => { warns.push(a); };
+    try {
+      win2.win.close();
+      assert.ok(await until(() => win2.win.isDestroyed()), '창2가 닫혀야 한다');
+      assert.equal(win2.panel.isDestroyed(), true);
+      globalThis.__okRelease();
+      assert.ok(await until(() => !existsSync(pidDir)), 'PID 폴더 정리');
+      await sleep(100);
+    } finally {
+      console.warn = warn0;
+    }
+    assert.equal(warns.filter((a) => a[0] === '[ai] 패널이 닫혀 이벤트를 버렸습니다' && a[1] === chatId).length, 1, '대화마다 한 번만 알린다');
+    assert.equal(chatIdsOf(panelWc).has(chatId), false, '다른 창 패널로 새지 않는다');
+    // 대화가 정리됐다: 창1에서 문서 B를 열면 AI가 쓰는 중이 아니다
+    assert.equal((await callAs('home', 'doc:open', pdfB)).ok, true);
+    assert.equal(lastSent('doc:opened', (d) => d?.path && sameFile(d.path, pdfB))?.aiBusy, false);
+    assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(pdfB).id)).ok, true);
+  });
+
+  let win3 = null;
+  await t.test('창별 AI 대상: 창1은 편집 탭 A, 창2는 홈 → 창2 ai:materials edit null', async () => {
+    tw0.emit('focus');
+    win3 = await newTabWindow(panelWc);
+    assert.equal((await callAs('home', 'doc:open', docPath)).ok, true);
+    const m1 = await callAs('panel', 'ai:materials');
+    assert.equal(m1.ok, true, m1.error);
+    assert.ok(sameFile(m1.value.edit.path, docPath), '창1 대상 = 편집 탭 A');
+    const m2 = await fake.invokeFrom(win3.panel, 'ai:materials');
+    assert.equal(m2.ok, true, m2.error);
+    assert.equal(m2.value.edit, null, '창2는 홈 → 대상 없음');
+    const r = await fake.invokeFrom(win3.panel, 'ai:send', { prompt: '요약해줘' });
+    assert.equal(r.ok, false, '홈 탭 창은 AI 대상이 없다');
+  });
+
+  await t.test('메뉴 명령은 마지막으로 초점 받은 탭 창의 홈으로', async () => {
+    const settingsItem = fake.menu.flatMap((m) => m.submenu ?? []).find((i) => i.label === '설정');
+    assert.ok(settingsItem, '설정 메뉴');
+    const menus = (wc) => wc.sent.filter((s) => s.channel === 'menu').length;
+    const [a0, b0] = [menus(homeWc), menus(win3.home)];
+    tw0.emit('focus');
+    settingsItem.click();
+    assert.equal(menus(homeWc), a0 + 1, '창1이 최근 → 창1 홈');
+    assert.equal(menus(win3.home), b0);
+    assert.equal(tabList().active, 'home');
+    win3.win.emit('focus');
+    settingsItem.click();
+    assert.equal(menus(win3.home), b0 + 1, '창2가 최근 → 창2 홈');
+    assert.equal(menus(homeWc), a0 + 1);
+    // 시험 뒤 창2를 닫는다 (아래 탭 창 닫기 시험은 창1 기준)
+    win3.win.close();
+    assert.ok(await until(() => win3.win.isDestroyed()));
+    tw0.emit('focus');
   });
 
   let closeAsked = 0;
