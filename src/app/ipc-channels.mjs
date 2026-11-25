@@ -2,7 +2,7 @@
 // main.mjs·editor-window.mjs는 등록·보내기 때 이 표로 채널을 확인하고, 요청마다 보낸 쪽 종류를 검사한다.
 // 주 창(home·panel)의 종류는 그 채널을 실제로 쓰는 화면 파일로 정한다: core.js = home·panel, home.js = home, panel.js = panel.
 
-/** 뷰 종류. tabstrip에 열린 채널은 아직 없다 (M3가 더함) */
+/** 뷰 종류. tabstrip = 탭 창 맨 위 탭 줄 (src/app/renderer/tabstrip.html) */
 export const VIEW_KINDS = Object.freeze(['home', 'panel', 'tabstrip', 'hwp', 'office']);
 /** 지금 주 창 (홈 화면과 AI 대화가 한 화면에 있다) */
 export const HUB_KINDS = Object.freeze(['home', 'panel']);
@@ -11,6 +11,7 @@ const HOME = ['home'];
 const PANEL = ['panel'];
 const HUB = ['home', 'panel'];
 const EDIT = ['hwp', 'office'];
+const TABSTRIP = ['tabstrip'];
 
 // call: 'invoke'(ipcMain.handle ← ipcRenderer.invoke) | 'on'(ipcMain.on ← ipcRenderer.send/sendSync) | 'send'(webContents.send → ipcRenderer.on)
 // open: 보낸 쪽을 가리지 않는 공개 채널 (앱에 든 번역 사전)
@@ -18,7 +19,7 @@ const TABLE = {
   // ── 주 창: 시작·언어 ──
   'app:init': { call: 'invoke', kinds: HUB },
   'app:relaunch': { call: 'invoke', kinds: HOME },
-  'i18n:get': { call: 'on', kinds: HUB, open: true },
+  'i18n:get': { call: 'on', kinds: [...HUB, 'tabstrip'], open: true },
   'smoke:ready': { call: 'on', kinds: HOME },
 
   // ── 주 창: 문서 ──
@@ -96,6 +97,14 @@ const TABLE = {
   // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
   'panel': { call: 'send', kinds: HOME },
 
+  // ── 탭 창: 탭 줄 (탭 목록 받기, 고르기·닫기·홈·AI 패널 접기) ──
+  'tabs:activate': { call: 'invoke', kinds: TABSTRIP },
+  'tabs:close': { call: 'invoke', kinds: TABSTRIP },
+  'tabs:home': { call: 'invoke', kinds: TABSTRIP },
+  'tabs:togglePanel': { call: 'invoke', kinds: TABSTRIP },
+  'tabs:ready': { call: 'on', kinds: TABSTRIP },
+  'tabs:list': { call: 'send', kinds: TABSTRIP },
+
   // ── 편집 창 (한글 = hwp, 문서·표·슬라이드 = office) ──
   'editor:get-document': { call: 'invoke', kinds: EDIT },
   'editor:draft': { call: 'invoke', kinds: EDIT },
@@ -153,6 +162,7 @@ export const PRELOADS = Object.freeze({
   'src/app/preload.cjs': Object.freeze(['home', 'panel']),
   'src/app/editor/editor-preload.cjs': Object.freeze(['hwp']),
   'src/app/office-editor/office-preload.cjs': Object.freeze(['office']),
+  'src/app/tabstrip-preload.cjs': Object.freeze(['tabstrip']),
 });
 
 export const BLOCK_START = '// <ipc-channels> 자동 생성: node scripts/gen-ipc-preload.mjs (손으로 고치지 않는다)';

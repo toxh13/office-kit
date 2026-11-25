@@ -53,5 +53,9 @@
  "저장하고 보내기": "Save and send",
  "추가할 수 있는 열린 문서가 없어요": "No open documents to add",
  "출력 폴더 바꾸기": "Change output folder",
- "AI 작업 중": "AI is working"
+ "AI 작업 중": "AI is working",
+ "열린 문서": "Open documents",
+ "홈": "Home",
+ "‘{0}’ 닫기": "Close ‘{0}’",
+ "아직 불러오지 않음": "Not loaded yet"
 }

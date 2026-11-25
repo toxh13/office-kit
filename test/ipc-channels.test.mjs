@@ -11,7 +11,7 @@ import { allows, BLOCK_END, BLOCK_START, channelSpec, channelsFor, HUB_KINDS, IP
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
 
-test('표: 모든 줄의 call·kinds가 올바르고, tabstrip은 아직 비어 있다', () => {
+test('표: 모든 줄의 call·kinds가 올바르고, tabstrip은 탭 줄 채널만 쓴다', () => {
   assert.deepEqual(VIEW_KINDS, ['home', 'panel', 'tabstrip', 'hwp', 'office']);
   assert.deepEqual(HUB_KINDS, ['home', 'panel']);
   assert.ok(Object.isFrozen(IPC), '표는 얼려 둔다');
@@ -24,7 +24,11 @@ test('표: 모든 줄의 call·kinds가 올바르고, tabstrip은 아직 비어 
     if (spec.open) open.push(ch);
   }
   assert.deepEqual(open.sort(), ['editor:i18n', 'i18n:get']);
-  assert.deepEqual(channelsFor(['tabstrip']), { invoke: [], on: [], send: [] });
+  assert.deepEqual(channelsFor(['tabstrip']), {
+    invoke: ['tabs:activate', 'tabs:close', 'tabs:home', 'tabs:togglePanel'],
+    on: ['i18n:get', 'tabs:ready'],
+    send: ['tabs:list'],
+  });
   // 주 창 send 8개, 편집 창 send 3개
   assert.deepEqual(channelsFor(HUB_KINDS).send, ['ai:event', 'batch:progress', 'doc:changed', 'doc:editor', 'doc:opened', 'menu', 'panel', 'toast']);
   assert.deepEqual(channelsFor(['hwp']).send, ['editor:command', 'editor:external-change', 'editor:request-close']);
@@ -46,6 +50,17 @@ test('allows: 편집 창은 주 창 채널을, 주 창은 편집 창 채널을 �
   assert.equal(allows('ai:send', null), false);
 });
 
+test('allows: 탭 줄은 탭 줄 채널만, 다른 뷰는 탭 줄 채널을 못 부른다 (Section 1 #3)', () => {
+  assert.equal(allows('tabs:activate', ['tabstrip']), true);
+  assert.equal(allows('tabs:activate', ['home']), false);
+  assert.equal(allows('tabs:activate', ['hwp']), false);
+  assert.equal(allows('editor:save', ['tabstrip']), false);
+  assert.equal(allows('ai:send', ['tabstrip']), false);
+  assert.equal(allows('i18n:get', ['tabstrip']), true);
+  assert.deepEqual(PRELOADS['src/app/tabstrip-preload.cjs'], ['tabstrip']);
+  assert.ok(Object.isFrozen(PRELOADS['src/app/tabstrip-preload.cjs']));
+});
+
 test('channelSpec: 없는 채널·다른 호출 종류는 오류', () => {
   assert.throws(() => channelSpec('doc:nope', 'invoke'), /IPC 표에 없는 채널/);
   assert.throws(() => channelSpec('doc:opened', 'invoke'), /IPC 호출 종류가 다름/);
@@ -57,6 +72,7 @@ test('원본 대조: main.mjs·editor-window.mjs가 등록·보내는 채널 글
   const grab = (src, re, call) => [...src.matchAll(re)].map((m) => [m[1], call]);
   const main = read('src/app/main.mjs');
   const ew = read('src/app/editor-window.mjs');
+  const tw = read('src/app/tab-window.mjs');
   const used = [
     ...grab(main, /(?<![.\w])handle\('([^']+)'/g, 'invoke'),
     ...grab(main, /(?<![.\w])onIpc\('([^']+)'/g, 'on'),
@@ -66,6 +82,7 @@ test('원본 대조: main.mjs·editor-window.mjs가 등록·보내는 채널 글
     ...grab(ew, /(?<![.\w])ask\(\w+, '([^']+)'/g, 'send'),
     ...grab(ew, /(?<![.\w])sendToEditor\(\w+, '([^']+)'/g, 'send'),
     ...grab(ew, /webContents\.send\('([^']+)'/g, 'send'),
+    ...grab(tw, /webContents\.send\('([^']+)'/g, 'send'),
   ];
   assert.ok(used.length > 70, `찾은 채널이 너무 적다: ${used.length}`);
   for (const [ch, call] of used) {
@@ -79,7 +96,9 @@ test('원본 대조: main.mjs·editor-window.mjs가 등록·보내는 채널 글
   assert.doesNotMatch(main, /webContents\.send\('/);
   // 표의 모든 채널은 두 파일 중 한 곳에 나온다 (안 쓰는 줄 없음)
   const seen = new Set(used.map(([ch]) => ch));
-  assert.deepEqual(Object.keys(IPC).filter((ch) => !seen.has(ch)), []);
+  // 탭 줄이 부르는 채널은 main이 탭 창으로 바뀔 때(계획 Task 6) 등록한다 — 그때 이 목록을 지운다
+  const NOT_YET = ['tabs:activate', 'tabs:close', 'tabs:home', 'tabs:ready', 'tabs:togglePanel'];
+  assert.deepEqual(Object.keys(IPC).filter((ch) => !seen.has(ch) && !NOT_YET.includes(ch)), []);
 });
 
 // 자동 생성 블록: BLOCK_START부터 BLOCK_END까지 (줄 끝은 \n으로 맞춘다)
