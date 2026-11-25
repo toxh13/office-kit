@@ -376,7 +376,7 @@ function safeFileName(name, fallback) {
  * @param {{ maxBytes?: number, fontsTimeoutMs?: number, printIntervalMs?: number }} [o.limits]  시험용 한도 (기본 512MB, 글꼴 준비 20초, 인쇄 간격 3초)
  */
 export function createEditorManager({
-  app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange, onPanel, onClosed, toPdf, toPrint, onOpenRequest, onNewRequest,
+  app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange, onPanel, onClosed, toPdf, toPrint, onOpenRequest, onNewRequest, onQuitCanceled,
   dirs, officeState, fonts: fontsModule, fixups: fixupsModule, nativeTheme, icon, testHooks = false, userName,
   // 화면 언어: t(한국어) → 번역 (창 제목), lang() → 'ko' | 'en' | 'ja' (편집기 메뉴 언어. 일본어 메뉴는 없어 영어로)
   t = (x) => x, lang = () => 'ko', i18nData = () => null,
@@ -1352,7 +1352,11 @@ export function createEditorManager({
       if (entry.allowClose) return;
       e.preventDefault();
       void requestClose(entry).then((closed) => {
-        if (!closed) quitting = false;
+        if (!closed) {
+          // 끝내기 중 저장 확인에서 취소 → 앱 쪽 끝내기 상태도 되돌린다 (안 그러면 이후 창을 닫아도 끝내기로 오인한다)
+          if (quitting) { try { onQuitCanceled?.(); } catch (err) { log('onQuitCanceled 오류:', err); } }
+          quitting = false;
+        }
         else if (quitting) app?.quit();
       });
     });

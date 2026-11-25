@@ -976,6 +976,43 @@ test('바꿔 연 문서: 다른 이름으로 저장 뒤 사용자 폴더를 지�
   });
 });
 
+test('끝내기 중 저장 확인에서 취소하면 onQuitCanceled가 한 번 불린다', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'ok-office-quit-'));
+  const dirs = makeBundles(join(base, 'vendor'));
+  const doc = join(base, '메모.docx');
+  await createBlankDocument(doc);
+  const fake = makeFake();
+  let canceled = 0;
+  const mgr = createEditorManager({
+    app: fake.app, BrowserWindow: fake.BrowserWindow, ipcMain: fake.ipcMain, session: fake.session, dialog: fake.dialog,
+    shell: fake.shell, appRoot: base, userData: join(base, 'ud'), dirs, log: () => {},
+    fonts: { ensureFonts: async () => { throw new Error('글꼴 실패 흉내'); } },
+    onQuitCanceled: () => { canceled++; },
+  });
+  try {
+    await mgr.openEditor(doc);
+    const w = fake.windows[0];
+    fake.replies.set(w.webContents.id, true); // 바뀐 내용이 있다
+    fake.dialogAnswers.push(2); // 저장 확인에서 취소
+    fake.app.emit('before-quit');
+    w.close();
+    await sleep(100);
+    assert.equal(canceled, 1);
+    assert.equal(w.isDestroyed(), false, '취소하면 창이 남는다');
+    // 끝내는 중이 아닐 때의 취소는 알리지 않는다
+    fake.dialogAnswers.push(2);
+    w.close();
+    await sleep(100);
+    assert.equal(canceled, 1);
+  } finally {
+    fake.replies.clear();
+    await mgr.closeAll({ force: true });
+    fake.app.emit('will-quit');
+    await mgr.dispose();
+    rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test('시작 정리가 converted 폴더를 비운다', () => {
   const base = mkdtempSync(join(tmpdir(), 'ok-office-conv-clean-'));
   try {

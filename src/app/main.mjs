@@ -902,6 +902,8 @@ async function start() {
       // 편집 창의 Ctrl+O · Ctrl+N
       onOpenRequest: (ew) => { pickAndOpen(ew).catch((err) => console.error('[open]', err)); },
       onNewRequest: () => { showHub(); send('menu', 'new'); },
+      // 끝내기 중 저장 확인에서 취소 → 끝내기 상태를 되돌린다
+      onQuitCanceled: () => { appQuitting = false; },
       onClosed: () => setTimeout(editorClosed, 0),
     });
   } catch (err) {
