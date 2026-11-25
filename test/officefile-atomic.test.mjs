@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { tempDir } from './helpers/fixtures.mjs';
-import { replaceInFile } from '../src/core/officefile.mjs';
+import { csvCellValue, replaceInFile } from '../src/core/officefile.mjs';
 
 const tmp = tempDir('officekit-atomic-');
 after(() => tmp.cleanup());
@@ -23,4 +23,16 @@ test('파일 엔진 저장이 실패해도 원본 docx는 그대로다', async (
   } finally { chmodSync(out, 0o666); }
   assert.equal(readFileSync(out, 'utf8'), 'ORIGINAL-BYTES');
   assert.deepEqual(readdirSync(tmp.dir).filter((f) => f.endsWith('.tmp')), []);
+});
+
+test('CSV를 엑셀로 바꿀 때 앞자리 0과 소수 끝자리는 문자열로 지킨다', () => {
+  assert.equal(csvCellValue('01012345678'), '01012345678');
+  assert.equal(csvCellValue('007'), '007');
+  assert.equal(csvCellValue('1.50'), '1.50');
+  assert.equal(csvCellValue('0'), 0);
+  assert.equal(csvCellValue('-12'), -12);
+  assert.equal(csvCellValue('3.14'), 3.14);
+  assert.equal(csvCellValue('1234567890123456'), '1234567890123456');
+  assert.equal(csvCellValue(''), '');
+  assert.equal(csvCellValue('-0'), '-0');
 });

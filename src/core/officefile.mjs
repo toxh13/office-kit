@@ -171,6 +171,12 @@ export function parseCsv(text, sep) {
   return rows;
 }
 
+// CSV 칸 값을 엑셀 셀 값으로: 원래 표기가 숫자와 똑같을 때만 숫자로 바꾼다.
+// 앞자리 0(전화번호)·소수 끝 0(1.50)·-0(숫자로 바꾸면 부호가 사라짐)·16자리 이상은 문자열로 둬서 표기를 지킨다.
+export function csvCellValue(v) {
+  return /^-?(0|[1-9]\d*)(\.\d*[1-9])?$/.test(v) && v.length < 16 && v !== '-0' ? Number(v) : v;
+}
+
 export async function readCsv(path) {
   const rows = parseCsv(decodeText(readFileSync(path)));
   const sheets = [{ name: basename(path, extname(path)), rows }];

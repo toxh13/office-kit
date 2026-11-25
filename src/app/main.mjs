@@ -1227,9 +1227,10 @@ async function start() {
       if (ext === 'csv') {
         const doc = await core.readDocument(p, { engine: 'file' });
         const { default: ExcelJS } = await import('exceljs');
+        const { csvCellValue } = await import('../core/officefile.mjs');
         const wb = new ExcelJS.Workbook();
         const ws = wb.addWorksheet(basename(p).replace(/\.[^.]+$/, '').slice(0, 31) || 'Sheet1');
-        for (const row of doc.sheets?.[0]?.rows ?? []) ws.addRow(row.map((v) => (v !== '' && /^-?\d+(\.\d+)?$/.test(v) && v.length < 16 ? Number(v) : v)));
+        for (const row of doc.sheets?.[0]?.rows ?? []) ws.addRow(row.map(csvCellValue));
         await wb.xlsx.writeFile(out);
         return out;
       }
