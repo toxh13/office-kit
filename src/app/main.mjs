@@ -494,9 +494,10 @@ async function start() {
   /** 가린 사본 만들기 (원본은 그대로, 원본 옆 '<이름>_가림.<확장자>') → { output, items, remaining } */
   async function piiMask(args) {
     const doc = needDoc();
+    const m = await loadPii();
+    m.piiTargetCheck(args?.path, doc.path); // 찾을 때의 문서가 아니면 거부
     const values = Array.isArray(args?.values) ? args.values.filter((v) => typeof v === 'string' && v.length <= 200).slice(0, 2000) : null;
     if (!values?.length) throw fail('가릴 항목을 하나 이상 골라 주세요');
-    const m = await loadPii();
     const output = m.maskedPathFor(doc.path);
     let r;
     try { r = await m.maskDocument(doc.path, { output, values }); } catch (err) {

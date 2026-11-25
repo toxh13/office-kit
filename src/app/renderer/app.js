@@ -385,6 +385,9 @@
       if (doc.autoEdit) autoEdit(doc);
       return;
     }
+    // 다른 문서가 열리면 개인정보 찾기 결과를 비우고 창을 닫는다
+    pii.items = []; pii.path = null;
+    try { const pd = $('#dlg-pii'); if (pd?.open) pd.close(); } catch {}
     state.doc = doc;
     state.preview = null;
     state.zoom = 'auto';
@@ -1042,7 +1045,7 @@
 
   // ── 개인정보 찾아 가리기 ─────────────────────────────
 
-  const pii = { items: [], busy: false };
+  const pii = { items: [], busy: false, path: null };
 
   async function openPii() {
     closeTools();
@@ -1064,6 +1067,7 @@
       return;
     }
     if (!dlg.open || !state.doc || pathKey(state.doc.path) !== pathKey(d0.path)) return;
+    pii.path = r.path; // 찾은 문서 — 가리기 요청에 함께 보내 같은 문서에만 적용
     pii.items = r.items.map((it) => ({ ...it, on: true }));
     if (!pii.items.length) {
       body.replaceChildren(h('div', { class: 'diff-msg', text: `개인정보를 찾지 못했어요 (글자 ${r.chars.toLocaleString()}자 확인). 그림 속 글자나 띄어 쓴 번호는 찾지 못하니 직접 확인해 주세요.` }));
@@ -1108,7 +1112,7 @@
     btn.disabled = true;
     setBusy('pii', '가린 사본 만드는 중…');
     let r;
-    try { r = await call(K.pii.mask({ values })); } catch (err) { showError(err); return; } finally {
+    try { r = await call(K.pii.mask({ values, path: pii.path })); } catch (err) { showError(err); return; } finally {
       pii.busy = false;
       clearBusy('pii');
       btn.disabled = false;

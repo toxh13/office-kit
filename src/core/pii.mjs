@@ -155,6 +155,14 @@ export async function scanDocument(path, { types } = {}) {
   return { path, items: groupPii(found, text), total: found.length, chars: text.length };
 }
 
+/** 가리기 요청이 찾을 때의 문서에 대한 것인지 확인한다 (다르거나 경로가 없으면 PII_DOC_CHANGED). 경로는 Windows 대소문자를 무시하고 비교한다. */
+export function piiTargetCheck(argsPath, currentPath) {
+  const key = (p) => resolve(String(p)).toLowerCase();
+  if (typeof argsPath !== 'string' || !argsPath || typeof currentPath !== 'string' || key(argsPath) !== key(currentPath)) {
+    throw Object.assign(new Error('문서가 바뀌었습니다. 개인정보 찾기를 다시 하세요.'), { expected: true, code: 'PII_DOC_CHANGED' });
+  }
+}
+
 /** 가린 사본 기본 이름: <이름>_가림.<확장자> (있으면 _가림 (2) …) */
 export function maskedPathFor(path) {
   const dir = dirname(path); const ext = extname(path); const stem = basename(path, ext);

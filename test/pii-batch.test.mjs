@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findPii, groupPii, maskDocument, scanDocument, maskedPathFor } from '../src/core/pii.mjs';
+import { findPii, groupPii, maskDocument, scanDocument, maskedPathFor, piiTargetCheck } from '../src/core/pii.mjs';
 import { collectHwpFiles, convertHwpBatch, outputFor, batchReportCsv } from '../src/core/batch.mjs';
 import { createDocument, readDocument } from '../src/core/index.mjs';
 
@@ -50,6 +50,15 @@ test('findPii: 종류별로 찾고 가린다', () => {
   const g = groupPii(findPii('010-1234-5678 그리고 다시 010-1234-5678'), '010-1234-5678 그리고 다시 010-1234-5678');
   assert.equal(g.length, 1);
   assert.equal(g[0].count, 2);
+});
+
+test('piiTargetCheck: 찾을 때의 문서와 지금 문서가 다르면 PII_DOC_CHANGED', () => {
+  const MSG = '문서가 바뀌었습니다. 개인정보 찾기를 다시 하세요.';
+  assert.throws(() => piiTargetCheck('C:\\Users\\user\\a.docx', 'C:\\Users\\user\\b.docx'), (e) => e.code === 'PII_DOC_CHANGED' && e.message === MSG && e.expected === true);
+  assert.throws(() => piiTargetCheck(undefined, 'C:\\Users\\user\\a.docx'), (e) => e.code === 'PII_DOC_CHANGED' && e.message === MSG);
+  assert.throws(() => piiTargetCheck('', 'C:\\Users\\user\\a.docx'), (e) => e.code === 'PII_DOC_CHANGED');
+  assert.doesNotThrow(() => piiTargetCheck('C:\\Users\\user\\a.docx', 'C:\\Users\\user\\a.docx'));
+  assert.doesNotThrow(() => piiTargetCheck('C:\\Users\\user\\A.DOCX', 'c:\\users\\user\\a.docx'));
 });
 
 test('maskDocument: hwpx·docx·xlsx 가린 사본, 원본은 그대로', async () => {

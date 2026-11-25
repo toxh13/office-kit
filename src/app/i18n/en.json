@@ -456,6 +456,7 @@
  "문서가 다른 프로그램에서 열려 있어 되돌릴 수 없습니다. 프로그램을 닫고 다시 시도하세요.": "Can't revert because the document is open in another app. Close that app and try again.",
  "문서가 다른 프로그램에서 열려 있어 작업할 수 없습니다": "Can't work on the document because it is open in another app",
  "문서가 바뀌어 새로 고쳤어요": "The document changed, so it was refreshed",
+ "문서가 바뀌었습니다. 개인정보 찾기를 다시 하세요.": "The document has changed. Search for personal information again.",
  "문서가 손상됐거나 지원하지 않는 형식이라 열 수 없어요. ‘프로그램에서 열기’로 열어 보세요.": "Can't open the document: it is damaged or in an unsupported format. Try ‘Open in app’.",
  "문서가 있는 폴더 열기": "Open containing folder",
  "문서가 있던 폴더를 찾을 수 없어 저장하지 못했습니다. 다른 이름으로 저장하세요.": "Couldn't save because the document's folder no longer exists. Use Save As.",
