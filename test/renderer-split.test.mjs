@@ -7,18 +7,20 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as acorn from 'acorn';
 import '../src/app/renderer/bridge.js';
+import { VIEW_ROUTES } from '../src/app/ipc-channels.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RENDERER = join(ROOT, 'src', 'app', 'renderer');
 const read = (name) => readFileSync(join(RENDERER, name), 'utf8');
-const ENTRY = ['core.js', 'home.js', 'panel.js'];
+const ENTRY = ['core.js', 'doc-actions.js', 'home.js', 'panel.js'];
 
 // 표준 JS·DOM 전역 + 앞서 불러온 스크립트가 만든 전역
 const ALLOWED = new Set([
   'Array', 'Boolean', 'Date', 'Error', 'TypeError', 'Map', 'Set', 'WeakMap', 'Math', 'Number', 'Object', 'Promise', 'String',
   'URL', 'JSON', 'RegExp', 'Symbol', 'Infinity', 'NaN', 'undefined', 'globalThis', 'console',
   'window', 'document', 'ResizeObserver', 'requestAnimationFrame', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
-  'OKCore', 'OKBridge', 'OKTargetChips', 'OKMarkdown', 'OKDialogQueue', 'OfficeKitI18n',
+  'location', 'URLSearchParams', 'CustomEvent',
+  'OKCore', 'OKBridge', 'OKTargetChips', 'OKMarkdown', 'OKDialogQueue', 'OKDocActions', 'OfficeKitI18n',
 ]);
 
 // ── 작은 범위 분석: 자유 변수 찾기 ──
@@ -152,7 +154,7 @@ test('index.html: 스크립트 차례와 defer, app.js 없음', () => {
   const html = read('index.html');
   const scripts = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1]);
   const srcs = scripts.map((a) => /\bsrc="([^"]+)"/.exec(a)?.[1]);
-  assert.deepEqual(srcs, ['../i18n/translate.js', 'md.js', 'dialog-queue.js', 'target-chips.js', 'bridge.js', 'core.js', 'home.js', 'panel.js']);
+  assert.deepEqual(srcs, ['../i18n/translate.js', 'md.js', 'dialog-queue.js', 'target-chips.js', 'bridge.js', 'core.js', 'doc-actions.js', 'home.js', 'panel.js']);
   for (const a of scripts) assert.match(a, /\bdefer\b/, a);
   assert.equal(existsSync(join(RENDERER, 'app.js')), false);
 });
@@ -179,9 +181,8 @@ test('state 칸 주인: home.js는 panel 칸을, panel.js는 home 칸을 쓰지 
   assert.doesNotMatch(read('panel.js'), /state\.(preview|previewSeq|rendering|pendingRefresh|zoom|panel|smokeSent)\b/);
 });
 
-test('다리: call하는 이름은 모두 다른 쪽이 provide한다', () => {
-  // 주석은 빼고 코드의 bridge.provide('…')·bridge.call('…')만 센다 (이름은 글자 그대로여야 한다)
-  const names = (src, verb) => {
+/** 주석은 빼고 코드의 bridge.provide('…')·bridge.call('…')만 센다 (이름은 글자 그대로여야 한다) */
+function bridgeNames(src, verb) {
     const out = new Set();
     const visit = (node) => {
       if (!isNode(node)) return;
@@ -194,17 +195,60 @@ test('다리: call하는 이름은 모두 다른 쪽이 provide한다', () => {
     };
     visit(acorn.parse(src, { ecmaVersion: 'latest' }));
     return out;
-  };
-  const [core, home, panel] = ENTRY.map(read);
-  const homeGives = names(home, 'provide');
-  const panelGives = names(panel, 'provide');
+}
+
+test('다리: home.js·panel.js의 bridge.call 이름은 같은 파일·core.js에서 provide했거나 VIEW_ROUTES에 있다', () => {
+  const [core, docActions, home, panel] = ENTRY.map(read);
+  const homeGives = bridgeNames(home, 'provide');
+  const panelGives = bridgeNames(panel, 'provide');
+  const coreGives = bridgeNames(core, 'provide');
   assert.ok(homeGives.size > 0 && panelGives.size > 0);
   for (const n of homeGives) assert.match(n, /^home\.\w+$/, n);
   for (const n of panelGives) assert.match(n, /^chat\.\w+$/, n);
-  for (const n of names(home, 'call')) assert.ok(panelGives.has(n), 'home.js가 부르는 ' + n + '을 panel.js가 provide하지 않음');
-  for (const n of names(panel, 'call')) assert.ok(homeGives.has(n), 'panel.js가 부르는 ' + n + '을 home.js가 provide하지 않음');
-  for (const n of names(core, 'call')) assert.ok(homeGives.has(n) || panelGives.has(n), 'core.js가 부르는 ' + n + '을 아무도 provide하지 않음');
-  assert.equal(names(core, 'provide').size, 0);
+  const routed = (n) => Object.hasOwn(VIEW_ROUTES, n);
+  for (const n of bridgeNames(home, 'call')) assert.ok(homeGives.has(n) || coreGives.has(n) || routed(n), 'home.js가 부르는 ' + n + '을 아무도 받지 않음');
+  for (const n of bridgeNames(panel, 'call')) assert.ok(panelGives.has(n) || coreGives.has(n) || routed(n), 'panel.js가 부르는 ' + n + '을 아무도 받지 않음');
+  // core.js·doc-actions.js는 홈·패널 어느 뷰에서도 돌므로 중계 표에 있는 이름만 부른다
+  for (const n of [...bridgeNames(core, 'call'), ...bridgeNames(docActions, 'call')]) assert.ok(routed(n), 'core.js·doc-actions.js가 부르는 ' + n + '이 VIEW_ROUTES에 없음');
+  // 중계 표의 이름은 받는 쪽 파일이 provide한다 (home.* → home.js, chat.* → panel.js)
+  for (const [n, r] of Object.entries(VIEW_ROUTES)) assert.ok((r.to === 'home' ? homeGives : panelGives).has(n), n + '을 받는 쪽이 provide하지 않음');
+  assert.equal(coreGives.size, 0);
+});
+
+test('다리: 값을 돌려받는 이름(chat.of·chat.current)은 부르지 않는다', () => {
+  for (const f of ENTRY) {
+    const calls = bridgeNames(read(f), 'call');
+    assert.equal(calls.has('chat.of'), false, f);
+    assert.equal(calls.has('chat.current'), false, f);
+  }
+});
+
+test('옆 창·대화창 배치 코드 없음: home.js에 onPanel·panel-mode·applyChatLayout, index.html에 옆 창 단추·#splitter 없음', () => {
+  const home = read('home.js');
+  assert.doesNotMatch(home, /\bonPanel\b|panel-mode|applyChatLayout/);
+  const html = read('index.html');
+  assert.doesNotMatch(html, /btn-panel-full|btn-panel-close|id="splitter"/);
+});
+
+test('bridge: 없는 이름은 relay가 있으면 relay(name, args)로 넘기고 undefined (로그 없음)', () => {
+  const logs = []; const relayed = [];
+  const b = OKBridge.createBridge({ log: (m) => logs.push(m), relay: (name, args) => relayed.push([name, args]) });
+  b.provide('home.pickFile', () => 'here');
+  assert.equal(b.call('home.pickFile'), 'here');
+  assert.equal(b.call('chat.markStopping', { path: 'C:\\문서\\a.docx' }), undefined);
+  assert.deepEqual(relayed, [['chat.markStopping', [{ path: 'C:\\문서\\a.docx' }]]]);
+  assert.deepEqual(logs, []);
+});
+
+test('화면 뷰 종류: core.js가 ?view=를 OKCore.view·body[data-view]로, home.js는 패널에서·panel.js는 패널 밖에서 아무것도 하지 않는다', () => {
+  const core = read('core.js');
+  assert.match(core, /new URLSearchParams\(location\.search\)\.get\('view'\)/);
+  assert.match(core, /document\.body\.dataset\.view\s*=/);
+  assert.match(read('home.js'), /if \(view === 'panel'\) return;/);
+  assert.match(read('panel.js'), /if \(view !== 'panel'\) return;/);
+  const css = readFileSync(join(RENDERER, 'style.css'), 'utf8');
+  assert.match(css, /\[data-view="panel"\]/);
+  assert.doesNotMatch(css, /panel-mode|\.panel-only/);
 });
 
 test('main.mjs: 전역 current·watcher·pendingFile·rendererReady 선언 없음', () => {

@@ -1,12 +1,14 @@
-// home.js — 주 창 화면: 빈 화면·최근 문서·문서 열기·편집 창·미리보기·문서 작업·바뀐 내용·옆 창·도구·버전·새 문서·설정·대화창 배치·끌어놓기·확인용 캡처.
-// AI 대화(panel.js)는 직접 부르지 않고 bridge.call('chat.…')으로만 부른다.
+// home.js — 홈 탭(?view=home: 빈 화면·최근 문서·새 문서·도구·설정)과 문서 탭(?view=doc: 그 문서의 미리보기·문서 작업) 화면.
+// 열기는 main이 새 탭으로 연다 (홈은 문서를 품지 않는다). AI 대화(panel.js, 다른 뷰)는 bridge.call('chat.…')로만 부른다 (main 중계).
 'use strict';
 (() => {
   const {
     K, I18N, $, $$, h, icon, spinner, call, sleep, pathKey,
     extOf, baseName, dirName, KIND_BY_EXT, kindStyle, ENGINE_LABEL, ENGINE_SHORT, whenText, relText, setBusy,
-    clearBusy, toast, friendlyError, showError, confirmDialog, state, el: coreEl, bridge, onInit,
+    clearBusy, toast, friendlyError, showError, confirmDialog, state, el: coreEl, bridge, onInit, view,
   } = OKCore;
+  // AI 패널 뷰에서는 아무것도 등록하지 않는다 (panel.js 몫)
+  if (view === 'panel') return;
 
   // home 칸 (panel 칸은 읽지도 쓰지도 않는다)
   Object.assign(state, {
@@ -23,10 +25,8 @@
     empty: $('#empty'), preview: $('#preview'), zoombar: $('#zoombar'), refreshing: $('#refreshing'),
     recent: $('#recent'), recentList: $('#recent-list'),
     docinfo: $('#docinfo'), docKind: $('#doc-kind'), docName: $('#doc-name'), docEngine: $('#doc-engine'),
-    chat: $('#chat'),
-    splitter: $('#splitter'), toggleChat: $('#btn-toggle-chat'),
     stEngine: $('#st-engine'), stPages: $('#st-pages'), stSaved: $('#st-saved'), stEditor: $('#st-editor'),
-    btnEdit: $('#btn-edit'), editorWarn: $('#editor-warn'),
+    btnEdit: $('#btn-edit'),
     overlay: $('#drop-overlay'),
     settings: $('#dlg-settings'), confirm: coreEl.confirm,
   };
@@ -96,7 +96,6 @@
       renderTopbar();
       renderStatus();
       refreshPreview({ ifChanged: true, reason: 'reopen' });
-      if (doc.autoEdit) autoEdit(doc);
       return;
     }
     // 다른 문서가 열리면 개인정보 찾기 결과를 비우고 창을 닫는다
@@ -110,8 +109,6 @@
     document.title = doc ? `${doc.name} - Office Kit` : 'Office Kit';
     renderTopbar();
     renderStatus();
-    bridge.call('chat.render');
-    bridge.call('chat.refreshTargets');
     if (!doc) {
       el.preview.hidden = true;
       el.preview.replaceChildren();
@@ -125,13 +122,6 @@
     el.preview.hidden = false;
     if (doc.backupError) toast(doc.backupError, { type: 'warn' });
     refreshPreview({ reason: 'open' });
-    if (doc.autoEdit) autoEdit(doc);
-  }
-
-  /** 설정 '문서를 열면: 바로 편집 창 열기' — main이 doc:opened에 autoEdit를 붙여 보낸다. 편집기 묶음이 없으면 미리보기만 */
-  function autoEdit(doc) {
-    if (!isEditable(doc) || editorKindInfo(doc.path)?.available === false) return;
-    actEdit();
   }
 
   function updateDoc(doc) {
@@ -193,7 +183,6 @@
     set(el.stEditor, ed?.open ? (ed.dirty ? `${win} 열림 · 저장 안 됨` : `${win} 열림`) : '',
       ed?.open ? (ed.dirty ? `${win}에 저장하지 않은 내용이 있어요. 눌러서 ${win} 보기` : `눌러서 ${win} 보기`) : '');
     el.stEditor.classList.toggle('dirty', !!ed?.dirty);
-    renderEditorWarn();
   }
 
   // ── 편집 창 (한글 · 문서·표·슬라이드) ─────────────────
@@ -242,11 +231,6 @@
     else if (!editorKindInfo(d.path)?.available) b.title = `${label}기가 설치돼 있지 않아요. 눌러서 이유를 확인하세요.`;
     else if (d.editor?.open) b.title = `열려 있는 ${label} 창으로 가기`;
     else b.title = `${label} 창에서 직접 고치기 (Ctrl+E, 인터넷 없이 동작)`;
-  }
-
-  /** 대화창 위 경고: 편집 창에 저장 안 한 내용이 있을 때 */
-  function renderEditorWarn() {
-    el.editorWarn.hidden = !(state.doc?.editor?.open && state.doc.editor.dirty);
   }
 
   /** 편집기를 쓸 수 없을 때 이유를 보여 준다 (p: 문서 경로 → 종류별 문구) */
@@ -324,14 +308,12 @@
     state.doc = { ...state.doc, editor: { open: !!ev.open, dirty: !!ev.dirty } };
     renderTopbar();
     renderStatus();
-    bridge.call('chat.refreshTargets');
   }
 
   // ── 미리보기 ─────────────────────────────────────────
 
   async function refreshPreview({ ifChanged = false, reason = 'manual' } = {}) {
     if (!state.doc) return;
-    if (state.panel) return;
     const path = state.doc.path;
     if (state.rendering && pathKey(state.rendering) === pathKey(path)) {
       // 이미 그리는 중이면 끝난 뒤 한 번 더
@@ -587,158 +569,26 @@
   // ── 문서 작업 ────────────────────────────────────────
 
   // 버전(백업)을 남긴 까닭 → 목록에 보일 말
-  const VERSION_LABEL = { open: '처음 연 상태', editor: '직접 편집 저장 전', ai: 'AI 대화 전', restore: '원래대로 전' };
-  const versionLabel = (v) => VERSION_LABEL[v?.reason] ?? '백업';
+  // ── 버전·바뀐 내용·되돌리기 (doc-actions.js — 홈 종류 뷰와 AI 패널이 같이 쓴다) ──
+  const versionLabel = (v) => OKDocActions.versionLabel(v);
 
-  /** 버전으로 되돌리기. file을 주지 않으면 마지막 변경 전으로 (지금과 다른 가장 최근 버전) */
-  async function actRestore(file) {
-    const d = state.doc;
-    if (!d?.backup || state.restoring || state.restoreAsking) return;
-    state.restoreAsking = true; // 확인 창이 떠 있는 동안에도 다시 누름을 무시한다
-    try { await restoreFlow(file, d); } finally { state.restoreAsking = false; }
-  }
-
-  async function restoreFlow(file, d) {
-    closeVersions();
-    let target;
-    try {
-      const v = await call(K.doc.versions());
-      target = typeof file === 'string' ? v.versions.find((x) => x.file === file) : v.versions.find((x) => x.file === v.undo);
-      if (typeof file !== 'string' && !target) {
-        // 바뀐 것이 없다. 편집 창에 저장 안 한 내용이 있을 때만 (그것을 버릴지 묻게) 지금 버전으로 되돌린다
-        if (!d.editor?.dirty) { toast('되돌릴 변경이 없어요. 문서가 마지막으로 남긴 버전과 같아요.', { type: 'info' }); return; }
-        target = v.versions[0];
-      }
-      if (!target) { toast('그 버전을 찾을 수 없어요. 버전 목록을 다시 열어 주세요.', { type: 'warn' }); return; }
-    } catch (err) { showError(err); return; }
-    // AI가 고치는 중이면 먼저 멈춘다 (main이 멈추고 끝날 때까지 기다린 뒤 되돌린다)
-    const aiBusy = !!bridge.call('chat.of', d.path).busy;
-    const what = `${whenText(target.time)} · ${versionLabel(target)}`;
-    const yes = await confirmDialog({
-      title: typeof file === 'string' ? '이 버전으로 되돌릴까요?' : '마지막 변경 전으로 되돌릴까요?',
-      body: [
-        aiBusy ? '진행 중인 AI 작업을 멈추고 되돌립니다.' : null,
-        `${what} 버전으로 되돌립니다.`,
-        '지금 상태도 버전 목록에 ‘원래대로 전’으로 남겨 두니, 다시 돌아올 수 있어요.',
-        !d.editor?.open ? null : d.editor.dirty
-          ? '편집 창에 저장하지 않은 내용이 있어요. 되돌린 뒤 편집 창에서 다시 불러올지, 내 편집을 유지할지 고를 수 있어요.'
-          : '열려 있는 편집 창도 되돌린 내용으로 다시 불러와요.',
-      ].filter(Boolean),
-      ok: aiBusy ? '멈추고 되돌리기' : '되돌리기', tone: 'danger',
-    });
-    if (!yes || !state.doc || pathKey(state.doc.path) !== pathKey(d.path)) return;
-    const chat = bridge.call('chat.of', d.path);
-    if (chat.busy) bridge.call('chat.markStopping', chat);
-    state.restoring = true;
-    renderTopbar();
-    setBusy('restore', chat.busy ? 'AI 작업을 멈추고 되돌리는 중…' : '되돌리는 중…');
-    try {
-      const r = await call(K.doc.restore({ file: target.file }));
-      if (r.doc) updateDoc(r.doc);
-      const editorNote = !r.editorNotified ? '' : state.doc?.editor?.dirty ? '. 편집 창에서 다시 불러올지 골라 주세요' : '. 편집 창도 다시 불러와요';
-      toast(r.stoppedAi > 0 ? `AI 작업을 멈추고 ${what} 버전으로 되돌렸어요${editorNote}` : `${what} 버전으로 되돌렸어요${editorNote}`, { type: 'success' });
-      // main이 이 문서의 AI 대화를 끝냈다 → 대화창에 알린다 (AI가 되돌리기 전 내용을 기억하지 않게)
-      if (r.newChat && chat.items.length) {
-        chat.items.push({ role: 'note', text: '문서를 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
-        if (bridge.call('chat.current') === chat) bridge.call('chat.render');
-      }
-      if (state.doc && pathKey(state.doc.path) === pathKey(d.path)) await refreshPreview({ reason: 'manual' });
-    } catch (err) { showError(err); } finally {
-      state.restoring = false;
-      clearBusy('restore');
-      renderTopbar();
-    }
-  }
-
-  // ── 바뀐 내용 (버전 이후 · AI 대화 전 이후) ──────────
-
-  const DIFF_STAT = { changed: ['바뀜', 'warn'], added: ['더함', 'on'], removed: ['지움', 'err'] };
-
-  /** 글자 단위로 바뀐 곳을 표시한 문단 */
-  function segText(segs, side) {
-    return segs.filter((s) => s.t === '=' || s.t === side).map((s) => (s.t === '=' ? document.createTextNode(s.s) : h(side === '-' ? 'del' : 'ins', { text: s.s })));
-  }
-  const lineText = (t) => (t.trim() ? t : h('span', { class: 'diff-empty-line', text: '(빈 줄)' }));
-  const diffLine = (cls, sign, ...kids) => h('div', { class: `diff-line ${cls}` }, h('span', { class: 'diff-sign', text: sign }), h('span', { class: 'diff-text' }, ...kids));
-
-  function diffTextNodes(d) {
-    return d.hunks.map((hk) => h('div', { class: 'diff-hunk' },
-      hk.where ? h('div', { class: 'diff-where', text: hk.where }) : null,
-      ...hk.before.map((t) => diffLine('ctx', '', t)),
-      ...hk.items.flatMap((it) => (it.type === 'mod'
-        ? [diffLine('mod del', '−', ...segText(it.segs, '-')), diffLine('mod add', '+', ...segText(it.segs, '+'))]
-        : it.type === 'del' ? [diffLine('del', '−', lineText(it.old))] : [diffLine('add', '+', lineText(it.new))])),
-      ...hk.after.map((t) => diffLine('ctx', '', t))));
-  }
-
-  function diffCellNodes(d) {
-    const out = [];
-    if (d.sheetsAdded.length) out.push(h('p', { class: 'help', text: `새 시트: ${d.sheetsAdded.join(', ')}` }));
-    if (d.sheetsRemoved.length) out.push(h('p', { class: 'help', text: `없어진 시트: ${d.sheetsRemoved.join(', ')}` }));
-    if (d.cells.length) {
-      out.push(h('table', { class: 'diff-table' },
-        h('thead', {}, h('tr', {}, h('th', { text: '칸' }), h('th', { text: '전' }), h('th', { text: '후' }))),
-        h('tbody', {}, ...d.cells.map((c) => h('tr', {},
-          h('td', { class: 'addr', text: `${c.sheet}!${c.cell}` }),
-          h('td', { class: c.old ? 'old' : '', text: c.old || '(빈칸)', 'data-no-i18n': !!c.old }),
-          h('td', { class: c.new ? 'new' : '', text: c.new || '(빈칸)', 'data-no-i18n': !!c.new }))))));
-    }
-    return out;
+  /** 버전으로 되돌리기. file을 주지 않으면 마지막 변경 전으로 */
+  function actRestore(file) {
+    if (state.doc) OKDocActions.restore(state.doc.path, file);
   }
 
   /** file: 버전(백업) 파일 이름. 그 버전 → 지금 사이에 바뀐 글을 보여 준다 */
-  async function showDiff(file, { label = '이 버전', time = null, ai = false } = {}) {
-    const d0 = state.doc;
-    if (!d0) return;
-    const dlg = $('#dlg-diff');
-    const body = $('#diff-body');
-    $('#diff-title').textContent = ai ? 'AI가 바꾼 내용' : '바뀐 내용';
-    $('#diff-sub').textContent = `${label}${time ? ` (${whenText(time)})` : ''} → 지금`;
-    $('#diff-stats').replaceChildren();
-    body.replaceChildren(h('div', { class: 'diff-msg' }, spinner(), ' 비교하는 중…'));
-    const restoreBtn = $('#diff-restore');
-    restoreBtn.disabled = true;
-    restoreBtn.lastChild.textContent = ai ? '이 대화 전으로 되돌리기' : '이 버전으로 되돌리기';
-    restoreBtn.onclick = () => { dlg.close(); actRestore(file); };
-    if (!dlg.open) dlg.showModal();
-    let d;
-    try { d = await call(K.doc.diff({ file })); } catch (err) {
-      body.replaceChildren(h('div', { class: 'diff-msg' }, h('div', { class: 'inline-error', text: err.message })));
-      if (err.code === 'NO_VERSION') return;
-      restoreBtn.disabled = false;
-      return;
-    }
-    // 그 사이 다른 문서를 열었으면 그리지 않는다 (같은 문서의 정보가 새로 고쳐진 것은 괜찮다)
-    if (!dlg.open || !state.doc || pathKey(state.doc.path) !== pathKey(d0.path)) return;
-    if (!ai) $('#diff-sub').textContent = `${label} (${whenText(d.time)}) → 지금`;
-    $('#diff-stats').replaceChildren(...Object.entries(DIFF_STAT).filter(([k]) => d.stats[k] > 0)
-      .map(([k, [txt, cls]]) => h('span', { class: `pill ${cls}`, text: `${txt} ${d.stats[k]}${d.kind === 'cells' ? '칸' : '곳'}` })));
-    restoreBtn.disabled = false;
-    if (d.same) {
-      body.replaceChildren(h('div', { class: 'diff-msg', text: '바뀐 글이 없어요. 서식·그림만 바뀌었거나 같은 내용이에요.' }));
-      return;
-    }
-    const nodes = d.kind === 'cells' ? diffCellNodes(d) : diffTextNodes(d);
-    if (d.truncated) nodes.push(h('p', { class: 'help', text: '바뀐 곳이 많아 앞부분만 보여요.' }));
-    if (d.approximate) nodes.unshift(h('p', { class: 'help', text: '너무 많이 바뀌어서 대략 비교했어요.' }));
-    body.replaceChildren(...nodes);
-    body.scrollTop = 0;
+  function showDiff(file, opts) {
+    if (state.doc) OKDocActions.showDiff(state.doc.path, file, opts);
   }
 
-  // ── 옆 창 (편집 창의 'AI · 도구') ─────────────────────
-  // main이 panel 이벤트로 알린다: 편집 창 옆 좁은 창 → 미리보기 없이 AI 대화·버전·도구만
-
-  function onPanel(ev) {
-    const on = !!ev?.on;
-    if (state.panel === on) return;
-    state.panel = on;
-    $('#app').classList.toggle('panel-mode', on);
-    closeTools();
-    closeVersions();
-    // 옆 창에서 나와 전체 창이 되면 미리 보지 못한 미리보기를 그린다
-    if (!on && state.doc && !state.preview) refreshPreview({ reason: 'open' });
-    if (on) setTimeout(() => bridge.call('chat.focusPrompt'), 50);
-  }
+  // 되돌리는 동안·끝난 뒤 상단 막대를 맞춘다 (끝나면 main이 돌려준 문서 정보로)
+  document.addEventListener('okdoc:restore', (e) => {
+    const { path, phase, doc } = e.detail ?? {};
+    if (!state.doc || pathKey(path) !== pathKey(state.doc.path)) return;
+    if (phase === 'end' && doc) updateDoc(doc);
+    else renderTopbar();
+  });
 
   // ── 도구 메뉴 ────────────────────────────────────────
 
@@ -1012,38 +862,12 @@
     $('#dlg-batch').close();
   }
 
-  // ── 버전 목록 (원래대로 ▾) ───────────────────────────
+  // ── 버전 목록 (원래대로 ▾, doc-actions.js) ───────────
 
-  function closeVersions() {
-    const pop = $('#versions-pop');
-    if (!pop || pop.hidden) return;
-    pop.hidden = true;
-    $('#btn-versions').setAttribute('aria-expanded', 'false');
-  }
+  function closeVersions() { OKDocActions.closeVersions(); }
 
-  async function toggleVersions() {
-    const pop = $('#versions-pop');
-    const btn = $('#btn-versions');
-    if (!pop.hidden) { closeVersions(); return; }
-    if (!state.doc) return;
-    let v;
-    try { v = await call(K.doc.versions()); } catch (err) { showError(err); return; }
-    const item = (x) => h('li', { class: `ver-item${x.file === v.undo ? ' is-undo' : ''}` },
-      h('div', { class: 'ver-text' },
-        h('span', { class: 'ver-label', text: versionLabel(x) }),
-        h('span', { class: 'ver-time', text: whenText(x.time) }),
-        x.file === v.undo ? h('span', { class: 'ver-tag', text: '마지막 변경 전 (원래대로 버튼)' }) : null),
-      x.current ? h('span', { class: 'ver-now', text: '지금 상태' })
-        : h('span', { class: 'ver-btns' },
-          h('button', { class: 'btn sm ghost', text: '바뀐 내용', title: '이 버전 이후 바뀐 글 보기', onclick: () => { closeVersions(); showDiff(x.file, { label: versionLabel(x), time: x.time }); } }),
-          h('button', { class: 'btn sm', text: '되돌리기', title: '이 버전으로 되돌리기', onclick: () => actRestore(x.file) })));
-    $('#ver-list').replaceChildren(...(v.versions.length ? v.versions.map(item) : [h('li', { class: 'ver-empty', text: '아직 남긴 버전이 없어요' })]));
-    const r = btn.getBoundingClientRect();
-    pop.hidden = false;
-    pop.style.top = `${Math.round(r.bottom + 6)}px`;
-    pop.style.left = `${Math.round(Math.max(12, Math.min(r.right - pop.offsetWidth, window.innerWidth - pop.offsetWidth - 12)))}px`;
-    btn.setAttribute('aria-expanded', 'true');
-    ($('#ver-list button') ?? $('#ver-open-backups')).focus();
+  function toggleVersions() {
+    if (state.doc) OKDocActions.openVersions(state.doc.path);
   }
 
   async function actOpenInApp() {
@@ -1296,28 +1120,20 @@
     renderNewDoc();
     setBusy('newdoc', '새 문서 만드는 중…');
     // 같은 경로의 문서를 지웠다가 다시 만드는 경우 예전 대화를 잇지 않는다 (main도 AI 대화·원래대로 기준을 새로 시작)
-    bridge.call('chat.forgetIdle', check.path);
-    // AI로 시작하면 대화를 미리 준비해 둔다 (main이 문서를 열자마자 대화를 시작하므로 먼저 오는 이벤트도 받게)
-    const queued = ai && !bridge.call('chat.of', check.path).busy ? bridge.call('chat.queue', check.path, request) : null;
+    bridge.call('chat.forgetIdle', { path: check.path });
+    // AI로 시작하면 main이 그 탭 창 AI 패널에 'start' 이벤트를 먼저 보내고 패널이 대화를 만든다
     try {
       const edit = newDocEditable(nd.format) && nd.edit;
       const res = await call(K.doc.create({ format: nd.format, folder: nd.folder, name: ne.name.value, start: nd.start, request: ai ? request : undefined, template: nd.start === 'template' ? nd.template : undefined, edit }));
       nd.busy = false;
       ne.dlg.close();
       const path = res.doc?.path ?? check.path;
-      if (queued) {
-        if (pathKey(path) !== pathKey(check.path)) bridge.call('chat.move', check.path, path);
-        if (res.chat?.chatId) bridge.call('chat.started', queued.chat, queued.msg, res.chat.chatId);
-        else bridge.call('chat.failed', queued.chat, queued.msg, path, res.chatError);
-        if (state.settings.chatCollapsed) toggleChat(false);
-      }
       if (ai && !res.chat?.chatId) toast(`${baseName(path)}을(를) 만들었지만 AI를 시작하지 못했어요`, { type: 'warn' });
       else toast(ai ? `${baseName(path)}을(를) 만들고 AI에게 부탁했어요` : `새 문서를 만들었어요: ${baseName(path)}`, { type: 'success' });
       // 편집 창은 main이 열었다 (못 열었으면 이유만 알린다. 문서는 만들어졌음)
       if (res.editorError) editorError(res.editorError, path);
       else if (res.editor?.notice) toast(res.editor.notice, { type: 'warn', timeout: 8000 });
     } catch (err) {
-      if (queued) bridge.call('chat.dropQueued', check.path, queued);
       nd.busy = false;
       renderNewDoc();
       if (NAME_CODES.has(err.code)) {
@@ -1408,11 +1224,23 @@
     } catch (err) { showError(err); return false; }
   }
 
+  /** AI 목록 받기 (새 문서 창의 'AI에게 부탁하기'·설정의 AI 고르기). AI 패널은 따로 받는다 */
+  async function loadProviders(refresh = false) {
+    try {
+      state.providers = await call(K.ai.providers({ refresh }));
+      state.providerError = null;
+    } catch (err) {
+      state.providers = null;
+      state.providerError = err.message;
+    }
+    if (ne.dlg.open) renderNewDoc();
+  }
+
   async function renderProviderChoices(reload) {
     const box = $('#provider-choices');
     if (reload || !state.providers) {
       if (!state.providers) box.replaceChildren(h('div', { class: 'loading-line' }, spinner(), '확인하는 중…'));
-      await bridge.call('chat.loadProviders', !!reload && !!state.providers);
+      await loadProviders(!!reload && !!state.providers);
     }
     if (state.providerError) { box.replaceChildren(h('div', { class: 'inline-error', text: state.providerError })); return; }
     const p = state.providers;
@@ -1421,7 +1249,12 @@
       const input = h('input', { type: 'radio', name: 'provider', value: it.id, disabled: !it.available });
       input.checked = it.id === p.selected;
       input.addEventListener('change', async () => {
-        if (await saveSettings({ provider: it.id })) { await bridge.call('chat.loadProviders', false); renderProviderChoices(false); }
+        if (await saveSettings({ provider: it.id })) {
+          await loadProviders(false);
+          // 모든 탭 창의 AI 패널도 다시 받게 한다
+          bridge.call('chat.loadProviders', false);
+          renderProviderChoices(false);
+        }
       });
       return h('label', { class: `choice${it.available ? '' : ' disabled'}` }, input,
         h('span', { class: 'choice-body' },
@@ -1646,63 +1479,6 @@
     }
   }
 
-  // ── 대화창 너비 · 접기 ────────────────────────────────
-
-  function applyChatLayout() {
-    const s = state.settings;
-    document.documentElement.style.setProperty('--chat-w', `${s.chatWidth ?? 400}px`);
-    el.app.classList.toggle('chat-collapsed', !!s.chatCollapsed);
-    el.toggleChat.setAttribute('aria-pressed', String(!s.chatCollapsed));
-    if (state.preview?.kind === 'svg' && typeof state.zoom === 'string') requestAnimationFrame(applyZoom);
-  }
-
-  function clampChat(w) {
-    const max = Math.min(760, el.workspace.clientWidth - 460);
-    return Math.round(Math.max(300, Math.min(max, w)));
-  }
-
-  function setupSplitter() {
-    const sp = el.splitter;
-    let startX = 0; let startW = 0; let dragging = false;
-    sp.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      dragging = true; startX = e.clientX; startW = el.chat.getBoundingClientRect().width;
-      sp.setPointerCapture(e.pointerId);
-      document.body.classList.add('resizing');
-      e.preventDefault();
-    });
-    sp.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      state.settings.chatWidth = clampChat(startW + (startX - e.clientX));
-      document.documentElement.style.setProperty('--chat-w', `${state.settings.chatWidth}px`);
-      if (state.preview?.kind === 'svg' && typeof state.zoom === 'string') applyZoom();
-    });
-    const end = (e) => {
-      if (!dragging) return;
-      dragging = false;
-      try { sp.releasePointerCapture(e.pointerId); } catch {}
-      document.body.classList.remove('resizing');
-      saveSettings({ chatWidth: state.settings.chatWidth });
-    };
-    sp.addEventListener('pointerup', end);
-    sp.addEventListener('pointercancel', end);
-    sp.addEventListener('dblclick', () => { state.settings.chatWidth = 400; applyChatLayout(); saveSettings({ chatWidth: 400 }); });
-    sp.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      e.preventDefault();
-      state.settings.chatWidth = clampChat((state.settings.chatWidth ?? 400) + (e.key === 'ArrowLeft' ? 24 : -24));
-      applyChatLayout();
-      saveSettings({ chatWidth: state.settings.chatWidth });
-    });
-  }
-
-  function toggleChat(force) {
-    const collapsed = typeof force === 'boolean' ? force : !state.settings.chatCollapsed;
-    state.settings.chatCollapsed = collapsed;
-    applyChatLayout();
-    saveSettings({ chatCollapsed: collapsed });
-    if (!collapsed) setTimeout(() => bridge.call('chat.focusPrompt'), 0);
-  }
 
   // ── 끌어놓기 ─────────────────────────────────────────
 
@@ -1776,7 +1552,6 @@
   async function smokeSignal(info) {
     if (!state.smoke || state.smokeSent) return;
     state.smokeSent = true;
-    if (state.smoke.chat) bridge.call('chat.injectDemo');
     if (state.smoke.newdoc) {
       // AI 선택지가 제 모양으로 보이게 AI 확인을 기다린다
       await Promise.race([state.providersReady, sleep(8000)]);
@@ -1811,7 +1586,7 @@
     }
     if (state.smoke.diff) {
       try {
-        const v = await call(K.doc.versions());
+        const v = await call(K.doc.versions({ path: state.doc?.path }));
         const first = v.versions.find((x) => x.reason === 'open');
         if (first) await showDiff(first.file, { label: versionLabel(first), time: first.time });
       } catch (err) { console.error('[smoke] diff', err?.message ?? err); }
@@ -1845,14 +1620,11 @@
     window.addEventListener('resize', closeVersions);
     el.btnEdit.addEventListener('click', actEdit);
     el.stEditor.addEventListener('click', actEdit);
-    $('#editor-warn-show').addEventListener('click', actEdit);
     $('#btn-openapp').addEventListener('click', actOpenInApp);
     $('#btn-pdf').addEventListener('click', actSavePdf);
     $('#btn-folder').addEventListener('click', actShowFolder);
     $('#btn-close-doc').addEventListener('click', actCloseDoc);
     $('#btn-settings').addEventListener('click', () => openSettings('ai'));
-    $('#btn-toggle-chat').addEventListener('click', () => toggleChat());
-    $('#btn-collapse-chat').addEventListener('click', () => toggleChat(true));
     $('#btn-recent-clear').addEventListener('click', async () => {
       const yes = await confirmDialog({ title: '최근 문서 목록을 비울까요?', body: '목록만 지우고 파일은 그대로 둡니다.', ok: '비우기' });
       if (yes) { try { renderRecent(await call(K.recent.clear())); } catch (err) { showError(err); } }
@@ -1878,8 +1650,6 @@
     $('#btn-assoc-settings').addEventListener('click', actAssocSettings);
     $('#diff-close').addEventListener('click', () => $('#dlg-diff').close());
     $('#btn-tools').addEventListener('click', (e) => { e.stopPropagation(); toggleTools(); });
-    $('#btn-panel-full').addEventListener('click', () => call(K.panel.full()).catch(showError));
-    $('#btn-panel-close').addEventListener('click', () => call(K.panel.close()).catch(showError));
     $('#tool-pii').addEventListener('click', openPii);
     $('#tool-batch').addEventListener('click', openBatch);
     $('#tool-pdf').addEventListener('click', openPdfTools);
@@ -1945,7 +1715,6 @@
     });
 
     bindNewDoc();
-    setupSplitter();
     setupDragDrop();
   }
 
@@ -1960,7 +1729,7 @@
       }
       updateDoc({ path: ev.path, missing: false, mtime: ev.mtime, size: ev.size });
       // 편집 창이 저장했거나 AI가 고치는 중이면 (거기서 이미 알리므로) 알림 없이 새로 고친다
-      refreshPreview({ ifChanged: true, reason: ev.by === 'editor' ? 'editor' : bridge.call('chat.current')?.busy ? 'ai' : 'watch' });
+      refreshPreview({ ifChanged: true, reason: ev.by === 'editor' ? 'editor' : state.doc.aiBusy ? 'ai' : 'watch' });
     });
     K.on.docEditor(onDocEditor);
     K.on.menu((cmd) => {
@@ -1975,7 +1744,6 @@
       else if (cmd === 'print') actPrint();
     });
     K.on.batchProgress(onBatchProgress);
-    K.on.panel(onPanel);
     K.on.toast((t) => {
       toast(String(t?.message ?? ''), { type: t?.type ?? 'info' });
       // 확인용 캡처: 인수로 받은 파일을 못 열었으면 알림이 뜬 화면을 찍고 실패로 끝낸다
@@ -1983,21 +1751,27 @@
     });
   }
 
-  // panel.js가 부르는 이름 (M3에서 IPC로 바뀐다)
+  // AI 패널(다른 뷰)이 부르는 이름 — main이 VIEW_ROUTES대로 중계한다 (ipc-channels.mjs)
   bridge.provide('home.pickFile', pickFile);
   bridge.provide('home.openNewDoc', openNewDoc);
   // 새 문서 창이 열려 있을 때만 다시 그린다 (AI 확인이 끝났을 때 AI 선택지를 고치려고)
-  bridge.provide('home.renderNewDoc', () => { if (ne.dlg.open) renderNewDoc(); });
-  bridge.provide('home.showDiff', showDiff);
-  bridge.provide('home.restore', actRestore);
-  bridge.provide('home.edit', actEdit);
-  bridge.provide('home.refreshPreview', refreshPreview);
+  bridge.provide('home.renderNewDoc', () => { if (ne.dlg.open) loadProviders(false); });
+  // 그 문서를 보는 문서 탭에만 온다 (main이 경로로 고른다)
+  bridge.provide('home.refreshPreview', (opts = {}) => {
+    if (opts.path && (!state.doc || pathKey(opts.path) !== pathKey(state.doc.path))) return;
+    refreshPreview(opts);
+  });
   bridge.provide('home.docEditor', onDocEditor);
-  bridge.provide('home.saveSettings', saveSettings);
+  // 패널은 settings:set을 못 부른다: 대신 저장하고, AI를 바꿨으면 패널들이 목록을 다시 받게 한다
+  bridge.provide('home.saveSettings', async (patch) => {
+    const ok = await saveSettings(patch);
+    if (ok && patch && Object.hasOwn(patch, 'provider')) { await loadProviders(false); bridge.call('chat.loadProviders', false); }
+    return ok;
+  });
   bridge.provide('home.openSettings', openSettings);
 
   onInit((init) => {
-    applyChatLayout();
+    state.providersReady = loadProviders(false);
     renderRecent(init.recent);
     if (init.doc) onDocOpened(init.doc);
     else { renderTopbar(); renderStatus(); }

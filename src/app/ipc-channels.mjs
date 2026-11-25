@@ -1,10 +1,11 @@
 // ipc-channels.mjs — IPC 채널 표 하나: 채널마다 호출 종류와 그 채널을 쓸 수 있는 뷰 종류.
 // main.mjs·editor-window.mjs는 등록·보내기 때 이 표로 채널을 확인하고, 요청마다 보낸 쪽 종류를 검사한다.
-// 주 창(home·panel)의 종류는 그 채널을 실제로 쓰는 화면 파일로 정한다: core.js = home·panel, home.js = home, panel.js = panel.
+// 홈 종류(home: 홈 탭·문서 탭 뷰)와 AI 패널(panel)의 종류는 그 채널을 실제로 쓰는 화면 파일로 정한다:
+// core.js·doc-actions.js = home·panel, home.js = home, panel.js = panel.
 
 /** 뷰 종류. tabstrip = 탭 창 맨 위 탭 줄 (src/app/renderer/tabstrip.html) */
 export const VIEW_KINDS = Object.freeze(['home', 'panel', 'tabstrip', 'hwp', 'office']);
-/** 지금 주 창 (홈 화면과 AI 대화가 한 화면에 있다) */
+/** 탭 창의 홈 종류 뷰(홈 탭·문서 탭)와 AI 패널 뷰 — 같은 화면 파일(index.html?view=home|doc|panel)을 쓴다 */
 export const HUB_KINDS = Object.freeze(['home', 'panel']);
 
 const HOME = ['home'];
@@ -27,9 +28,10 @@ const TABLE = {
   'doc:open': { call: 'invoke', kinds: HOME },
   'doc:close': { call: 'invoke', kinds: HOME },
   'doc:preview': { call: 'invoke', kinds: HOME },
-  'doc:restore': { call: 'invoke', kinds: HOME },
-  'doc:versions': { call: 'invoke', kinds: HOME },
-  'doc:diff': { call: 'invoke', kinds: HOME },
+  // 버전·바뀐 내용·되돌리기: { path } — 그 뷰의 문서이거나 그 탭 창의 AI 대상일 때만 (doc-actions.js)
+  'doc:restore': { call: 'invoke', kinds: HUB },
+  'doc:versions': { call: 'invoke', kinds: HUB },
+  'doc:diff': { call: 'invoke', kinds: HUB },
   'doc:openInApp': { call: 'invoke', kinds: HOME },
   'doc:openInWord': { call: 'invoke', kinds: HOME },
   'doc:savePdf': { call: 'invoke', kinds: HOME },
@@ -50,11 +52,13 @@ const TABLE = {
   'settings:set': { call: 'invoke', kinds: HOME },
 
   // ── 주 창: AI 대화 ──
-  'ai:providers': { call: 'invoke', kinds: PANEL },
+  'ai:providers': { call: 'invoke', kinds: HUB },
   'ai:send': { call: 'invoke', kinds: PANEL },
   'ai:cancel': { call: 'invoke', kinds: PANEL },
   'ai:materials': { call: 'invoke', kinds: PANEL },
   'ai:reset': { call: 'invoke', kinds: PANEL },
+  // AI 대상 문서의 편집 탭으로 (문서 탭이면 같은 자리 편집 탭으로 바꾼다)
+  'ai:showEditor': { call: 'invoke', kinds: PANEL },
 
   // ── 주 창: 연결·한컴·기본 프로그램 ──
   'integrations:status': { call: 'invoke', kinds: HOME },
@@ -77,10 +81,6 @@ const TABLE = {
   'pdftools:pick': { call: 'invoke', kinds: HOME },
   'pdftools:run': { call: 'invoke', kinds: HOME },
 
-  // ── 주 창: 옆 창 (M3에서 지움: 탭 창 AI 패널 뷰로 바뀜) ──
-  'panel:full': { call: 'invoke', kinds: HOME },
-  'panel:close': { call: 'invoke', kinds: HOME },
-
   // ── 주 창: 탐색기·브라우저 ──
   'shell:showItem': { call: 'invoke', kinds: HOME },
   'shell:openBackups': { call: 'invoke', kinds: HOME },
@@ -94,14 +94,20 @@ const TABLE = {
   'menu': { call: 'send', kinds: HOME },
   'toast': { call: 'send', kinds: HOME },
   'batch:progress': { call: 'send', kinds: HOME },
-  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
-  'panel': { call: 'send', kinds: HOME },
+  // AI 패널: 그 탭 창의 AI 대상 { doc: { path, name, dir, ext, kind, editor, hasSession, aiBusy } | null }
+  'ai:target': { call: 'send', kinds: PANEL },
+
+  // ── 홈·패널 사이 이름 붙은 호출 중계 (VIEW_ROUTES) ──
+  'view:call': { call: 'on', kinds: HUB },
+  'view:called': { call: 'send', kinds: HUB },
 
   // ── 탭 창: 탭 줄 (탭 목록 받기, 고르기·닫기·홈·AI 패널 접기) ──
   'tabs:activate': { call: 'invoke', kinds: TABSTRIP },
   'tabs:close': { call: 'invoke', kinds: TABSTRIP },
   'tabs:home': { call: 'invoke', kinds: TABSTRIP },
   'tabs:togglePanel': { call: 'invoke', kinds: TABSTRIP },
+  // AI 패널 왼쪽 가장자리로 너비 조절
+  'tabs:panelWidth': { call: 'invoke', kinds: PANEL },
   'tabs:ready': { call: 'on', kinds: TABSTRIP },
   'tabs:list': { call: 'send', kinds: TABSTRIP },
 
@@ -124,6 +130,27 @@ const TABLE = {
   'editor:request-close': { call: 'send', kinds: EDIT },
   'editor:command': { call: 'send', kinds: EDIT },
 };
+
+/**
+ * 다리 이름(renderer/bridge.js) → 중계 길. 화면에 그 이름이 없으면 view:call로 main에 보내고,
+ * main이 이 표대로 같은 탭 창(scope 'window') 또는 모든 탭 창(scope 'all')의 to 종류 뷰에 view:called로 넘긴다.
+ * to 'home'은 그 탭 창의 홈 뷰 (byPath: 첫 인수의 path를 보고 있는 홈 종류 뷰 = 문서 탭만, focusHome: 먼저 홈 탭으로).
+ * 보낸 쪽 종류가 to와 같거나 표에 없는 이름은 버린다. 인수는 구조화 복제되는 값만 (대화 객체 금지)
+ */
+const ROUTES = {
+  'chat.markStopping': { to: 'panel', scope: 'window' },
+  'chat.restored': { to: 'panel', scope: 'window' },
+  'chat.forgetIdle': { to: 'panel', scope: 'window' },
+  'chat.loadProviders': { to: 'panel', scope: 'all' },
+  'home.renderNewDoc': { to: 'home', scope: 'window' },
+  'home.saveSettings': { to: 'home', scope: 'window' },
+  'home.docEditor': { to: 'home', scope: 'window', byPath: true },
+  'home.refreshPreview': { to: 'home', scope: 'window', byPath: true },
+  'home.pickFile': { to: 'home', scope: 'window', focusHome: true },
+  'home.openNewDoc': { to: 'home', scope: 'window', focusHome: true },
+  'home.openSettings': { to: 'home', scope: 'window', focusHome: true },
+};
+export const VIEW_ROUTES = Object.freeze(Object.fromEntries(Object.entries(ROUTES).map(([n, r]) => [n, Object.freeze({ ...r })])));
 
 /** 채널 → { call, kinds, open? } (얼려 둔다) */
 export const IPC = Object.freeze(Object.fromEntries(Object.entries(TABLE).map(([ch, spec]) => [

@@ -12,6 +12,7 @@
   <script src="target-chips.js" defer></script>
   <script src="bridge.js" defer></script>
   <script src="core.js" defer></script>
+  <script src="doc-actions.js" defer></script>
   <script src="home.js" defer></script>
   <script src="panel.js" defer></script>
 </head>
@@ -88,11 +89,8 @@
         <button class="btn ghost" id="btn-folder" title="문서가 있는 폴더 열기" disabled><svg class="i"><use href="#i-folder"/></svg><span class="lbl">폴더 열기</span></button>
       </div>
       <span class="vsep" aria-hidden="true"></span>
-      <button class="icon-btn panel-only" id="btn-panel-full" title="전체 창으로 (미리보기·최근 문서)" aria-label="전체 창으로"><svg class="i"><use href="#i-panel"/></svg></button>
       <button class="icon-btn" id="btn-tools" title="도구 (개인정보 가리기 · HWPX 일괄 변환)" aria-label="도구" aria-haspopup="menu" aria-expanded="false" aria-controls="tools-pop"><svg class="i"><use href="#i-tools"/></svg></button>
-      <button class="icon-btn" id="btn-toggle-chat" title="AI 대화창" aria-label="AI 대화창 열기/닫기" aria-pressed="true"><svg class="i"><use href="#i-panel"/></svg></button>
       <button class="icon-btn" id="btn-settings" title="설정 (Ctrl+,)" aria-label="설정"><svg class="i"><use href="#i-gear"/></svg></button>
-      <button class="icon-btn panel-only" id="btn-panel-close" title="옆 창 닫기" aria-label="옆 창 닫기"><svg class="i"><use href="#i-x"/></svg></button>
     </header>
 
     <div class="popover" id="versions-pop" role="dialog" aria-labelledby="versions-title" hidden>
@@ -144,14 +142,12 @@
         <div class="refreshing" id="refreshing" hidden><span class="spinner"></span>새로 고치는 중</div>
       </section>
 
-      <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="대화창 너비 조절" tabindex="0"></div>
-
       <aside class="chat" id="chat" aria-label="AI 대화">
+        <div class="panel-resizer" id="panel-resizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" aria-valuemin="320" aria-valuemax="640" tabindex="0"></div>
         <div class="chat-head">
           <div class="chat-title"><span class="ai-mark"><svg class="i"><use href="#i-sparkle"/></svg></span>AI 도우미</div>
           <select class="select sm" id="provider" aria-label="AI 프로그램 선택"></select>
           <button class="icon-btn sm" id="btn-new-chat" title="새 대화" aria-label="새 대화"><svg class="i"><use href="#i-new-chat"/></svg></button>
-          <button class="icon-btn sm" id="btn-collapse-chat" title="대화창 접기" aria-label="대화창 접기"><svg class="i"><use href="#i-chevron-right"/></svg></button>
         </div>
         <div class="chat-body" id="chat-body">
           <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>

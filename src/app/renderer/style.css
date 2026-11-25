@@ -44,7 +44,6 @@
   --k-xls: #1d7a45;
   --k-etc: #6b7280;
   --k-pdf: #c62828;
-  --chat-w: 400px;
   --topbar-h: 52px;
   --status-h: 28px;
 }
@@ -370,30 +369,22 @@ svg.i.flip { transform: rotate(180deg); }
   .actions .btn.edit-btn { padding: 0; width: 34px; }
 }
 
-/* ── 옆 창 (편집 창의 'AI · 도구') ──────────────────── */
-/* 편집 창 옆에 붙은 좁은 창: 미리보기 없이 AI 대화·버전·도구만 */
-.panel-only { display: none; }
-.app.panel-mode .panel-only { display: inline-grid; }
-.app.panel-mode .brand, .app.panel-mode #btn-open, .app.panel-mode #btn-new, .app.panel-mode #btn-close-doc, .app.panel-mode .engine-badge,
-.app.panel-mode #btn-edit, .app.panel-mode #btn-refresh, .app.panel-mode #btn-openapp, .app.panel-mode #btn-pdf, .app.panel-mode #btn-folder,
-.app.panel-mode #btn-toggle-chat, .app.panel-mode #btn-collapse-chat, .app.panel-mode .statusbar .st:not(.busy):not(.ready),
-.app.panel-mode .viewer, .app.panel-mode .splitter { display: none !important; }
-.app.panel-mode .workspace, .app.panel-mode.chat-collapsed .workspace { grid-template-columns: 0 0 minmax(0, 1fr); }
-.app.panel-mode .chat, .app.panel-mode.chat-collapsed .chat { display: flex; }
-.app.panel-mode .topbar { padding-left: 10px; gap: 2px; }
-.app.panel-mode .docinfo { min-width: 0; flex: 1; }
-.app.panel-mode .actions .btn .lbl { display: none; }
+/* ── 탭 창의 뷰 종류 (index.html?view=home|doc|panel → body[data-view]) ── */
+/* 홈 탭·문서 탭: 미리보기·도구만 (AI 대화는 탭 창 오른쪽 AI 패널 뷰) */
+body[data-view="home"] .chat, body[data-view="doc"] .chat { display: none; }
+/* AI 패널: 대화만, 뷰 전체 폭 (상단 막대·상태 막대·미리보기 없음) */
+body[data-view="panel"] .topbar, body[data-view="panel"] .statusbar, body[data-view="panel"] .viewer { display: none !important; }
+body[data-view="panel"] .app { grid-template-rows: minmax(0, 1fr); }
+body[data-view="panel"] .chat { position: relative; }
 
 /* ── 작업 영역 ─────────────────────────────────────── */
 
 .workspace {
   display: grid;
-  /* 창이 좁으면 대화창이 미리보기를 너무 가리지 않게 줄인다 */
-  grid-template-columns: minmax(0, 1fr) auto min(var(--chat-w), calc(100vw - 480px));
+  /* 미리보기 또는 (AI 패널 뷰에서는) 대화 하나가 뷰 전체를 쓴다 */
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
-.app.chat-collapsed .workspace { grid-template-columns: minmax(0, 1fr) 0 0; }
-.app.chat-collapsed .chat, .app.chat-collapsed .splitter { display: none; }
 
 .viewer {
   position: relative;
@@ -597,15 +588,17 @@ body.drop-ready iframe.pdf-frame { pointer-events: none; }
 .grid td.rh { background: var(--surface-2); color: var(--muted); text-align: center; min-width: 40px; position: sticky; left: 0; }
 .grid td.num { text-align: right; }
 
-/* ── 구분선 ────────────────────────────────────────── */
+/* ── AI 패널 너비 조절 (패널 왼쪽 가장자리) ──────────── */
 
-.splitter {
-  width: 6px; margin: 0 -3px; z-index: 4; cursor: col-resize; position: relative;
+.panel-resizer { display: none; }
+body[data-view="panel"] .panel-resizer {
+  display: block;
+  position: absolute; top: 0; bottom: 0; left: 0; width: 6px; z-index: 4; cursor: col-resize;
   background: transparent;
 }
-.splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--border); transition: background-color 0.12s, width 0.12s, left 0.12s; }
-.splitter:hover::after, .splitter:focus-visible::after, body.resizing .splitter::after { left: 1px; width: 3px; background: var(--accent); }
-.splitter:focus-visible { outline: none; }
+.panel-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: var(--border); transition: background-color 0.12s, width 0.12s; }
+.panel-resizer:hover::after, .panel-resizer:focus-visible::after, body.resizing .panel-resizer::after { width: 3px; background: var(--accent); }
+.panel-resizer:focus-visible { outline: none; }
 body.resizing { cursor: col-resize; }
 
 /* ── AI 대화 ───────────────────────────────────────── */

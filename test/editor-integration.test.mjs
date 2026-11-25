@@ -121,6 +121,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
   for (const k of ['OFFICEKIT_SMOKE', 'OFFICEKIT_SMOKE_EDITOR', 'OFFICEKIT_EDITOR_TEST']) delete process.env[k];
   process.argv = [process.argv[0], docPath];
+  // 문서를 열면 문서 탭(미리보기)으로: 예전 시험의 '열기 → 직접 편집' 흐름을 그대로 따른다 (가짜 화면은 autoEdit로 편집 창을 열지 않았다)
+  put(join(ud, 'settings.json'), JSON.stringify({ openAction: 'preview' }));
 
   const fake = makeFakeElectron({ userData: ud, documents: docs, commandAnswer: async () => false });
   installFakeElectron(fake);
@@ -136,20 +138,61 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
 
   await import(pathToFileURL(join(ROOT, 'src', 'app', 'main.mjs')).href);
-  assert.ok(await until(() => fake.windows.length >= 1, 20_000), '주 창이 만들어져야 한다');
-  const mainWin = fake.windows[0];
-  const mainWc = mainWin.webContents;
-  const call = (channel, ...args) => fake.invokeFrom(mainWc, channel, ...args);
-  const lastSent = (channel, pred = () => true) => mainWc.sent.filter((s) => s.channel === channel && pred(s.data)).at(-1)?.data;
+  assert.ok(await until(() => fake.windows.length >= 1, 20_000), '탭 창이 만들어져야 한다');
+  const tw0 = fake.windows[0];
+  /** 주소가 ?view=<kind>인 뷰들 (홈·AI 패널·문서 탭) */
+  const viewsOf = (kind) => fake.views.filter((v) => v.webContents.mainFrame.url.endsWith(`?view=${kind}`));
+  const homeWc = viewsOf('home')[0]?.webContents;
+  const panelWc = viewsOf('panel')[0]?.webContents;
+  const tabstripWc = fake.views.find((v) => /tabstrip\.html$/.test(v.webContents.mainFrame.url))?.webContents;
+  assert.ok(homeWc && panelWc && tabstripWc, '홈·AI 패널·탭 줄 뷰');
+  /** 문서 탭 뷰: ?view=doc 뷰 중 마지막 doc:opened 경로가 p인 (살아 있는) wc */
+  const docWc = (p) => viewsOf('doc').map((v) => v.webContents)
+    .filter((wc) => !wc.isDestroyed() && wc.sent.filter((s) => s.channel === 'doc:opened').at(-1)?.data?.path === p).at(-1) ?? null;
+  /** who: 'home' | 'panel' | 'tabstrip' | 문서 경로(그 문서 탭 뷰) */
+  const callAs = (who, channel, ...args) => {
+    const wc = who === 'home' ? homeWc : who === 'panel' ? panelWc : who === 'tabstrip' ? tabstripWc : docWc(who);
+    if (!wc) throw new Error(`${who}: ${channel}을 보낼 뷰가 없다`);
+    return fake.invokeFrom(wc, channel, ...args);
+  };
+  // 지금 문서 (마지막으로 연 문서). 예전 주 창 call → 채널마다 맞는 뷰로:
+  //   ai:* → AI 패널, 버전·바뀐 내용·되돌리기 → 그 문서 탭 뷰(없으면 = 편집 탭이면 AI 패널)에 경로를 붙여, 그 밖의 doc:*·pii:* → 문서 탭 뷰, 나머지 → 홈
+  let cur = null;
+  const PATH_CH = new Set(['doc:versions', 'doc:diff', 'doc:restore']);
+  const HOME_DOC_CH = new Set(['doc:open', 'doc:pick', 'doc:new', 'doc:newInfo', 'doc:newCheck', 'doc:pickFolder']);
+  async function call(channel, ...args) {
+    if (channel.startsWith('ai:')) return callAs('panel', channel, ...args);
+    if (PATH_CH.has(channel)) return callAs(docWc(cur) ? cur : 'panel', channel, { ...(args[0] ?? {}), path: cur });
+    if ((channel.startsWith('doc:') || channel.startsWith('pii:')) && !HOME_DOC_CH.has(channel)) return callAs(cur, channel, ...args);
+    const r = await callAs('home', channel, ...args);
+    if (channel === 'doc:open' && r.ok) cur = r.value.path;
+    if (channel === 'doc:new' && r.ok && r.value.doc?.path) cur = r.value.doc.path;
+    return r;
+  }
+  /** 홈·문서 탭·AI 패널 뷰가 받은 것 (뷰 차례로 이어 붙임) */
+  const allSent = () => fake.views.filter((v) => /\?view=(home|doc|panel)$/.test(v.webContents.mainFrame.url)).flatMap((v) => v.webContents.sent);
+  const lastSent = (channel, pred = () => true) => allSent().filter((s) => s.channel === channel && pred(s.data)).at(-1)?.data;
+  /** AI 패널이 받은 마지막 AI 대상 문서 (없으면 null) */
+  const lastTarget = () => panelWc.sent.filter((s) => s.channel === 'ai:target').at(-1)?.data?.doc ?? null;
+  /** 편집 탭 상태 { path, open, dirty } — 편집 탭 문서의 상태는 AI 패널의 ai:target으로 온다 (예전 주 창 doc:editor) */
+  const lastEditor = (pred = () => true) => panelWc.sent.filter((s) => s.channel === 'ai:target' && s.data?.doc)
+    .map((s) => ({ path: s.data.doc.path, ...s.data.doc.editor })).filter(pred).at(-1);
   const sentTo = (w, channel) => w.webContents.sent.filter((s) => s.channel === channel);
-  // 편집 탭: 탭 창 안의 편집 뷰(partition 있는 WebContentsView)
-  const editorViewIn = (w) => w.contentView?.children.find((v) => v.opts?.webPreferences?.partition);
-  /** 제목이 re에 맞는 (마지막) 탭 창과 그 안 편집 뷰 → { win, view, wc } | null */
+  /** 탭 줄이 받은 마지막 탭 목록 { tabs, active, panelCollapsed } */
+  const tabList = () => tabstripWc.sent.filter((s) => s.channel === 'tabs:list').at(-1)?.data ?? { tabs: [], active: null };
+  const tabOf = (p) => tabList().tabs.find((x) => x.path === p) ?? null;
+  // 탭 창 제목은 활성 탭 것이다 → 제목이 바뀔 때 보이던 편집 뷰의 제목으로 기억해 둔다
+  const titleOfView = new Map();
+  const setTitle0 = tw0.setTitle.bind(tw0);
+  tw0.setTitle = (title) => {
+    const v = tw0.contentView.children.find((c) => c.opts?.webPreferences?.partition && c.visible && !c.webContents.isDestroyed());
+    if (v) titleOfView.set(v, title);
+    setTitle0(title);
+  };
+  /** 제목이 re에 맞는 (마지막) 편집 탭 → { win: 탭 창, view, wc } | null */
   const editorOf = (re) => {
-    const win = fake.windows.findLast((w) => w !== mainWin && !w.isDestroyed() && re.test(w.getTitle()) && editorViewIn(w));
-    if (!win) return null;
-    const view = editorViewIn(win);
-    return { win, view, wc: view.webContents };
+    const hit = [...titleOfView].filter(([v, title]) => !v.webContents.isDestroyed() && re.test(title)).at(-1);
+    return hit ? { win: tw0, view: hit[0], wc: hit[0].webContents } : null;
   };
   /** 살아 있는 편집 뷰들 */
   const editorViews = () => fake.views.filter((v) => v.opts?.webPreferences?.partition && !v.webContents.isDestroyed());
@@ -204,6 +247,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.match(r.error, /\.csv/);
     assert.match(r.error, /프로그램에서 열기/);
     assert.equal(editorViews().length, 0, '편집 창을 띄우지 않는다');
+    // csv 문서 탭은 닫아 둔다 (아래 재료 시험이 '열리지 않은 파일'로 쓴다)
+    await callAs('tabstrip', 'tabs:close', tabOf(csvPath).id);
   });
 
   await t.test('doc:edit: Word 문서도 직접 편집 대상 — 묶음이 없으면 EDITOR_MISSING (창을 띄우지 않음)', async () => {
@@ -248,10 +293,10 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.match(editorWin.wc.mainFrame.url, /^http:\/\/127\.0\.0\.1:\d+\/host\/host\.html$/);
     assert.equal(editorWin.view.opts.webPreferences.partition, 'officekit-editor');
     hostCall = (channel, ...args) => fake.invokeFrom(editorWin.wc, channel, ...args);
-    const again = await call('doc:edit');
+    const again = await call('doc:open', docPath);
     assert.equal(again.value.reused, true);
     assert.equal(editorViews().length, 1);
-    const st = await until(() => lastSent('doc:editor', (d) => d.open));
+    const st = await until(() => lastEditor((d) => d.open));
     assert.deepEqual(st, { path: docPath, open: true, dirty: false });
     // 편집 창 밖으로 나가는 요청은 막는다
     const ses = fake.sessions.get('officekit-editor');
@@ -304,7 +349,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(doc.value.name, '보고서.hwpx');
     assert.equal(doc.value.kind, 'hwp');
     fake.emit('editor:dirty', editorWin.wc, true);
-    const st = await until(() => lastSent('doc:editor', (d) => d.dirty));
+    const st = await until(() => lastEditor((d) => d.dirty));
     assert.deepEqual(st, { path: docPath, open: true, dirty: true });
     assert.ok(editorWin.win.getTitle().startsWith('* '));
     const refused = await call('ai:send', { prompt: '요약해줘' });
@@ -326,15 +371,14 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const res = await hostCall('editor:save', new Uint8Array(savedBytes));
     assert.equal(res.ok, true, res.error);
     assert.equal(sha(docPath), shaBytes(savedBytes));
-    const changed = await until(() => lastSent('doc:changed', (d) => d.by === 'editor'));
-    assert.equal(changed.path, docPath);
-    assert.equal(changed.size, savedBytes.length);
+    // (의도한 변경) 편집 탭 문서는 미리보기(문서 탭 뷰)가 없으므로 doc:changed by editor를 받을 화면이 없다
+    // — 미리보기 알림은 새 시험 '문서 탭 미리보기: 바깥에서 파일이 바뀌면 그 문서 탭 뷰에 doc:changed'가 본다
     const settings = JSON.parse(readFileSync(join(ud, 'settings.json'), 'utf8'));
     assert.equal(settings.recent[0].path, docPath);
     const index = JSON.parse(readFileSync(join(ud, 'backups', 'index.json'), 'utf8'));
     assert.ok(index.some((e) => e.source === docPath && e.hash === before), '덮어쓰기 전 내용이 백업돼 있다');
     fake.emit('editor:dirty', editorWin.wc, false);
-    assert.ok(await until(() => lastSent('doc:editor', (d) => !d.dirty)));
+    assert.ok(await until(() => lastEditor((d) => !d.dirty)));
   });
 
   await t.test('바깥에서 파일이 바뀌면 편집 창에 알린다 (감시 → notifyExternalChange)', async () => {
@@ -344,7 +388,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     writeFileSync(docPath, readFileSync(other));
     const got = await until(() => sentTo(editorWin.view, 'editor:external-change').length > n0, 8000);
     assert.ok(got, '편집 창이 바깥 변경을 받아야 한다');
-    assert.ok(await until(() => lastSent('doc:changed', (d) => !d.by && d.size === statSync(docPath).size), 8000), '주 창 미리보기도');
+    // (의도한 변경) 편집 탭 문서는 문서 탭 뷰(미리보기)가 없다 — 바깥 변경 알림은 편집 뷰가 직접 받는다 (위)
   });
 
   await t.test('원래대로 → 편집 창에도 알림 (editorNotified)', async () => {
@@ -369,7 +413,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(count(), n0);
     // 저장 안 한 편집이 있으면 내용이 같아도 알린다
     fake.emit('editor:dirty', editorWin.wc, true);
-    await until(() => lastSent('doc:editor', (d) => d.dirty));
+    await until(() => lastEditor((d) => d.dirty));
     n0 = count();
     r = await call('doc:restore', { file: same.file });
     assert.equal(r.ok, true, r.error);
@@ -377,7 +421,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(count(), n0 + 1);
     assert.equal(sha(docPath), before);
     fake.emit('editor:dirty', editorWin.wc, false);
-    assert.ok(await until(() => lastSent('doc:editor', (d) => !d.dirty)));
+    assert.ok(await until(() => lastEditor((d) => !d.dirty)));
   });
 
   await t.test('버전 목록: 열 때·편집 창 저장 전·AI 대화 전·원래대로 전, 원래대로(인수 없음) = 마지막 변경 전', async () => {
@@ -538,7 +582,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const blocked = await new Promise((res) => ses.handlers.beforeRequest({ url: 'https://example.com/x.js' }, res));
     assert.equal(blocked.cancel, true);
     officeCall = (channel, ...args) => fake.invokeFrom(officeWin.wc, channel, ...args);
-    const st = await until(() => lastSent('doc:editor', (d) => d.path === docxPath && d.open));
+    const st = await until(() => lastEditor((d) => d.path === docxPath && d.open));
     assert.deepEqual(st, { path: docxPath, open: true, dirty: false });
     // 한글 편집 창의 host에서 Office 전용 요청은 거절
     const no = await hostCall('editor:state', 'get', 'x');
@@ -594,7 +638,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const tmp = join(base, 'edited.docx');
     await createDocument(tmp, '# 회의 메모\n\n편집 창에서 고친 내용입니다.\n\n- 안건 하나\n- 안건 둘\n- 새 안건');
     editedDocx = readFileSync(tmp);
-    const changes0 = mainWc.sent.filter((s) => s.channel === 'doc:changed' && s.data.by === 'editor').length;
+    const changes0 = allSent().filter((s) => s.channel === 'doc:changed' && s.data.by === 'editor').length;
     const r = await officeCall('editor:save', new Uint8Array(editedDocx), { reason: 'auto' });
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.draft, true);
@@ -603,12 +647,12 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(sha(draftFile), shaBytes(editedDocx));
     assert.equal(dirname(draftFile), join(ud, 'office-drafts'));
     await sleep(100);
-    assert.equal(mainWc.sent.filter((s) => s.channel === 'doc:changed' && s.data.by === 'editor').length, changes0, '저장 알림 없음');
+    assert.equal(allSent().filter((s) => s.channel === 'doc:changed' && s.data.by === 'editor').length, changes0, '저장 알림 없음');
   });
 
   await t.test('Office: 저장 안 한 편집 → 창 제목 *, 주 창 상태, AI 보내기 막기', async () => {
     fake.emit('editor:dirty', officeWin.wc, true);
-    const st = await until(() => lastSent('doc:editor', (d) => d.path === docxPath && d.dirty));
+    const st = await until(() => lastEditor((d) => d.path === docxPath && d.dirty));
     assert.deepEqual(st, { path: docxPath, open: true, dirty: true });
     assert.equal(officeWin.win.getTitle(), '* 메모.docx - 문서 편집 (Office Kit)');
     const info = await call('doc:open', docxPath);
@@ -642,8 +686,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.value.warning, null);
     assert.match(await readDocumentText(docxPath), /편집 창에서 고친 내용/);
     assert.equal(existsSync(draftFile), false, '정상 저장 → 복구 사본은 필요 없다');
-    const changed = await until(() => lastSent('doc:changed', (d) => d.by === 'editor' && d.path === docxPath));
-    assert.ok(changed);
+    // (의도한 변경) 편집 탭 문서는 문서 탭 뷰가 없어 doc:changed by editor를 받을 화면이 없다
     const index = JSON.parse(readFileSync(join(ud, 'backups', 'index.json'), 'utf8'));
     assert.ok(index.some((e) => e.source === docxPath && e.hash === docxBefore), '덮어쓰기 전 내용이 백업돼 있다');
     // 형식이 아닌 바이트는 저장하지 않는다
@@ -651,7 +694,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(bad.ok, false);
     assert.equal(bad.code, 'BAD_FORMAT');
     fake.emit('editor:dirty', officeWin.wc, false);
-    assert.ok(await until(() => lastSent('doc:editor', (d) => d.path === docxPath && !d.dirty)));
+    assert.ok(await until(() => lastEditor((d) => d.path === docxPath && !d.dirty)));
     assert.equal((await call('ai:send', { prompt: '요약해줘' })).ok, true, '저장한 뒤에는 보낸다');
     assert.ok(await until(() => lastSent('ai:event', (d) => d.type === 'end' && d.path === docxPath)));
   });
@@ -866,7 +909,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const hash = sha(docxPath);
     const d0 = fake.dialogs.length;
     fake.dialogAnswers.push(1); // 저장 안 함
-    officeWin.win.close();
+    void callAs('tabstrip', 'tabs:close', tabOf(docxPath).id);
     assert.ok(await until(() => officeWin.wc.isDestroyed(), 8000), '창이 닫혀야 한다');
     assert.equal(fake.dialogs.length, d0 + 1);
     assert.deepEqual(fake.dialogs[d0].buttons, ['저장', '저장 안 함', '취소']);
@@ -874,13 +917,14 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.match(fake.dialogs[d0].message, /메모\.docx/);
     assert.equal(sha(docxPath), hash);
     assert.equal(existsSync(draftFile), false, '정상 닫기 → 복구 사본 지움');
-    assert.ok(await until(() => lastSent('doc:editor', (d) => d.path === docxPath && !d.open)));
+    assert.ok(await until(() => lastEditor((d) => d.path === docxPath && !d.open)));
   });
 
   await t.test('Office 복구 사본: 파일보다 새로우면 다시 열 때 알리고, 읽기·버리기', async () => {
     put(draftFile, editedDocx);
     const future = new Date(Date.now() + 60_000);
     utimesSync(draftFile, future, future);
+    await call('doc:open', docxPath); // 편집 탭을 닫았으므로 문서 탭으로 다시 연다
     const r = await call('doc:edit');
     assert.equal(r.ok, true, r.error);
     officeWin = editorOf(/메모\.docx - 문서 편집/);
@@ -910,10 +954,10 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(pp.ok, true, pp.error);
     assert.equal(pp.value.editorError, null);
     assert.equal(pp.value.editor.kind, 'office');
-    assert.equal(fake.windows.at(-1).getTitle(), '새 발표.pptx - 슬라이드 편집 (Office Kit)');
+    assert.equal(tw0.getTitle(), '새 발표.pptx - 슬라이드 편집 (Office Kit)');
     const xl = await call('doc:new', { format: 'xlsx', folder: docs, name: '새 표', start: 'blank', edit: true });
     assert.equal(xl.ok, true, xl.error);
-    assert.equal(fake.windows.at(-1).getTitle(), '새 표.xlsx - 표 편집 (Office Kit)');
+    assert.equal(tw0.getTitle(), '새 표.xlsx - 표 편집 (Office Kit)');
     // edit 없이 만들면 편집 창을 열지 않는다
     const n = editorViews().length;
     const wd = await call('doc:new', { format: 'docx', folder: docs, name: '새 워드', start: 'blank' });
@@ -1021,23 +1065,156 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(recent[0].path, pdf);
   });
 
-  await t.test("편집 창의 'AI · 도구' → 주 창이 그 문서의 옆 창이 되어 편집 창 오른쪽에 붙고, 닫으면 보통 주 창으로", async () => {
-    officeWin.win.setBounds({ x: 100, y: 50, width: 1700, height: 900 });
+  await t.test("편집 탭의 'AI · 도구' → 같은 탭 창의 AI 패널이 펼쳐지고 ai:target이 그 문서", async () => {
+    // 패널을 접어 두고 홈 탭을 보던 중
+    assert.equal((await callAs('tabstrip', 'tabs:togglePanel')).ok, true);
+    assert.equal(tabList().panelCollapsed, true);
+    const panelView = fake.views.find((v) => v.webContents === panelWc);
+    assert.equal(panelView.visible, false, '접힌 패널은 숨긴다');
+    assert.equal(JSON.parse(readFileSync(join(ud, 'settings.json'), 'utf8')).chatCollapsed, true);
+    assert.equal((await callAs('tabstrip', 'tabs:home')).ok, true);
+    assert.equal(lastTarget(), null, '홈 탭이면 AI 대상 없음');
+    panelWc.focused = false;
+    const windows = fake.windows.length;
     fake.emit('editor:panel', officeWin.wc);
-    const on = await until(() => lastSent('panel', (d) => d.on === true));
-    assert.equal(on.path, docxPath);
-    assert.ok(await until(() => lastSent('doc:opened', (d) => d?.path === docxPath)), '옆 창은 그 문서를 연다');
-    const pb = mainWin.getBounds();
-    const eb = officeWin.win.getBounds();
-    assert.equal(pb.width, 420, '좁은 옆 창');
-    assert.equal(pb.x, eb.x + eb.width, '편집 창 바로 오른쪽');
-    assert.ok(eb.x + eb.width + pb.width <= 1920, '자리가 없으면 편집 창을 줄인다');
-    assert.deepEqual(mainWin.getMinimumSize(), [320, 480]);
-    // 처음부터 주 창을 쓰던 경우(Office Kit를 직접 실행): 옆 창을 닫으면 보통 주 창으로 돌아온다 (숨기지 않음)
-    assert.equal((await call('panel:close')).ok, true);
-    assert.ok(await until(() => lastSent('panel', (d) => d.on === false)));
-    assert.equal(mainWin.isVisible(), true);
-    assert.deepEqual(mainWin.getMinimumSize(), [1000, 680]);
+    assert.equal(tabList().active, tabOf(docxPath).id, '그 편집 탭이 활성');
+    assert.equal(tabList().panelCollapsed, false, '패널이 펼쳐진다');
+    assert.equal(panelView.visible, true);
+    assert.equal(panelWc.isFocused(), true, '패널에 초점');
+    assert.equal(lastTarget()?.path, docxPath, 'ai:target = 그 문서');
+    assert.deepEqual(lastTarget().editor, { open: true, dirty: false });
+    assert.equal(JSON.parse(readFileSync(join(ud, 'settings.json'), 'utf8')).chatCollapsed, false);
+    assert.equal(fake.windows.length, windows, '옆 창을 띄우지 않는다');
+    cur = docxPath;
+  });
+
+  await t.test('홈에서 연 PDF는 문서 탭 뷰(?view=doc), 같은 문서를 다시 열면 그 탭', async () => {
+    const pdf = join(docs, '탭 시험.pdf');
+    writeFileSync(pdf, makePdf(1));
+    const n = tabList().tabs.length;
+    const r = await call('doc:open', pdf);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.value.mode, 'doc');
+    const wc = docWc(pdf);
+    assert.ok(wc, '문서 탭 뷰가 그 문서를 연다');
+    assert.match(wc.mainFrame.url, /\/renderer\/index\.html\?view=doc$/);
+    assert.equal(tabList().tabs.length, n + 1);
+    assert.equal(tabList().active, r.value.tabId);
+    assert.equal(tabOf(pdf).type, 'doc');
+    assert.equal(lastTarget()?.path, pdf, 'AI 대상 = 그 문서');
+    assert.equal(tw0.getTitle(), '탭 시험.pdf - Office Kit');
+    // 다른 탭으로 갔다가 같은 문서를 다시 열면 새 탭 없이 그 탭으로
+    assert.equal((await callAs('tabstrip', 'tabs:home')).ok, true);
+    assert.equal(tabList().active, 'home');
+    assert.equal(tw0.getTitle(), 'Office Kit');
+    const again = await call('doc:open', process.platform === 'win32' ? pdf.toUpperCase() : pdf); // 대소문자만 다른 경로도 같은 문서
+    assert.equal(again.ok, true, again.error);
+    assert.equal(again.value.mode, 'reused');
+    assert.equal(again.value.tabId, r.value.tabId);
+    assert.equal(tabList().tabs.length, n + 1);
+    assert.equal(tabList().active, r.value.tabId);
+    cur = pdf;
+  });
+
+  await t.test('문서 탭 미리보기: 바깥에서 파일이 바뀌면 그 문서 탭 뷰에 doc:changed', async () => {
+    const pdf = join(docs, '탭 시험.pdf');
+    const wc = docWc(pdf);
+    const n0 = wc.sent.filter((s) => s.channel === 'doc:changed').length;
+    writeFileSync(pdf, makePdf(2));
+    assert.ok(await until(() => wc.sent.filter((s) => s.channel === 'doc:changed').length > n0, 8000), '그 문서 탭 뷰가 받는다');
+    assert.equal(wc.sent.filter((s) => s.channel === 'doc:changed').at(-1).data.path, pdf);
+    assert.equal(homeWc.sent.some((s) => s.channel === 'doc:changed' && s.data.path === pdf), false, '홈 뷰는 문서를 품지 않는다');
+  });
+
+  await t.test('view:call 중계: 표에 없는 이름·같은 종류로 보내기는 버림, chat.loadProviders는 모든 창 패널로', async () => {
+    const pdf = join(docs, '탭 시험.pdf');
+    const pdfWc = docWc(pdf);
+    const got = (wc) => wc.sent.filter((s) => s.channel === 'view:called');
+    const p0 = got(panelWc).length; const h0 = got(homeWc).length; const d0 = got(pdfWc).length;
+    fake.emit('view:call', homeWc, { name: 'chat.nope', args: [] });
+    fake.emit('view:call', panelWc, { name: 'chat.markStopping', args: [{ path: pdf }] });
+    fake.emit('view:call', homeWc, { name: 'home.renderNewDoc', args: [] });
+    fake.emit('view:call', tabstripWc, { name: 'chat.loadProviders', args: [] });
+    assert.equal(got(panelWc).length, p0, '표에 없는 이름·같은 종류·탭 줄은 버린다');
+    assert.equal(got(homeWc).length, h0);
+    fake.emit('view:call', homeWc, { name: 'chat.loadProviders', args: [false] });
+    assert.deepEqual(got(panelWc).at(-1)?.data, { name: 'chat.loadProviders', args: [false] });
+    // 경로가 있는 이름은 그 문서를 보는 문서 탭 뷰로만
+    fake.emit('view:call', panelWc, { name: 'home.refreshPreview', args: [{ path: pdf, ifChanged: true, reason: 'ai' }] });
+    assert.deepEqual(got(pdfWc).at(-1)?.data, { name: 'home.refreshPreview', args: [{ path: pdf, ifChanged: true, reason: 'ai' }] });
+    assert.equal(got(homeWc).length, h0, '홈 뷰는 받지 않는다');
+    assert.equal(got(pdfWc).length, d0 + 1);
+    // focusHome: 홈 탭으로 간 뒤 홈 뷰에
+    fake.emit('view:call', panelWc, { name: 'home.pickFile', args: [] });
+    assert.deepEqual(got(homeWc).at(-1)?.data, { name: 'home.pickFile', args: [] });
+    assert.equal(tabList().active, 'home');
+  });
+
+  await t.test('doc:restore는 그 뷰의 문서·AI 대상 경로만', async () => {
+    const pdf = join(docs, '탭 시험.pdf');
+    assert.equal((await call('doc:open', docPath)).ok, true); // 편집 탭 → AI 대상
+    // AI 패널: AI 대상이 아닌 경로는 거절
+    for (const ch of ['doc:restore', 'doc:versions', 'doc:diff']) {
+      const r = await callAs('panel', ch, { path: docxPath, file: 'x' });
+      assert.deepEqual([r.ok, r.code], [false, 'NOT_OPEN_TAB'], ch);
+      assert.match(r.error, /허용되지 않은 요청입니다/);
+    }
+    let r = await callAs('panel', 'doc:restore', {});
+    assert.equal(r.code, 'NOT_OPEN_TAB', '경로가 없으면 거절');
+    // AI 대상이면 된다
+    r = await callAs('panel', 'doc:versions', { path: docPath });
+    assert.equal(r.ok, true, r.error);
+    // 문서 탭 뷰: 그 뷰의 문서는 된다, 다른 문서(AI 대상도 아님)는 거절
+    r = await callAs(pdf, 'doc:versions', { path: pdf });
+    assert.equal(r.ok, true, r.error);
+    const hash = sha(docxPath);
+    r = await callAs(pdf, 'doc:restore', { path: docxPath });
+    assert.equal(r.code, 'NOT_OPEN_TAB');
+    assert.equal(sha(docxPath), hash, '되돌리지 않는다');
+    // 홈 뷰는 문서를 품지 않는다
+    r = await callAs('home', 'doc:versions', { path: pdf });
+    assert.equal(r.code, 'NOT_OPEN_TAB');
+    // 탭을 닫으면 그 뷰도 닫힌다
+    const pdfWc = docWc(pdf);
+    assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(pdf).id)).ok, true);
+    assert.equal(pdfWc.isDestroyed(), true);
+    assert.equal(tabOf(pdf), null);
+  });
+
+  await t.test('문서 탭의 직접 편집 → 같은 자리 편집 탭 (탭 수 그대로)', async () => {
+    const p = join(docs, '자리 시험.docx');
+    await createBlankDocument(p);
+    const opened = await call('doc:open', p);
+    assert.equal(opened.value.mode, 'doc');
+    const before = tabList();
+    const at = before.tabs.findIndex((x) => x.id === opened.value.tabId);
+    const docView = docWc(p);
+    const r = await call('doc:edit');
+    assert.equal(r.ok, true, r.error);
+    const after = tabList();
+    assert.equal(after.tabs.length, before.tabs.length, '탭 수 그대로');
+    assert.equal(after.tabs[at].type, 'editor');
+    assert.equal(after.tabs[at].path, p);
+    assert.equal(after.active, after.tabs[at].id);
+    assert.equal(docView.isDestroyed(), true, '문서 탭 뷰는 닫힌다');
+    assert.ok(editorOf(/자리 시험\.docx - 문서 편집/));
+    assert.equal(lastTarget()?.path, p);
+  });
+
+  await t.test('새 문서 AI 시작 → 패널에 ai:event start가 다른 ai:event보다 먼저', async () => {
+    const n0 = panelWc.sent.length;
+    const r = await call('doc:new', { format: 'docx', folder: docs, name: 'AI 새 문서', start: 'ai', request: '회의록 양식 만들어줘' });
+    assert.equal(r.ok, true, r.error);
+    assert.ok(r.value.chat?.chatId, JSON.stringify(r.value.chatError));
+    const chatId = r.value.chat.chatId;
+    assert.ok(await until(() => lastSent('ai:event', (d) => d.type === 'end' && d.chatId === chatId)));
+    const evs = panelWc.sent.slice(n0).filter((s) => s.channel === 'ai:event' && s.data.chatId === chatId).map((s) => s.data);
+    assert.equal(evs[0].type, 'start');
+    assert.equal(evs[0].path, join(docs, 'AI 새 문서.docx'));
+    assert.equal(evs[0].prompt, '회의록 양식 만들어줘');
+    assert.ok(evs.length >= 2);
+    assert.equal(lastTarget()?.path, join(docs, 'AI 새 문서.docx'), '그 탭 창의 AI 대상 = 새 문서');
+    assert.equal(tabOf(join(docs, 'AI 새 문서.docx'))?.type, 'doc');
   });
 
   await t.test('IPC 표: 편집 창 ↔ 주 창 채널은 서로 거절, 하위 틀 거절, 열린 채널은 누구에게나 답', async () => {
@@ -1047,9 +1224,16 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     // 주 창 → 편집 창 채널
     r = await call('editor:get-document');
     assert.deepEqual([r.ok, r.error], [false, '허용되지 않은 요청입니다']);
-    // 주 창 안의 하위 틀
-    r = await fake.invokeAs(fake.evOf(mainWc, { url: 'file:///sub.html' }), 'doc:versions');
+    // 홈 뷰 안의 하위 틀
+    r = await fake.invokeAs(fake.evOf(homeWc, { url: 'file:///sub.html' }), 'doc:versions');
     assert.equal(r.ok, false);
+    // AI 패널은 홈 채널(doc:open)을, 탭 줄은 편집·AI 채널을 못 부른다 (Section 1 #3)
+    r = await callAs('panel', 'doc:open', docPath);
+    assert.deepEqual([r.ok, r.error], [false, '허용되지 않은 요청입니다']);
+    for (const ch of ['editor:save', 'ai:send']) {
+      r = await callAs('tabstrip', ch, { prompt: 'x' });
+      assert.deepEqual([r.ok, r.error], [false, '허용되지 않은 요청입니다'], ch);
+    }
     // 어느 창에도 속하지 않은 화면도 번역 사전(열린 채널)은 받는다
     const stray = new fake.WebContentsView({}).webContents;
     assert.ok(fake.emitSync(stray, 'i18n:get'));
@@ -1060,6 +1244,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const csv = join(docs, '명단.csv');
     writeFileSync(csv, '이름,점수\n홍길동,90\n김영희,85\n', 'utf8');
     const csvBefore = readFileSync(csv);
+    // 탐색기에서 연 문서는 설정 '문서를 열면: 편집'일 때 편집 탭으로 (이 시험의 기본은 미리보기)
+    assert.equal((await call('settings:set', { openAction: 'edit' })).ok, true);
     process.env.OFFICEKIT_DOC_WINDOW = '1';
     try { fake.app.emit('second-instance', {}, [process.execPath, csv], docs); } finally { delete process.env.OFFICEKIT_DOC_WINDOW; process.env.OFFICEKIT_DOC_WINDOW = '0'; }
     assert.ok(await until(() => editorOf(/명단\.csv → \.xlsx - 표 편집/), 20_000), fake.windows.map((w) => w.getTitle()).join(' | '));
@@ -1086,32 +1272,33 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const r2 = await c('editor:save', new Uint8Array(readFileSync(target)), { reason: 'user' });
     assert.equal(r2.ok, true, r2.error);
     assert.equal(r2.value.name, '명단.xlsx');
-    w.win.close();
+    assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(target).id)).ok, true);
   });
 
   let closeAsked = 0;
-  await t.test('주 창 닫기: 고친 편집 창이 있으면 묻고, 취소하면 모두 그대로', async () => {
+  await t.test('탭 창 닫기: 고친 편집 탭이 있으면 묻고, 취소하면 모두 그대로', async () => {
     fake.replies.set(editorWin.wc.id, true);
     fake.dialogAnswers.push(2); // 취소
     closeAsked = fake.dialogs.length;
-    mainWin.close();
+    tw0.close();
     await until(() => fake.dialogs.length >= closeAsked + 1);
     await sleep(100);
     assert.equal(fake.dialogs.length, closeAsked + 1);
     assert.deepEqual(fake.dialogs[closeAsked].buttons, ['저장', '저장 안 함', '취소']);
     assert.match(fake.dialogs[closeAsked].message, /보고서\.hwpx/);
-    assert.equal(mainWin.isDestroyed(), false);
+    assert.equal(tw0.isDestroyed(), false);
     assert.equal(editorWin.wc.isDestroyed(), false);
     assert.equal(newEditor.wc.isDestroyed(), false);
   });
 
-  await t.test('주 창 닫기: 저장 안 함 → 편집 창 모두 닫고 주 창도 닫힌다 (파일은 그대로)', async () => {
+  await t.test('탭 창 닫기: 저장 안 함 → 편집 탭 모두 닫고 탭 창도 닫힌다 (파일은 그대로)', async () => {
     const hash = sha(docPath);
     const editorsOpen = editorViews();
     assert.ok(editorsOpen.length >= 6, '한글 2 + Office 5');
     fake.dialogAnswers.push(1); // 저장 안 함
-    mainWin.close();
-    assert.ok(await until(() => mainWin.isDestroyed(), 8000), '주 창이 닫혀야 한다');
+    tw0.close();
+    assert.ok(await until(() => tw0.isDestroyed(), 8000), '탭 창이 닫혀야 한다');
+    for (const wc of [homeWc, panelWc, tabstripWc]) assert.equal(wc.isDestroyed(), true, '홈·패널·탭 줄 뷰도 닫는다');
     for (const v of editorsOpen) assert.equal(v.webContents.isDestroyed(), true, v.opts.webPreferences.partition);
     assert.equal(fake.dialogs.length, closeAsked + 2, '깨끗한 편집 창은 묻지 않는다');
     assert.equal(sha(docPath), hash);

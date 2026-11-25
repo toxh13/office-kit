@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as acorn from 'acorn';
-import { allows, BLOCK_END, BLOCK_START, channelSpec, channelsFor, HUB_KINDS, IPC, PRELOADS, preloadBlock, VIEW_KINDS } from '../src/app/ipc-channels.mjs';
+import { allows, BLOCK_END, BLOCK_START, channelSpec, channelsFor, HUB_KINDS, IPC, PRELOADS, preloadBlock, VIEW_KINDS, VIEW_ROUTES } from '../src/app/ipc-channels.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
@@ -29,12 +29,12 @@ test('표: 모든 줄의 call·kinds가 올바르고, tabstrip은 탭 줄 채널
     on: ['i18n:get', 'tabs:ready'],
     send: ['tabs:list'],
   });
-  // 주 창 send 8개, 편집 창 send 3개
-  assert.deepEqual(channelsFor(HUB_KINDS).send, ['ai:event', 'batch:progress', 'doc:changed', 'doc:editor', 'doc:opened', 'menu', 'panel', 'toast']);
+  // 홈·패널 send 9개 (옆 창 'panel' 대신 탭 창 중계 'view:called'·AI 대상 'ai:target'), 편집 창 send 3개
+  assert.deepEqual(channelsFor(HUB_KINDS).send, ['ai:event', 'ai:target', 'batch:progress', 'doc:changed', 'doc:editor', 'doc:opened', 'menu', 'toast', 'view:called']);
   assert.deepEqual(channelsFor(['hwp']).send, ['editor:command', 'editor:external-change', 'editor:request-close']);
   assert.deepEqual(channelsFor(['office']).on, ['editor:close', 'editor:dirty', 'editor:i18n', 'editor:log', 'editor:panel', 'editor:reply']);
   const hub = channelsFor(HUB_KINDS);
-  assert.deepEqual(hub.on, ['i18n:get', 'smoke:ready']);
+  assert.deepEqual(hub.on, ['i18n:get', 'smoke:ready', 'view:call']);
   assert.deepEqual(hub.invoke, [...hub.invoke].sort(), '정렬');
 });
 
@@ -77,6 +77,8 @@ test('원본 대조: main.mjs·editor-window.mjs가 등록·보내는 채널 글
     ...grab(main, /(?<![.\w])handle\('([^']+)'/g, 'invoke'),
     ...grab(main, /(?<![.\w])onIpc\('([^']+)'/g, 'on'),
     ...grab(main, /(?<![.\w])send\('([^']+)'/g, 'send'),
+    // 허브·패널 범위 보내기: sendTo(받는 화면, '채널', …)
+    ...grab(main, /(?<![.\w])sendTo\([^,()']+, '([^']+)'/g, 'send'),
     ...grab(ew, /(?<![.\w])handle\('([^']+)'/g, 'invoke'),
     ...grab(ew, /(?<![.\w])(?:on|onIpc)\('([^']+)'/g, 'on'),
     ...grab(ew, /(?<![.\w])ask\(\w+, '([^']+)'/g, 'send'),
@@ -96,9 +98,30 @@ test('원본 대조: main.mjs·editor-window.mjs가 등록·보내는 채널 글
   assert.doesNotMatch(main, /webContents\.send\('/);
   // 표의 모든 채널은 두 파일 중 한 곳에 나온다 (안 쓰는 줄 없음)
   const seen = new Set(used.map(([ch]) => ch));
-  // 탭 줄이 부르는 채널은 main이 탭 창으로 바뀔 때(계획 Task 6) 등록한다 — 그때 이 목록을 지운다
-  const NOT_YET = ['tabs:activate', 'tabs:close', 'tabs:home', 'tabs:ready', 'tabs:togglePanel'];
-  assert.deepEqual(Object.keys(IPC).filter((ch) => !seen.has(ch) && !NOT_YET.includes(ch)), []);
+  assert.deepEqual(Object.keys(IPC).filter((ch) => !seen.has(ch)), []);
+});
+
+test('옆 창 채널 없음, VIEW_ROUTES: to는 home|panel, scope는 window|all (얼린 표)', () => {
+  for (const ch of ['panel:full', 'panel:close', 'panel']) assert.equal(IPC[ch], undefined, ch);
+  assert.ok(Object.isFrozen(VIEW_ROUTES));
+  assert.ok(Object.keys(VIEW_ROUTES).length > 0);
+  for (const [name, r] of Object.entries(VIEW_ROUTES)) {
+    assert.match(name, /^(home|chat)\.\w+$/, name);
+    assert.ok(['home', 'panel'].includes(r.to), `${name}: to`);
+    assert.ok(['window', 'all'].includes(r.scope), `${name}: scope`);
+    assert.ok(Object.isFrozen(r), `${name}: 얼려 둔다`);
+    // home.* 이름은 홈 종류 뷰로, chat.* 이름은 AI 패널로
+    assert.equal(r.to, name.startsWith('home.') ? 'home' : 'panel', name);
+  }
+  assert.deepEqual(VIEW_ROUTES['chat.loadProviders'], { to: 'panel', scope: 'all' });
+  assert.equal(VIEW_ROUTES['home.pickFile'].focusHome, true);
+  // 중계 채널: 홈·패널이 보내고(on) 받는다(send)
+  assert.deepEqual([IPC['view:call'].call, [...IPC['view:call'].kinds]], ['on', ['home', 'panel']]);
+  assert.deepEqual([IPC['view:called'].call, [...IPC['view:called'].kinds]], ['send', ['home', 'panel']]);
+  assert.deepEqual([IPC['ai:target'].call, [...IPC['ai:target'].kinds]], ['send', ['panel']]);
+  assert.deepEqual([IPC['ai:showEditor'].call, [...IPC['ai:showEditor'].kinds]], ['invoke', ['panel']]);
+  assert.deepEqual([IPC['tabs:panelWidth'].call, [...IPC['tabs:panelWidth'].kinds]], ['invoke', ['panel']]);
+  for (const ch of ['doc:versions', 'doc:diff', 'doc:restore']) assert.deepEqual([...IPC[ch].kinds], ['home', 'panel'], ch);
 });
 
 // 자동 생성 블록: BLOCK_START부터 BLOCK_END까지 (줄 끝은 \n으로 맞춘다)
@@ -170,7 +193,10 @@ test('홈·패널 종류 = 그 채널을 쓰는 화면 파일', () => {
   assert.ok(apiPaths.get('doc.pick')?.includes('doc:pick') && apiPaths.get('on.aiEvent')?.includes('ai:event') && apiPaths.get('smokeReady')?.includes('smoke:ready'));
 
   // 화면 파일이 쓰는 API 경로 (core.js → 홈·패널 둘 다, home.js → 홈, panel.js → 패널)
-  const FILES = { 'src/app/renderer/core.js': ['home', 'panel'], 'src/app/renderer/home.js': ['home'], 'src/app/renderer/panel.js': ['panel'] };
+  const FILES = {
+    'src/app/renderer/core.js': ['home', 'panel'], 'src/app/renderer/doc-actions.js': ['home', 'panel'],
+    'src/app/renderer/home.js': ['home'], 'src/app/renderer/panel.js': ['panel'],
+  };
   const usedKinds = new Map(); // 채널 → Set(종류)
   for (const [rel, kinds] of Object.entries(FILES)) {
     const paths = new Set([...read(rel).matchAll(/\bK\.([\w.]+)/g)].map((m) => m[1]));

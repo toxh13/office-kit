@@ -1,9 +1,17 @@
 // core.js — Office Kit 화면 공용: 화면 언어·작은 도우미·알림·확인 창·공용 상태·시작(K.init은 여기서 한 번만).
-// home.js(주 창)와 panel.js(AI 대화)는 OKCore에서 받아 쓰고, 서로는 bridge(이름 붙은 호출)로만 부른다.
+// 같은 index.html이 탭 창의 세 뷰가 된다: ?view=home(홈 탭) · ?view=doc(문서 탭) · ?view=panel(AI 패널).
+// home.js(홈·문서 탭)와 panel.js(AI 대화)는 OKCore에서 받아 쓰고, 서로는 bridge(이름 붙은 호출 → 다른 뷰면 main 중계)로만 부른다.
 'use strict';
 (() => {
   const K = window.officeKit;
   const MD = window.OKMarkdown;
+
+  // ── 화면 뷰 종류 ── 'home' | 'panel' | 'doc' (없으면 home). CSS는 body[data-view]로 보일 것을 고른다
+  const VIEW = (() => {
+    const v = new URLSearchParams(location.search).get('view');
+    return ['home', 'panel', 'doc'].includes(v) ? v : 'home';
+  })();
+  document.body.dataset.view = VIEW;
 
   // ── 화면 언어 ── 한국어 원문을 사전으로 바꾼다 (문서 내용·파일 이름·대화 글은 그대로)
   const NO_I18N = [
@@ -271,8 +279,10 @@
 
   // ── 다리 · 시작 ──────────────────────────────────────
 
-  // home.js ↔ panel.js 사이 호출은 이 다리로만 한다 (M3에서 이름마다 IPC로 바뀐다)
-  const bridge = window.OKBridge.createBridge();
+  // home.js ↔ panel.js 사이 호출은 이 다리로만 한다. 이 뷰에 없는 이름은 main을 거쳐 다른 뷰로 (VIEW_ROUTES)
+  const bridge = window.OKBridge.createBridge({ relay: (name, args) => K.view.call(name, args) });
+  // 다른 뷰가 보낸 이름: 이 뷰가 provide한 것만 부른다
+  K.on.viewCalled(({ name, args } = {}) => bridge.receive(name, Array.isArray(args) ? args : []));
 
   // init 결과를 받을 함수들: 등록 차례(home → panel)대로 부른다
   const initFns = [];
@@ -300,7 +310,7 @@
   document.addEventListener('DOMContentLoaded', start, { once: true });
 
   globalThis.OKCore = Object.freeze({
-    K, MD, I18N, $, $$, h, icon, spinner, call, sleep,
+    K, MD, I18N, view: VIEW, $, $$, h, icon, spinner, call, sleep,
     pathKey, extOf, baseName, dirName, KIND_BY_EXT, kindStyle, ENGINE_LABEL, ENGINE_SHORT, timeText, dayDiff,
     whenText, relText, setBusy, clearBusy, toast, friendlyError, showDetail, showError, confirmDialog, state,
     el, bridge, onInit,

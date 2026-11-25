@@ -1,11 +1,13 @@
-// panel.js — AI 대화 패널: 대상 칩·AI 고르기·대화 그리기·보내기·멈추기·AI 이벤트.
-// 주 창(home.js)은 직접 부르지 않고 bridge.call('home.…')으로만 부른다.
+// panel.js — AI 패널 뷰(?view=panel): 대상 칩·AI 고르기·대화 그리기·보내기·멈추기·AI 이벤트·패널 너비 조절.
+// 대화 대상(state.doc)은 main이 ai:target으로 민다 (그 탭 창의 활성 탭 문서). 홈·문서 탭(home.js, 다른 뷰)은 bridge.call('home.…')로만 부른다 (main 중계).
 'use strict';
 (() => {
   const {
     K, MD, $, h, icon, spinner, call, pathKey, setBusy, clearBusy,
-    toast, showError, confirmDialog, state, bridge, onInit,
+    toast, showError, confirmDialog, state, bridge, onInit, view,
   } = OKCore;
+  // 홈·문서 탭 뷰에서는 아무것도 등록하지 않는다 (home.js 몫)
+  if (view !== 'panel') return;
 
   // panel 칸 (home 칸은 읽지도 쓰지도 않는다)
   Object.assign(state, {
@@ -18,6 +20,7 @@
   const el = {
     chatBody: $('#chat-body'), chatLog: $('#chat-log'), provider: $('#provider'),
     composer: $('#composer'), targetChips: $('#target-chips'), prompt: $('#prompt'), send: $('#btn-send'), composerHint: $('#composer-hint'),
+    editorWarn: $('#editor-warn'), resizer: $('#panel-resizer'),
   };
 
   // AI 도구 이름 → 화면에 보일 말
@@ -225,7 +228,18 @@
     $('#btn-new-chat').disabled = off || !chat?.items.length || chat?.busy;
     renderSendButton();
     renderTargetChips();
+    renderEditorWarn();
     scrollChat(true);
+  }
+
+  /** 대화창 위 경고: 편집 탭에 저장 안 한 내용이 있을 때 */
+  function renderEditorWarn() {
+    el.editorWarn.hidden = !(state.doc?.editor?.open && state.doc.editor.dirty);
+  }
+
+  /** AI 대상 문서의 편집 탭으로 (문서 탭이면 편집 탭으로 바뀐다) */
+  function showEditor() {
+    call(K.ai.showEditor()).catch(showError);
   }
 
   function renderSendButton() {
@@ -283,8 +297,8 @@
       const here = () => state.doc && pathKey(state.doc.path) === pathKey(ch.path);
       nodes.push(h('div', { class: 'msg-change' },
         h('span', { class: 'msg-change-text' }, icon('check'), '이 대화에서 문서를 고쳤어요'),
-        h('button', { class: 'btn sm', text: '바뀐 내용 보기', onclick: () => { if (here()) bridge.call('home.showDiff', ch.before, { label: 'AI 대화 전', ai: true }); } }),
-        h('button', { class: 'btn sm ghost', text: '이 대화 전으로 되돌리기', onclick: () => { if (here()) bridge.call('home.restore', ch.before); } })));
+        h('button', { class: 'btn sm', text: '바뀐 내용 보기', onclick: () => { if (here()) OKDocActions.showDiff(ch.path, ch.before, { label: 'AI 대화 전', ai: true }); } }),
+        h('button', { class: 'btn sm ghost', text: '이 대화 전으로 되돌리기', onclick: () => { if (here()) OKDocActions.restore(ch.path, ch.before); } })));
     }
     body.replaceChildren(...nodes);
   }
@@ -366,7 +380,7 @@
     // 편집 창에 저장 안 한 내용이 있으면 먼저 묻는다 (입력한 글은 그대로 둔다)
     if (!editorOk && state.doc.editor?.dirty) {
       const choice = await askEditorDirty();
-      if (choice === 'editor') { bridge.call('home.edit'); return; }
+      if (choice === 'editor') { showEditor(); return; }
       if (choice !== 'send' || !state.doc || pathKey(state.doc.path) !== pathKey(path) || chatFor(path).busy) return;
       editorOk = true;
     }
@@ -413,9 +427,13 @@
       dropQueuedChat(path, { chat, msg });
       renderChat();
       if (!el.prompt.value.trim()) { el.prompt.value = text; autoGrow(); }
-      if (state.doc && pathKey(state.doc.path) === pathKey(path)) bridge.call('home.docEditor', { path, open: true, dirty: true });
+      if (state.doc && pathKey(state.doc.path) === pathKey(path)) {
+        state.doc = { ...state.doc, editor: { open: true, dirty: true } };
+        renderEditorWarn();
+        bridge.call('home.docEditor', { path, open: true, dirty: true });
+      }
       const choice = await askEditorDirty();
-      if (choice === 'editor') bridge.call('home.edit');
+      if (choice === 'editor') showEditor();
       else if (choice === 'send') sendPrompt(text, { editorOk: true });
     }
   }
@@ -438,6 +456,14 @@
 
   function onAiEvent(ev) {
     if (!ev || !ev.path) return;
+    // main이 시작한 대화(새 문서 AI 시작): 모르는 대화 번호면 대화를 만든다 (다른 이벤트보다 먼저 온다)
+    if (ev.type === 'start') {
+      const c = chatFor(ev.path);
+      if (c.items.some((i) => i.chatId === ev.chatId)) return;
+      const { msg } = queueChat(ev.path, String(ev.prompt ?? ''));
+      chatStarted(c, msg, ev.chatId);
+      return;
+    }
     const chat = chatFor(ev.path);
     const msg = findMessage(chat, ev.chatId);
     const isCurrent = state.doc && pathKey(state.doc.path) === pathKey(ev.path);
@@ -479,7 +505,7 @@
         if (part) {
           part.state = ev.ok === false ? 'fail' : 'ok';
           part.summary = String(ev.summary ?? '');
-          if (part.state === 'ok' && EDIT_TOOLS.has(toolBase(part.tool || part.name)) && isCurrent) bridge.call('home.refreshPreview', { ifChanged: true, reason: 'ai' });
+          if (part.state === 'ok' && EDIT_TOOLS.has(toolBase(part.tool || part.name))) bridge.call('home.refreshPreview', { path: ev.path, ifChanged: true, reason: 'ai' });
         }
         msg.status = '생각하는 중…';
         break;
@@ -506,8 +532,9 @@
         chat.busy = false;
         clearBusy(`ai:${pathKey(ev.path)}`);
         refreshTargetInfo();
+        // 그 문서를 보는 문서 탭의 미리보기를 새로 그린다 (main이 경로로 고른다)
+        bridge.call('home.refreshPreview', { path: ev.path, ifChanged: true, reason: 'ai' });
         if (isCurrent) {
-          bridge.call('home.refreshPreview', { ifChanged: true, reason: 'ai' });
           renderChat();
           return;
         }
@@ -593,16 +620,6 @@
     if (chatCurrent() === chat) renderChat();
   }
 
-  /** 미리 짐작한 경로와 실제 경로가 다를 때 대화를 옮긴다 */
-  function moveChat(from, to) {
-    const c = state.chats.get(pathKey(from));
-    if (!c) return;
-    state.chats.delete(pathKey(from));
-    state.chats.set(pathKey(to), c);
-    if (state.busy.has(`ai:${pathKey(from)}`)) { clearBusy(`ai:${pathKey(from)}`); setBusy(`ai:${pathKey(to)}`, 'AI가 작업 중…'); }
-    if (chatCurrent() === c) renderChat();
-  }
-
   /** 같은 경로에 새 문서를 다시 만들 때: 쉬고 있는 예전 대화를 잊는다 */
   function forgetIdleChat(path) {
     const old = state.chats.get(pathKey(path));
@@ -613,6 +630,8 @@
 
   function bindUi() {
     $('#btn-new-chat').addEventListener('click', newChat);
+    $('#editor-warn-show').addEventListener('click', showEditor);
+    setupResizer();
 
     // 대화 입력
     el.prompt.addEventListener('input', autoGrow);
@@ -635,30 +654,78 @@
     });
   }
 
-  function bindEvents() {
-    K.on.aiEvent(onAiEvent);
+  /** main이 민 AI 대상 (그 탭 창의 활성 탭 문서, 홈이면 null) */
+  function setTarget(doc) {
+    const before = state.doc?.path ?? null;
+    state.doc = doc ?? null;
+    if (pathKey(before) !== pathKey(state.doc?.path)) state.targetInfo = null;
+    // 확인용 캡처: 대상이 생기면 가짜 대화를 넣는다
+    if (state.smoke?.chat && state.doc && !state.demo) { injectDemoChat(); return; }
+    renderProviderSelect();
+    renderChat();
+    refreshTargetInfo();
   }
 
-  // home.js가 부르는 이름 (M3에서 IPC로 바뀐다)
-  bridge.provide('chat.render', renderChat);
-  bridge.provide('chat.refreshTargets', refreshTargetInfo);
-  bridge.provide('chat.of', chatFor);
-  bridge.provide('chat.current', chatCurrent);
-  bridge.provide('chat.markStopping', markStopping);
-  bridge.provide('chat.new', newChat);
-  bridge.provide('chat.queue', queueChat);
-  bridge.provide('chat.started', chatStarted);
-  bridge.provide('chat.failed', chatFailed);
-  bridge.provide('chat.loadProviders', loadProviders);
-  bridge.provide('chat.injectDemo', injectDemoChat);
-  bridge.provide('chat.focusPrompt', () => el.prompt?.focus());
-  bridge.provide('chat.dropQueued', dropQueuedChat);
-  bridge.provide('chat.move', moveChat);
-  bridge.provide('chat.forgetIdle', forgetIdleChat);
+  // ── 패널 너비 (왼쪽 가장자리, role=separator) ── 끌기·←/→ 키. main이 탭 창 배치를 바꾸고 설정에 남긴다
+  let panelWidth = 400;
+  async function setPanelWidth(w) {
+    try { panelWidth = (await call(K.tabs.panelWidth(Math.round(w)))).width ?? panelWidth; } catch {}
+    el.resizer.setAttribute('aria-valuenow', String(panelWidth));
+  }
+  function setupResizer() {
+    const r = el.resizer;
+    let startX = 0; let startW = 0; let dragging = false;
+    r.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      // 뷰 자체가 움직이므로 화면 좌표(screenX)로 잰다
+      dragging = true; startX = e.screenX; startW = panelWidth;
+      r.setPointerCapture(e.pointerId);
+      document.body.classList.add('resizing');
+      e.preventDefault();
+    });
+    r.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      void setPanelWidth(startW + (startX - e.screenX));
+    });
+    const end = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { r.releasePointerCapture(e.pointerId); } catch {}
+      document.body.classList.remove('resizing');
+    };
+    r.addEventListener('pointerup', end);
+    r.addEventListener('pointercancel', end);
+    r.addEventListener('dblclick', () => setPanelWidth(400));
+    r.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      // 왼쪽 가장자리: ← = 넓게, → = 좁게
+      void setPanelWidth(panelWidth + (e.key === 'ArrowLeft' ? 24 : -24));
+    });
+  }
+
+  function bindEvents() {
+    K.on.aiEvent(onAiEvent);
+    K.on.aiTarget((t) => setTarget(t?.doc ?? null));
+  }
+
+  // 홈·문서 탭(다른 뷰)이 부르는 이름 — main이 VIEW_ROUTES대로 중계한다 (ipc-channels.mjs)
+  bridge.provide('chat.markStopping', ({ path } = {}) => { if (path) markStopping(chatFor(path)); });
+  bridge.provide('chat.restored', ({ path, newChat: fresh } = {}) => {
+    // main이 이 문서의 AI 대화를 끝냈다 → 대화창에 알린다 (AI가 되돌리기 전 내용을 기억하지 않게)
+    const c = path ? state.chats.get(pathKey(path)) : null;
+    if (!fresh || !c?.items.length) return;
+    c.items.push({ role: 'note', text: '문서를 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
+    if (chatCurrent() === c) renderChat();
+  });
+  bridge.provide('chat.forgetIdle', ({ path } = {}) => { if (path) forgetIdleChat(path); });
+  bridge.provide('chat.loadProviders', (refresh) => loadProviders(!!refresh));
 
   onInit((init) => {
-    if (!init.doc) renderChat();
+    panelWidth = Number(init.settings?.chatWidth) || 400;
+    el.resizer.setAttribute('aria-valuenow', String(panelWidth));
     state.providersReady = loadProviders(false);
+    setTarget(init.doc ?? null);
   });
 
   bindUi();
