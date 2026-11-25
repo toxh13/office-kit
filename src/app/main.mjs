@@ -446,7 +446,12 @@ async function start() {
       const stoppedAi = await stopChatsFor(doc.path);
       if (stoppedAi < 0) throw fail('AI 작업이 멈추지 않아 되돌리지 않았습니다. 잠시 뒤 다시 시도하세요.');
       // 되돌리기 전 상태도 버전으로 남겨 둔다 (다시 '원래대로'로 돌아올 수 있게). 되돌릴 백업은 정리하지 않는다
-      try { backups.backup(doc.path, new Date(), { protect: [entry.file, ...protectedBackups()], maxPerSource: VERSIONS_PER_DOC, reason: 'restore' }); } catch {}
+      // 남기지 못하면 되돌리지 않는다 (되돌리면 지금 내용을 영영 잃을 수 있다). 파일이 이미 없으면 남길 내용이 없으니 그대로 진행
+      if (existsSync(doc.path)) {
+        try { backups.backup(doc.path, new Date(), { protect: [entry.file, ...protectedBackups()], maxPerSource: VERSIONS_PER_DOC, reason: 'restore' }); } catch {
+          throw fail('지금 내용을 버전으로 남기지 못해 되돌리지 않았습니다. 디스크 공간을 확인하세요.', 'BACKUP_FAILED');
+        }
+      }
       doc.quietUntil = Date.now() + 1500;
       try { backups.restore(doc.path, entry); } catch (err) {
         if (/EBUSY|EPERM|EACCES/.test(err.code ?? err.message)) throw fail('문서가 다른 프로그램에서 열려 있어 되돌릴 수 없습니다. 프로그램을 닫고 다시 시도하세요.');

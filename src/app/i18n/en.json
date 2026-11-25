@@ -953,6 +953,7 @@
  "중단하는 중…": "Stopping…",
  "중요한 날짜·금액만 뽑아줘": "Extract just the key dates and amounts",
  "지금": "Now",
+ "지금 내용을 버전으로 남기지 못해 되돌리지 않았습니다. 디스크 공간을 확인하세요.": "Didn't restore because the current content couldn't be saved as a version. Check your disk space.",
  "지금 다시 시작": "Restart now",
  "지금 상태": "Current state",
  "지금 상태도 버전 목록에 ‘원래대로 전’으로 남겨 두니, 다시 돌아올 수 있어요.": "The current state is also kept in version history as ‘Before Undo changes’, so you can come back to it.",

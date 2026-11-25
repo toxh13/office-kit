@@ -559,6 +559,29 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(sha(docPath), before);
   });
 
+  await t.test('원래대로: 지금 내용을 버전으로 남기지 못하면 되돌리지 않는다 (BACKUP_FAILED)', async () => {
+    const v0 = (await call('doc:versions')).value;
+    const target = v0.versions.find((e) => e.reason === 'open');
+    assert.ok(target, '되돌릴 버전');
+    // 지금 내용을 새 내용으로 바꿔 (같은 내용의 백업을 다시 쓰지 않게) 백업 색인 쓰기를 막는다
+    const original = readFileSync(docPath);
+    writeFileSync(docPath, Buffer.concat([original, Buffer.from('백업 실패 시험')]));
+    const changed = sha(docPath);
+    const block = join(ud, 'backups', `index.json.${process.pid}.tmp`);
+    mkdirSync(block);
+    try {
+      const r = await call('doc:restore', { file: target.file });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'BACKUP_FAILED');
+      assert.match(r.error, /버전으로 남기지 못해 되돌리지 않았습니다/);
+      assert.equal(sha(docPath), changed, '되돌리지 않고 지금 내용 그대로');
+    } finally {
+      rmSync(block, { recursive: true, force: true });
+      writeFileSync(docPath, original);
+    }
+    assert.equal(sha(docPath), before);
+  });
+
   // ── 문서·표·슬라이드 편집 창 (Office) ──
 
   let officeWin; let officeCall;

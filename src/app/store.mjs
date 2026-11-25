@@ -4,6 +4,7 @@ import {
   copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
+import { copyFileAtomic } from '../core/atomic.mjs';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   provider: null,          // 'claude' | 'codex' | null(자동)
@@ -270,7 +271,7 @@ export function createBackups(dir, { keep = BACKUP_KEEP, maxBytes = BACKUP_MAX_B
       if (!e) throw new Error('이 문서의 백업이 없습니다');
       const from = join(dir, e.file);
       if (!existsSync(from)) throw new Error('백업 파일을 찾을 수 없습니다');
-      copyFileSync(from, source);
+      copyFileAtomic(from, source); // 도중에 실패해도 지금 문서는 그대로
       // 복사는 백업의 옛 수정 시각을 그대로 옮긴다 → 지금 바뀐 파일로 보이게 시각을 새로 찍는다 (동기화·백업 프로그램용)
       try { const now = new Date(); utimesSync(source, now, now); } catch {}
       return { ...e, path: from };

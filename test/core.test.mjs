@@ -2,7 +2,7 @@
 // 기본은 파일 엔진만 쓴다. Word/PowerPoint/Excel COM 테스트는 OFFICEKIT_COM_TESTS=1 일 때만 (한컴 COM은 쓰지 않음).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { inflateSync } from 'node:zlib';
@@ -725,5 +725,30 @@ describe('프로그램 엔진 (Word/PowerPoint/Excel)', { skip: !COM_TESTS && 'O
     // 버려진 잠금(뮤텍스) 뒤에도 다음 요청이 된다
     const r = await readDocument(tmp.path('com.xlsx'), { engine: 'app' });
     assert.ok(r.text.includes('매출'));
+  });
+});
+
+describe('writeFileAtomic', () => {
+  test('새 파일·기존 파일 모두 내용을 바꾼다 (임시 파일은 남지 않는다)', async () => {
+    const { writeFileAtomic, copyFileAtomic } = await import('../src/core/atomic.mjs');
+    const f = tmp.path('atomic-a.bin');
+    writeFileAtomic(f, Buffer.from('하나'));
+    assert.equal(readFileSync(f, 'utf8'), '하나');
+    writeFileAtomic(f, Buffer.from('둘'));
+    assert.equal(readFileSync(f, 'utf8'), '둘');
+    const g = tmp.path('atomic-b.bin');
+    copyFileAtomic(f, g);
+    assert.equal(readFileSync(g, 'utf8'), '둘');
+    assert.deepEqual(readdirSync(tmp.dir).filter((n) => n.endsWith('.tmp')), []);
+  });
+
+  test('쓰기 도중 실패하면 원본을 그대로 두고 임시 파일도 남기지 않는다', async () => {
+    const { writeFileAtomic } = await import('../src/core/atomic.mjs');
+    const f = tmp.path('atomic-c.bin');
+    writeFileSync(f, '원본');
+    const bad = new Proxy(Buffer.from('새 내용'), { get(t, k) { if (k === 'length') return 1e9; return Reflect.get(t, k); } });
+    assert.throws(() => writeFileAtomic(f, bad));
+    assert.equal(readFileSync(f, 'utf8'), '원본');
+    assert.deepEqual(readdirSync(tmp.dir).filter((n) => n.endsWith('.tmp')), []);
   });
 });

@@ -330,3 +330,16 @@ test('최근 문서 고정: 고정한 것이 먼저, 지우기·밀려남에도 
     assert.equal(createSettings(dir).recent()[0].pinned, false, '파일에 저장됨');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('restore는 백업을 원자적으로 복사한다 (내용 = 백업, 임시 파일 없음)', () => {
+  const dir = tmp();
+  const doc = join(dir, '문서.hwp');
+  writeFileSync(doc, 'v1');
+  const b = createBackups(join(dir, 'backups'));
+  const e1 = b.backup(doc, new Date(2026, 9, 17, 9, 5, 7));
+  writeFileSync(doc, 'v2-바뀐 내용');
+  b.restore(doc, e1);
+  assert.equal(readFileSync(doc, 'utf8'), 'v1');
+  assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+  rmSync(dir, { recursive: true, force: true });
+});
