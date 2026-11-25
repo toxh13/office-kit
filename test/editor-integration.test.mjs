@@ -1492,6 +1492,27 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     }
     assert.equal(spawned.length, 1, spawned.join(' | '));
     assert.ok(spawned[0].includes(net), spawned[0]);
+    // 차단을 해제한 뒤 같은 문서를 다시 열면 그 탭으로 가고 띠가 사라진다 ('직접 편집'이 돌아온다, 새 편집 뷰 없음)
+    rmSync(`${net}:Zone.Identifier`, { force: true });
+    assert.equal((await callAs('tabstrip', 'tabs:home')).ok, true);
+    const nOpened = docWc(net).sent.filter((s) => s.channel === 'doc:opened').length;
+    const re = await callAs('home', 'doc:open', net);
+    assert.equal(re.ok, true, re.error);
+    assert.equal(re.value.mode, 'reused');
+    assert.equal(re.value.tabId, tabOf(net).id);
+    assert.equal(tabList().active, tabOf(net).id);
+    assert.ok(docWc(net).sent.filter((s) => s.channel === 'doc:opened').length > nOpened, '문서 정보를 다시 보낸다');
+    assert.equal(lastSent('doc:opened', (d) => d?.path === net)?.zone3Preview, false);
+    assert.equal(tabOf(net).zone3, false, '탭 줄의 인터넷 표시도 사라진다');
+    assert.equal(editorViews().length, nViews);
+    // 인터넷 PDF는 편집 대상이 아니므로 띠 없음
+    const netPdf = join(docs, '인터넷 문서.pdf');
+    writeFileSync(netPdf, makePdf(1));
+    writeFileSync(`${netPdf}:Zone.Identifier`, '[ZoneTransfer]\r\nZoneId=3\r\n');
+    assert.equal((await callAs('home', 'doc:open', netPdf)).ok, true);
+    assert.equal(lastSent('doc:opened', (d) => d?.path === netPdf)?.zone3Preview, false);
+    assert.equal(tabOf(netPdf).zone3, false);
+    assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(netPdf).id)).ok, true);
     for (const p of [net, net2]) assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(p).id)).ok, true);
   });
 

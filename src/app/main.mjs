@@ -218,7 +218,11 @@ async function start() {
   // 확인용 캡처는 OFFICEKIT_SMOKE_AUTOEDIT=1일 때만 (다른 캡처는 주 창만 찍는다)
   const wantsEditor = (p) => (!SMOKE || process.env.OFFICEKIT_SMOKE_AUTOEDIT === '1') && settings.get('openAction') !== 'preview' && !!editorKind(p);
   /** 인터넷에서 받은 Office 문서인가 (Zone 3, 한글·PDF 제외) → 어느 길로 열든 보기 전용 문서 탭 (D5) */
-  const zone3Office = (p) => { const ext = extOf(p); return ext !== 'pdf' && !core.isHwp(ext) && core.isFromInternet(p); };
+  // 편집하거나 바꿔 열 수 있는 형식만 (그 밖의 형식은 어차피 편집할 수 없으므로 '차단 해제' 띠를 보이지 않는다)
+  const zone3Office = (p) => {
+    const ext = extOf(p);
+    return ext !== 'pdf' && !core.isHwp(ext) && (!!editorKind(p) || !!CONVERT_FOR_EDIT[ext]) && core.isFromInternet(p);
+  };
 
   /**
    * 문서 탭 뷰(허브)에 문서 열기: 처음 연 상태 버전·최근 목록·감시. 편집 탭으로 열지는 openPath가 정한다 (autoEdit 왕복 없음)
@@ -1350,6 +1354,7 @@ async function start() {
     const hit = findTab(p);
     if (hit) {
       activateTab(hit.tw, hit.tab.id); focusShell(hit.tw);
+      refreshDocTab(hit.tw, hit.tab);
       if (!SMOKE) { try { settings.addRecent(hit.tab.path); } catch {} }
       return { tabId: hit.tab.id, mode: 'reused' };
     }
@@ -1633,6 +1638,18 @@ async function start() {
     sendTo(tw.panel.webContents, 'ai:target', { doc: targetInfo(targetOf(tw)) });
   }
 
+  /**
+   * 이미 열린 문서 탭을 다시 열 때: 인터넷 표시(Zone 3)를 다시 보고 탭 줄·문서 정보를 새로 보낸다
+   * (파일 속성에서 차단을 해제한 뒤 다시 열면 띠가 사라지고 '직접 편집'이 돌아온다)
+   */
+  function refreshDocTab(tw, tab) {
+    if (tab?.type !== 'doc') return;
+    const z = zone3Office(tab.path);
+    if (!!tab.zone3 !== z) { tw.tabs.update(tab.id, { zone3: z }); sendTabs(tw); }
+    const hub = hubOf(tw.docViews.get(tab.id)?.webContents);
+    if (hub?.current) sendTo(hub.wc, 'doc:opened', docInfo(hub));
+  }
+
   /** 문서 탭(?view=doc) 하나 열기: 그 뷰의 허브에 문서를 연다 (화면 준비를 기다리지 않는다 — app:init이 doc을 준다) */
   function openDocTab(tw, p, { activate = true } = {}) {
     p = docPath(p);
@@ -1768,6 +1785,7 @@ async function start() {
     const hit = findTab(p);
     if (hit) {
       if (activate) { activateTab(hit.tw, hit.tab.id); focusShell(hit.tw); }
+      refreshDocTab(hit.tw, hit.tab);
       if (!SMOKE) { try { settings.addRecent(hit.tab.path); } catch {} }
       return { tabId: hit.tab.id, mode: 'reused', path: hit.tab.path, reused: true, editor: editorState(hit.tab.path), notice: null };
     }
