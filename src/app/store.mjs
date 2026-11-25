@@ -17,6 +17,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   chatCollapsed: false,
   window: null,            // { x, y, width, height, maximized }
   recent: [],              // [{ path, openedAt }]
+  tabSession: null,        // 지금 세션 (모양은 tab-session.mjs)
+  lastTabSession: null,    // 지난 세션 (모양은 tab-session.mjs)
   officeEditor: { settings: {} }, // 문서·표·슬라이드 편집기가 보관하는 설정 (편집기의 state.get/set, 값마다 8KB)
 });
 

@@ -17,6 +17,8 @@ test('설정: 기본값, 저장, 다시 읽기', () => {
   assert.equal(again.get('previewMode'), 'exact');
   assert.equal(again.get('chatWidth'), 420);
   assert.equal(again.get('theme'), DEFAULT_SETTINGS.theme);
+  assert.equal(again.get('tabSession'), null);
+  assert.equal(again.get('lastTabSession'), null);
   assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
   rmSync(dir, { recursive: true, force: true });
 });
