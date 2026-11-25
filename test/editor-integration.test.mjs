@@ -142,6 +142,17 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   const call = (channel, ...args) => fake.invokeFrom(mainWc, channel, ...args);
   const lastSent = (channel, pred = () => true) => mainWc.sent.filter((s) => s.channel === channel && pred(s.data)).at(-1)?.data;
   const sentTo = (w, channel) => w.webContents.sent.filter((s) => s.channel === channel);
+  // 편집 탭: 탭 창 안의 편집 뷰(partition 있는 WebContentsView)
+  const editorViewIn = (w) => w.contentView?.children.find((v) => v.opts?.webPreferences?.partition);
+  /** 제목이 re에 맞는 (마지막) 탭 창과 그 안 편집 뷰 → { win, view, wc } | null */
+  const editorOf = (re) => {
+    const win = fake.windows.findLast((w) => w !== mainWin && !w.isDestroyed() && re.test(w.getTitle()) && editorViewIn(w));
+    if (!win) return null;
+    const view = editorViewIn(win);
+    return { win, view, wc: view.webContents };
+  };
+  /** 살아 있는 편집 뷰들 */
+  const editorViews = () => fake.views.filter((v) => v.opts?.webPreferences?.partition && !v.webContents.isDestroyed());
   assert.equal(fake.app.exitCode, undefined, fake.errorBox);
 
   await t.test('시작: 이 PC 밖 이름은 풀지 않는다 (편집기 틀의 dns-prefetch로 내용이 새지 않게), 편집기 서버 주소는 뺀다', () => {
@@ -192,7 +203,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.code, 'UNSUPPORTED');
     assert.match(r.error, /\.csv/);
     assert.match(r.error, /프로그램에서 열기/);
-    assert.equal(fake.windows.length, 1, '편집 창을 띄우지 않는다');
+    assert.equal(editorViews().length, 0, '편집 창을 띄우지 않는다');
   });
 
   await t.test('doc:edit: Word 문서도 직접 편집 대상 — 묶음이 없으면 EDITOR_MISSING (창을 띄우지 않음)', async () => {
@@ -201,7 +212,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.ok, false);
     assert.equal(r.code, 'EDITOR_MISSING');
     assert.match(r.error, /문서 편집기 파일이 없습니다/);
-    assert.equal(fake.windows.length, 1);
+    assert.equal(editorViews().length, 0);
   });
 
   await t.test('doc:edit: 한글 편집기 묶음이 없으면 EDITOR_MISSING (창을 띄우지 않음)', async () => {
@@ -210,7 +221,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.ok, false);
     assert.equal(r.code, 'EDITOR_MISSING');
     assert.match(r.error, /한글 편집기 파일이 없습니다/);
-    assert.equal(fake.windows.length, 1);
+    assert.equal(editorViews().length, 0);
   });
 
   makeVendor(vendor);
@@ -231,15 +242,15 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.value.kind, 'hwp');
     assert.equal(r.value.reused, false);
     assert.equal(r.value.notice, null);
-    editorWin = fake.windows[1];
+    editorWin = editorOf(/보고서\.hwpx - 한글 편집/);
     assert.ok(editorWin, '편집 창');
-    assert.match(editorWin.getTitle(), /보고서\.hwpx - 한글 편집 \(Office Kit\)/);
-    assert.match(editorWin.webContents.mainFrame.url, /^http:\/\/127\.0\.0\.1:\d+\/host\/host\.html$/);
-    assert.equal(editorWin.opts.webPreferences.partition, 'officekit-editor');
-    hostCall = (channel, ...args) => fake.invokeFrom(editorWin.webContents, channel, ...args);
+    assert.match(editorWin.win.getTitle(), /보고서\.hwpx - 한글 편집 \(Office Kit\)/);
+    assert.match(editorWin.wc.mainFrame.url, /^http:\/\/127\.0\.0\.1:\d+\/host\/host\.html$/);
+    assert.equal(editorWin.view.opts.webPreferences.partition, 'officekit-editor');
+    hostCall = (channel, ...args) => fake.invokeFrom(editorWin.wc, channel, ...args);
     const again = await call('doc:edit');
     assert.equal(again.value.reused, true);
-    assert.equal(fake.windows.length, 2);
+    assert.equal(editorViews().length, 1);
     const st = await until(() => lastSent('doc:editor', (d) => d.open));
     assert.deepEqual(st, { path: docPath, open: true, dirty: false });
     // 편집 창 밖으로 나가는 요청은 막는다
@@ -252,11 +263,11 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.deepEqual({ ...ses.proxy, proxyBypassRules: null }, { mode: 'fixed_servers', proxyRules: 'socks5://127.0.0.1:9', proxyBypassRules: null });
     assert.equal(ses.dictionaryUrl, 'http://127.0.0.1:9/');
     assert.equal(fake.defaultDictionaryUrl, 'http://127.0.0.1:9/');
-    assert.equal(editorWin.webContents.webrtcPolicy, 'disable_non_proxied_udp');
+    assert.equal(editorWin.wc.webrtcPolicy, 'disable_non_proxied_udp');
   });
 
   await t.test('편집 창 새 창·링크: 이 PC·사설망 주소는 열지 않고, 바깥 주소는 물어본 뒤 기본 브라우저로', async () => {
-    const open = editorWin.webContents.openHandler;
+    const open = editorWin.wc.openHandler;
     const d0 = fake.dialogs.length;
     for (const url of ['http://127.0.0.2:5555/studio/print.html', 'http://127.0.0.1:1/x', 'http://localhost/', 'http://192.168.0.10/',
       'http://10.1.2.3/', 'http://[::1]/', 'http://[::ffff:127.0.0.1]/', 'http://2130706433/', 'file:///C:/Windows/win.ini', 'javascript:alert(1)',
@@ -292,10 +303,10 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(doc.ok, true, doc.error);
     assert.equal(doc.value.name, '보고서.hwpx');
     assert.equal(doc.value.kind, 'hwp');
-    fake.emit('editor:dirty', editorWin.webContents, true);
+    fake.emit('editor:dirty', editorWin.wc, true);
     const st = await until(() => lastSent('doc:editor', (d) => d.dirty));
     assert.deepEqual(st, { path: docPath, open: true, dirty: true });
-    assert.ok(editorWin.getTitle().startsWith('* '));
+    assert.ok(editorWin.win.getTitle().startsWith('* '));
     const refused = await call('ai:send', { prompt: '요약해줘' });
     assert.equal(refused.ok, false);
     assert.equal(refused.code, 'EDITOR_DIRTY');
@@ -322,32 +333,32 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(settings.recent[0].path, docPath);
     const index = JSON.parse(readFileSync(join(ud, 'backups', 'index.json'), 'utf8'));
     assert.ok(index.some((e) => e.source === docPath && e.hash === before), '덮어쓰기 전 내용이 백업돼 있다');
-    fake.emit('editor:dirty', editorWin.webContents, false);
+    fake.emit('editor:dirty', editorWin.wc, false);
     assert.ok(await until(() => lastSent('doc:editor', (d) => !d.dirty)));
   });
 
   await t.test('바깥에서 파일이 바뀌면 편집 창에 알린다 (감시 → notifyExternalChange)', async () => {
-    const n0 = sentTo(editorWin, 'editor:external-change').length;
+    const n0 = sentTo(editorWin.view, 'editor:external-change').length;
     const other = join(base, 'other.hwpx');
     await createBlankDocument(other, { title: '바깥에서 바꾼 내용' });
     writeFileSync(docPath, readFileSync(other));
-    const got = await until(() => sentTo(editorWin, 'editor:external-change').length > n0, 8000);
+    const got = await until(() => sentTo(editorWin.view, 'editor:external-change').length > n0, 8000);
     assert.ok(got, '편집 창이 바깥 변경을 받아야 한다');
     assert.ok(await until(() => lastSent('doc:changed', (d) => !d.by && d.size === statSync(docPath).size), 8000), '주 창 미리보기도');
   });
 
   await t.test('원래대로 → 편집 창에도 알림 (editorNotified)', async () => {
-    const n0 = sentTo(editorWin, 'editor:external-change').length;
+    const n0 = sentTo(editorWin.view, 'editor:external-change').length;
     const r = await call('doc:restore');
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.editorNotified, true);
     assert.equal(sha(docPath), before, '열 때의 내용으로');
-    assert.equal(sentTo(editorWin, 'editor:external-change').length, n0 + 1);
+    assert.equal(sentTo(editorWin.view, 'editor:external-change').length, n0 + 1);
   });
 
   await t.test('원래대로: 파일이 이미 그 버전과 같아도 편집 창에 저장 안 한 편집이 있으면 알린다 (다시 불러올지 묻게)', async () => {
     assert.equal(sha(docPath), before);
-    const count = () => sentTo(editorWin, 'editor:external-change').length;
+    const count = () => sentTo(editorWin.view, 'editor:external-change').length;
     const same = (await call('doc:versions')).value.versions.find((v) => v.current);
     assert.ok(same, '지금 내용과 같은 버전');
     // 깨끗하면 알릴 것이 없다
@@ -357,7 +368,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.value.editorNotified, false);
     assert.equal(count(), n0);
     // 저장 안 한 편집이 있으면 내용이 같아도 알린다
-    fake.emit('editor:dirty', editorWin.webContents, true);
+    fake.emit('editor:dirty', editorWin.wc, true);
     await until(() => lastSent('doc:editor', (d) => d.dirty));
     n0 = count();
     r = await call('doc:restore', { file: same.file });
@@ -365,7 +376,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.value.editorNotified, true);
     assert.equal(count(), n0 + 1);
     assert.equal(sha(docPath), before);
-    fake.emit('editor:dirty', editorWin.webContents, false);
+    fake.emit('editor:dirty', editorWin.wc, false);
     assert.ok(await until(() => lastSent('doc:editor', (d) => !d.dirty)));
   });
 
@@ -515,18 +526,18 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r.value.path, docxPath);
     assert.equal(r.value.reused, false);
     assert.equal(r.value.notice, null);
-    officeWin = fake.windows.at(-1);
-    assert.equal(officeWin.getTitle(), '메모.docx - 문서 편집 (Office Kit)');
-    assert.doesNotMatch(officeWin.getTitle(), /ONLYOFFICE/i);
-    assert.match(officeWin.webContents.mainFrame.url, /^http:\/\/127\.0\.0\.1:\d+\/office-host\/host\.html$/);
-    assert.equal(officeWin.opts.webPreferences.partition, 'officekit-office');
-    assert.match(officeWin.opts.webPreferences.preload, /office-preload\.cjs$/);
-    assert.equal(officeWin.webContents.webrtcPolicy, 'disable_non_proxied_udp');
+    officeWin = editorOf(/메모\.docx - 문서 편집/);
+    assert.equal(officeWin.win.getTitle(), '메모.docx - 문서 편집 (Office Kit)');
+    assert.doesNotMatch(officeWin.win.getTitle(), /ONLYOFFICE/i);
+    assert.match(officeWin.wc.mainFrame.url, /^http:\/\/127\.0\.0\.1:\d+\/office-host\/host\.html$/);
+    assert.equal(officeWin.view.opts.webPreferences.partition, 'officekit-office');
+    assert.match(officeWin.view.opts.webPreferences.preload, /office-preload\.cjs$/);
+    assert.equal(officeWin.wc.webrtcPolicy, 'disable_non_proxied_udp');
     const ses = fake.sessions.get('officekit-office');
     assert.equal(ses.proxy.proxyRules, 'socks5://127.0.0.1:9');
     const blocked = await new Promise((res) => ses.handlers.beforeRequest({ url: 'https://example.com/x.js' }, res));
     assert.equal(blocked.cancel, true);
-    officeCall = (channel, ...args) => fake.invokeFrom(officeWin.webContents, channel, ...args);
+    officeCall = (channel, ...args) => fake.invokeFrom(officeWin.wc, channel, ...args);
     const st = await until(() => lastSent('doc:editor', (d) => d.path === docxPath && d.open));
     assert.deepEqual(st, { path: docxPath, open: true, dirty: false });
     // 한글 편집 창의 host에서 Office 전용 요청은 거절
@@ -596,10 +607,10 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
 
   await t.test('Office: 저장 안 한 편집 → 창 제목 *, 주 창 상태, AI 보내기 막기', async () => {
-    fake.emit('editor:dirty', officeWin.webContents, true);
+    fake.emit('editor:dirty', officeWin.wc, true);
     const st = await until(() => lastSent('doc:editor', (d) => d.path === docxPath && d.dirty));
     assert.deepEqual(st, { path: docxPath, open: true, dirty: true });
-    assert.equal(officeWin.getTitle(), '* 메모.docx - 문서 편집 (Office Kit)');
+    assert.equal(officeWin.win.getTitle(), '* 메모.docx - 문서 편집 (Office Kit)');
     const info = await call('doc:open', docxPath);
     assert.deepEqual(info.value.editor, { open: true, dirty: true });
     const refused = await call('ai:send', { prompt: '표 하나 넣어줘' });
@@ -608,11 +619,11 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
 
   await t.test('Office 원래대로: 저장 안 한 편집이 있으면 편집 창에 알린다 (reason restore)', async () => {
-    const n0 = sentTo(officeWin, 'editor:external-change').length;
+    const n0 = sentTo(officeWin.view, 'editor:external-change').length;
     const r = await call('doc:restore');
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.editorNotified, true);
-    const got = sentTo(officeWin, 'editor:external-change');
+    const got = sentTo(officeWin.view, 'editor:external-change');
     assert.equal(got.length, n0 + 1);
     assert.equal(got.at(-1).data.reason, 'restore');
     assert.equal(sha(docxPath), docxBefore);
@@ -623,7 +634,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const sneaky = await officeCall('editor:save', new Uint8Array(editedDocx), { reason: 'user' });
     assert.equal(sneaky.ok, false);
     assert.equal(sneaky.code, 'NO_USER_ACTION');
-    officeWin.webContents.emit('input-event', {}, { type: 'mouseDown' });
+    officeWin.wc.emit('input-event', {}, { type: 'mouseDown' });
     const r = await officeCall('editor:save', new Uint8Array(editedDocx), { reason: 'user' });
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.name, '메모.docx');
@@ -639,7 +650,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const bad = await officeCall('editor:save', new Uint8Array(Buffer.from('not a zip')), { reason: 'user' });
     assert.equal(bad.ok, false);
     assert.equal(bad.code, 'BAD_FORMAT');
-    fake.emit('editor:dirty', officeWin.webContents, false);
+    fake.emit('editor:dirty', officeWin.wc, false);
     assert.ok(await until(() => lastSent('doc:editor', (d) => d.path === docxPath && !d.dirty)));
     assert.equal((await call('ai:send', { prompt: '요약해줘' })).ok, true, '저장한 뒤에는 보낸다');
     assert.ok(await until(() => lastSent('ai:event', (d) => d.type === 'end' && d.path === docxPath)));
@@ -757,7 +768,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
   await t.test('AI 재료: 저장 안 한 재료 → MATERIAL_DIRTY, 그대로 보내기는 통과, 저장하고 보내기는 저장 실패를 알린다', async () => {
     assert.equal((await call('doc:open', docPath)).ok, true);
-    const win = officeWin; // 재료 = 메모.docx 편집 창
+    const win = officeWin.view; // 재료 = 메모.docx 편집 창
     fake.emit('editor:dirty', win.webContents, true);
     try {
       const target = { edit: docPath, read: [재료] };
@@ -850,13 +861,13 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const r = await officeCall('editor:save', new Uint8Array(editedDocx), { reason: 'auto' });
     assert.equal(r.ok, true, r.error);
     assert.ok(existsSync(draftFile));
-    fake.emit('editor:dirty', officeWin.webContents, true);
-    fake.replies.set(officeWin.webContents.id, true);
+    fake.emit('editor:dirty', officeWin.wc, true);
+    fake.replies.set(officeWin.wc.id, true);
     const hash = sha(docxPath);
     const d0 = fake.dialogs.length;
     fake.dialogAnswers.push(1); // 저장 안 함
-    officeWin.close();
-    assert.ok(await until(() => officeWin.isDestroyed(), 8000), '창이 닫혀야 한다');
+    officeWin.win.close();
+    assert.ok(await until(() => officeWin.wc.isDestroyed(), 8000), '창이 닫혀야 한다');
     assert.equal(fake.dialogs.length, d0 + 1);
     assert.deepEqual(fake.dialogs[d0].buttons, ['저장', '저장 안 함', '취소']);
     assert.equal(fake.dialogs[d0].title, '문서 편집');
@@ -872,8 +883,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     utimesSync(draftFile, future, future);
     const r = await call('doc:edit');
     assert.equal(r.ok, true, r.error);
-    officeWin = fake.windows.at(-1);
-    officeCall = (channel, ...args) => fake.invokeFrom(officeWin.webContents, channel, ...args);
+    officeWin = editorOf(/메모\.docx - 문서 편집/);
+    officeCall = (channel, ...args) => fake.invokeFrom(officeWin.wc, channel, ...args);
     const d = await officeCall('editor:get-document');
     assert.equal(d.ok, true, d.error);
     assert.equal(d.value.draft?.size, editedDocx.length);
@@ -893,8 +904,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(hw.value.editorError, null);
     assert.equal(hw.value.editor.path, join(docs, '새 편집.hwpx'));
     assert.equal(hw.value.editor.kind, 'hwp');
-    newEditor = fake.windows.at(-1);
-    assert.match(newEditor.getTitle(), /새 편집\.hwpx - 한글 편집/);
+    newEditor = editorOf(/새 편집\.hwpx - 한글 편집/);
+    assert.match(newEditor.win.getTitle(), /새 편집\.hwpx - 한글 편집/);
     const pp = await call('doc:new', { format: 'pptx', folder: docs, name: '새 발표', start: 'blank', edit: true });
     assert.equal(pp.ok, true, pp.error);
     assert.equal(pp.value.editorError, null);
@@ -904,11 +915,11 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(xl.ok, true, xl.error);
     assert.equal(fake.windows.at(-1).getTitle(), '새 표.xlsx - 표 편집 (Office Kit)');
     // edit 없이 만들면 편집 창을 열지 않는다
-    const n = fake.windows.length;
+    const n = editorViews().length;
     const wd = await call('doc:new', { format: 'docx', folder: docs, name: '새 워드', start: 'blank' });
     assert.equal(wd.ok, true, wd.error);
     assert.equal(wd.value.editor, null);
-    assert.equal(fake.windows.length, n);
+    assert.equal(editorViews().length, n);
   });
 
   await t.test('Office 편집 창이 4개를 넘으면 메모리 안내 (notice)', async () => {
@@ -933,7 +944,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]).copy(ole);
     writeFileSync(old, ole);
     assert.equal((await call('doc:open', old)).ok, true);
-    const n = fake.windows.length;
+    const n = editorViews().length;
     let r = await call('doc:edit');
     assert.equal(r.ok, false);
     assert.equal(r.code, 'OLD_FORMAT');
@@ -943,7 +954,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     r = await call('doc:edit');
     assert.equal(r.code, 'ENCRYPTED');
     assert.match(r.error, /암호가 걸린 문서는 직접 편집할 수 없습니다/);
-    assert.equal(fake.windows.length, n);
+    assert.equal(editorViews().length, n);
   });
 
   await t.test('한글: 내장 엔진이 못 여는 문서(손상)는 편집 창을 띄우기 전에 거절 — 엔진 원래 글은 detail로', async () => {
@@ -952,17 +963,17 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]).copy(bytes);
     writeFileSync(bad, bytes);
     assert.equal((await call('doc:open', bad)).ok, true);
-    const n = fake.windows.length;
+    const n = editorViews().length;
     const r = await call('doc:edit');
     assert.equal(r.ok, false);
     assert.equal(r.code, 'BAD_FORMAT');
     assert.match(r.error, /^‘깨진 문서\.hwp’ 파일은 손상됐거나 지원하지 않는 한글 문서라 직접 편집할 수 없어요/);
     assert.ok(r.detail, '엔진이 낸 원래 글');
-    assert.equal(fake.windows.length, n, '창을 띄우지 않음');
+    assert.equal(editorViews().length, n, '창을 띄우지 않음');
   });
 
   await t.test('다른 이름으로 저장: 확장자를 붙인 이름이 이미 있으면 다시 묻고, 취소하면 그대로', async () => {
-    const h2 = (channel, ...args) => fake.invokeFrom(newEditor.webContents, channel, ...args);
+    const h2 = (channel, ...args) => fake.invokeFrom(newEditor.wc, channel, ...args);
     assert.equal((await h2('editor:get-document')).ok, true);
     const victim = join(docs, 'victim.docx.hwpx');
     writeFileSync(victim, 'VICTIM');
@@ -992,10 +1003,10 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
 
   await t.test('Office 내려받기(PDF 등) → 열 수 있는 형식이면 최근 목록에 (PDF도 이제 열 수 있음)', async () => {
-    const w = fake.windows.at(-1); // 다섯째.docx
-    const dl = (...a) => fake.invokeFrom(w.webContents, 'editor:download', ...a);
+    const w = editorOf(/다섯째\.docx/);
+    const dl = (...a) => fake.invokeFrom(w.wc, 'editor:download', ...a);
     assert.equal((await dl('몰래.pdf', new Uint8Array(Buffer.from('%PDF-1.7\n%%EOF\n')), 'application/pdf')).code, 'NO_USER_ACTION', '사용자 조작 없이 내려받기 창을 띄우지 못한다');
-    w.webContents.emit('input-event', {}, { type: 'keyDown' });
+    w.wc.emit('input-event', {}, { type: 'keyDown' });
     const odt = join(docs, '내보낸 문서.odt');
     fake.saveDialogAnswers.push({ canceled: false, filePath: odt });
     let r = await dl('내보낸 문서.odt', new Uint8Array(readFileSync(docxPath)), 'application/vnd.oasis.opendocument.text');
@@ -1011,13 +1022,13 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   });
 
   await t.test("편집 창의 'AI · 도구' → 주 창이 그 문서의 옆 창이 되어 편집 창 오른쪽에 붙고, 닫으면 보통 주 창으로", async () => {
-    officeWin.setBounds({ x: 100, y: 50, width: 1700, height: 900 });
-    fake.emit('editor:panel', officeWin.webContents);
+    officeWin.win.setBounds({ x: 100, y: 50, width: 1700, height: 900 });
+    fake.emit('editor:panel', officeWin.wc);
     const on = await until(() => lastSent('panel', (d) => d.on === true));
     assert.equal(on.path, docxPath);
     assert.ok(await until(() => lastSent('doc:opened', (d) => d?.path === docxPath)), '옆 창은 그 문서를 연다');
     const pb = mainWin.getBounds();
-    const eb = officeWin.getBounds();
+    const eb = officeWin.win.getBounds();
     assert.equal(pb.width, 420, '좁은 옆 창');
     assert.equal(pb.x, eb.x + eb.width, '편집 창 바로 오른쪽');
     assert.ok(eb.x + eb.width + pb.width <= 1920, '자리가 없으면 편집 창을 줄인다');
@@ -1031,7 +1042,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
 
   await t.test('IPC 표: 편집 창 ↔ 주 창 채널은 서로 거절, 하위 틀 거절, 열린 채널은 누구에게나 답', async () => {
     // 편집 창 → 주 창 채널
-    let r = await fake.invokeFrom(officeWin.webContents, 'ai:send', { prompt: 'x' });
+    let r = await fake.invokeFrom(officeWin.wc, 'ai:send', { prompt: 'x' });
     assert.deepEqual([r.ok, r.error], [false, '허용되지 않은 요청입니다']);
     // 주 창 → 편집 창 채널
     r = await call('editor:get-document');
@@ -1050,11 +1061,10 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     writeFileSync(csv, '이름,점수\n홍길동,90\n김영희,85\n', 'utf8');
     const csvBefore = readFileSync(csv);
     process.env.OFFICEKIT_DOC_WINDOW = '1';
-    const before = fake.windows.length;
     try { fake.app.emit('second-instance', {}, [process.execPath, csv], docs); } finally { delete process.env.OFFICEKIT_DOC_WINDOW; process.env.OFFICEKIT_DOC_WINDOW = '0'; }
-    assert.ok(await until(() => fake.windows.slice(before).some((w) => /명단\.csv → \.xlsx - 표 편집/.test(w.getTitle())), 20_000), fake.windows.map((w) => w.getTitle()).join(' | '));
-    const w = fake.windows.slice(before).find((x) => /명단\.csv/.test(x.getTitle()));
-    const c = (ch, ...a) => fake.invokeFrom(w.webContents, ch, ...a);
+    assert.ok(await until(() => editorOf(/명단\.csv → \.xlsx - 표 편집/), 20_000), fake.windows.map((w) => w.getTitle()).join(' | '));
+    const w = editorOf(/명단\.csv/);
+    const c = (ch, ...a) => fake.invokeFrom(w.wc, ch, ...a);
     const d = await c('editor:get-document');
     assert.equal(d.ok, true, d.error);
     assert.equal(d.value.ext, 'xlsx');
@@ -1064,24 +1074,24 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     // 첫 저장: 원본 옆 '명단.xlsx'를 고르게 하고, 그 파일을 편집하는 창이 된다
     const target = join(docs, '명단.xlsx');
     fake.saveDialogAnswers.push({ canceled: false, filePath: target });
-    w.webContents.emit('input-event', {}, { type: 'mouseDown' });
+    w.wc.emit('input-event', {}, { type: 'mouseDown' });
     const r = await c('editor:save', new Uint8Array(d.value.bytes), { reason: 'user' });
     assert.equal(r.ok, true, r.error);
     assert.equal(r.value.name, '명단.xlsx');
     assert.ok(existsSync(target));
     assert.deepEqual(readFileSync(csv), csvBefore, '원본 csv는 그대로');
-    assert.equal(w.getTitle(), '명단.xlsx - 표 편집 (Office Kit)');
+    assert.equal(w.win.getTitle(), '명단.xlsx - 표 편집 (Office Kit)');
     assert.deepEqual(readdirSync(join(ud, 'converted')), [], '임시 사본은 지운다');
     // 두 번째 저장은 그 파일에 바로
     const r2 = await c('editor:save', new Uint8Array(readFileSync(target)), { reason: 'user' });
     assert.equal(r2.ok, true, r2.error);
     assert.equal(r2.value.name, '명단.xlsx');
-    w.close();
+    w.win.close();
   });
 
   let closeAsked = 0;
   await t.test('주 창 닫기: 고친 편집 창이 있으면 묻고, 취소하면 모두 그대로', async () => {
-    fake.replies.set(editorWin.webContents.id, true);
+    fake.replies.set(editorWin.wc.id, true);
     fake.dialogAnswers.push(2); // 취소
     closeAsked = fake.dialogs.length;
     mainWin.close();
@@ -1091,18 +1101,18 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.deepEqual(fake.dialogs[closeAsked].buttons, ['저장', '저장 안 함', '취소']);
     assert.match(fake.dialogs[closeAsked].message, /보고서\.hwpx/);
     assert.equal(mainWin.isDestroyed(), false);
-    assert.equal(editorWin.isDestroyed(), false);
-    assert.equal(newEditor.isDestroyed(), false);
+    assert.equal(editorWin.wc.isDestroyed(), false);
+    assert.equal(newEditor.wc.isDestroyed(), false);
   });
 
   await t.test('주 창 닫기: 저장 안 함 → 편집 창 모두 닫고 주 창도 닫힌다 (파일은 그대로)', async () => {
     const hash = sha(docPath);
-    const editorsOpen = fake.windows.slice(1).filter((w) => !w.isDestroyed());
+    const editorsOpen = editorViews();
     assert.ok(editorsOpen.length >= 6, '한글 2 + Office 5');
     fake.dialogAnswers.push(1); // 저장 안 함
     mainWin.close();
     assert.ok(await until(() => mainWin.isDestroyed(), 8000), '주 창이 닫혀야 한다');
-    for (const w of editorsOpen) assert.equal(w.isDestroyed(), true, w.getTitle());
+    for (const v of editorsOpen) assert.equal(v.webContents.isDestroyed(), true, v.opts.webPreferences.partition);
     assert.equal(fake.dialogs.length, closeAsked + 2, '깨끗한 편집 창은 묻지 않는다');
     assert.equal(sha(docPath), hash);
     assert.deepEqual(readdirSync(join(ud, 'office-drafts')).filter((n) => /^[0-9a-f]{40}\./.test(n) && n !== basename(freshDraft)), [], '정상 닫기 → 복구 사본 없음');

@@ -58,5 +58,7 @@
  "홈": "Home",
  "‘{0}’ 닫기": "Close ‘{0}’",
  "아직 불러오지 않음": "Not loaded yet",
- "저장 안 한 변경 있음": "Unsaved changes"
+ "저장 안 한 변경 있음": "Unsaved changes",
+ "문서 편집 탭이 {0}개 열려 있습니다. 탭마다 메모리를 약 0.5GB 쓰므로, 쓰지 않는 탭은 닫아 주세요.": "{0} document editor tabs are open. Each uses about 0.5 GB of memory, so please close the ones you aren't using.",
+ "편집 탭을 붙일 창이 없습니다": "No window to attach the editor tab to"
 }

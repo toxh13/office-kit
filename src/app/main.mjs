@@ -1,5 +1,5 @@
 // main.mjs — Office Kit 창, 단일 인스턴스, IPC, 원본 백업, 파일 감시, AI 대화 중계.
-import { app, BrowserWindow, Menu, dialog as electronDialog, ipcMain, nativeTheme, screen, session, shell } from 'electron';
+import { app, BaseWindow, BrowserWindow, Menu, WebContentsView, dialog as electronDialog, ipcMain, nativeTheme, screen, session, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { allows, channelSpec, HUB_KINDS } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
+import { createTabWindow } from './tab-window.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(here, '../..');
@@ -79,7 +80,7 @@ async function start() {
   // hubPrimary: 사용자가 Office Kit 자체를 실행했다 (주 창이 처음부터 보임) → 주 창을 닫으면 앱이 끝난다 (예전처럼)
   let hubPrimary = true;
   // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
-  let panelOf = null;       // 옆 창이 붙어 있는 편집 창 (BrowserWindow)
+  let panelOf = null;       // 옆 창이 붙어 있는 편집 탭 창 (BaseWindow)
   let hubBounds = null;     // 옆 창이 되기 전 주 창 크기 (전체 창으로 돌아갈 때)
   let appQuitting = false;
   let hubMaximizeLater = false; // 숨긴 채 시작한 주 창: 처음 보일 때 최대화 (저장된 창 상태)
@@ -898,8 +899,11 @@ async function start() {
       }
     }
     editors = m.createEditorManager({
-      app, BrowserWindow, ipcMain, session, dialog, shell, nativeTheme,
+      app, WebContentsView, ipcMain, session, dialog, shell, nativeTheme,
       appRoot: APP_ROOT, userData, icon: APP_ICON,
+      // 편집 뷰를 붙일 탭 창 (임시 연결: 주 창이 탭 창이 되기 전까지 문서마다 탭 창 하나)
+      hostFor: (info) => editorShellFor(info),
+      onTabChange: (p, change) => editorTabChanged(p, change),
       t: (x) => i18n.t(x), lang: () => i18n.lang, i18nData: () => ({ lang: i18n.lang, dict: i18n.dict }),
       dirs: vendor ? { studio: join(vendor, 'rhwp-studio'), sdk: join(vendor, 'rhwp-editor-sdk'), office: join(vendor, 'office-editor') } : undefined,
       ...(fonts ? { fonts } : {}),
@@ -912,17 +916,20 @@ async function start() {
       onSaved: (p) => editorSaved(p),
       onDownloaded: (p) => editorDownloaded(p),
       onDirtyChange: () => pushEditorState(),
-      // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
-      onPanel: (p, ew) => { showPanel(p, ew).catch((err) => console.error('[panel]', err)); },
+      // 편집기의 'AI · 도구' 단추 → 그 편집 탭 창 옆에 옆 창 (M3에서 지움: 탭 창 AI 패널 뷰로 바뀜)
+      onPanelRequest: (p) => {
+        const rec = editorShellOf(p);
+        if (rec) showPanel(p, rec.shell.win).catch((err) => console.error('[panel]', err));
+      },
       // 한글 편집 창의 인쇄·PDF로 저장: 편집 중인 hwp 바이트 → PDF (한컴+자동화 연결이 있으면 한컴, 없으면 내장 엔진)
       toPdf: (bytes) => hwpBytesToPdf(bytes),
       toPrint: (bytes, ew) => printHwpBytes(bytes, ew),
-      // 편집 창의 Ctrl+O · Ctrl+N
+      // 편집 탭의 Ctrl+O (부모 = 탭 창)
       onOpenRequest: (ew) => { pickAndOpen(ew).catch((err) => console.error('[open]', err)); },
-      onNewRequest: () => { showHub(); send('menu', 'new'); },
+      // 탭 단축키(Ctrl+Tab·Ctrl+1…9·Ctrl+T·Ctrl+N)는 아직 쓰지 않는다 (탭 단축키 작업에서 연결)
+      onTabCommand: () => {},
       // 끝내기 중 저장 확인에서 취소 → 끝내기 상태를 되돌린다
       onQuitCanceled: () => { appQuitting = false; },
-      onClosed: () => setTimeout(editorClosed, 0),
     });
   } catch (err) {
     editorLoadError = err?.message ?? String(err);
@@ -1174,7 +1181,7 @@ async function start() {
     return { opened: true };
   }
 
-  /** 편집 창의 Ctrl+O: 문서를 골라 열기 (편집할 수 있으면 새 편집 창, 아니면 주 창) */
+  /** 편집 탭의 Ctrl+O: 문서를 골라 열기 (편집할 수 있으면 새 편집 탭, 아니면 주 창). parent: 그 탭 창 */
   async function pickAndOpen(parent) {
     const all = OPENABLE_EXTS;
     const r = await dialog.showOpenDialog(parent && !parent.isDestroyed() ? parent : win, {
@@ -1317,6 +1324,50 @@ async function start() {
     }
   }
 
+  // ── 편집 탭 창 (임시 연결: 주 창이 탭 창이 되기 전까지 문서마다 탭 창 하나, 탭 줄에 그 문서 탭 하나·패널 접힘) ──
+  const editorShells = []; // { shell, path, view } — path는 다른 이름으로 저장하면 바뀐다
+
+  /** editor-window의 hostFor: 그 문서의 편집 뷰를 붙일 새 탭 창 */
+  function editorShellFor(info) {
+    const shell = createTabWindow({
+      BaseWindow, WebContentsView, icon: APP_ICON, dark: !!nativeTheme.shouldUseDarkColors, devTools: !app.isPackaged, panelCollapsed: true,
+    });
+    const rec = { shell, path: info.path, view: null };
+    editorShells.push(rec);
+    // 창 닫기(X·Alt+F4) → 그 탭을 닫아 본다 (저장 확인). 취소하면 창도 그대로
+    shell.on('close-requested', () => {
+      void editors?.closeMany([rec.path]).then((ok) => {
+        if (!ok) return;
+        shell.destroy();
+        if (appQuitting) app.quit();
+      }).catch((err) => console.error('[editor] 편집 탭을 닫지 못했습니다:', err));
+    });
+    shell.on('closed', () => { const i = editorShells.indexOf(rec); if (i >= 0) editorShells.splice(i, 1); });
+    return rec.shell;
+  }
+
+  /** 문서 경로 → 그 편집 탭 창 기록 (편집 뷰로 먼저, 없으면 경로로) */
+  function editorShellOf(p) {
+    const view = editors?.viewOf(p) ?? null;
+    return (view && editorShells.find((r) => r.view === view)) || editorShells.find((r) => samePath(r.path, p)) || null;
+  }
+
+  /** editor-window의 onTabChange: 창 제목·탭 줄을 고치고, 닫혔으면 탭 창도 없앤다 */
+  function editorTabChanged(p, change = {}) {
+    const rec = editorShellOf(p);
+    if (!rec) return;
+    const view = editors?.viewOf(p) ?? null;
+    if (view) rec.view = view;
+    rec.path = p;
+    if (change.closed) {
+      rec.shell.destroy();
+      setTimeout(editorClosed, 0);
+      return;
+    }
+    if (typeof change.title === 'string') rec.shell.setTitle(change.title);
+    rec.shell.sendTabs({ tabs: [{ id: 'doc', type: 'doc', title: basename(p), path: p, dirty: !!change.dirty }], active: 'doc', panelCollapsed: true });
+  }
+
   /** 편집 창이 닫힌 뒤: 주 창이 숨어 있거나 옆 창뿐이고 편집 창이 하나도 없으면 끝낸다 (Word처럼) */
   function editorClosed() {
     pushEditorState();
@@ -1333,7 +1384,7 @@ async function start() {
   // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
   const PANEL_W = 420;
 
-  /** 편집 창 옆에 옆 창(AI 대화·버전·도구)을 붙인다 */
+  /** 편집 탭 창(BaseWindow) 옆에 옆 창(AI 대화·버전·도구)을 붙인다 */
   async function showPanel(p, ew) {
     if (!win || win.isDestroyed() || !ew || ew.isDestroyed()) return;
     if (!current || !samePath(current.path, p)) {

@@ -1,4 +1,5 @@
-// editor-window.mjs — 편집 창. 문서마다 창 하나, 내장 편집기를 로컬 서버(127.0.0.x)에서 띄운다 (인터넷 없이).
+// editor-window.mjs — 편집 문서 뷰. 문서마다 WebContentsView 하나(탭 창에 붙는다, 뷰와 그 정리는 여기서 맡는다 D3),
+//   내장 편집기를 로컬 서버(127.0.0.x)에서 띄운다 (인터넷 없이).
 //   종류(kind) 둘: 'hwp'(한글 hwp·hwpx·hwt → rhwp-studio), 'office'(docx·xlsx·pptx → vendor/office-editor)
 //   Electron 모듈은 주입받는다 (main.mjs가 부르고, 시험 하니스도 같은 길로 부른다).
 import { execFile } from 'node:child_process';
@@ -14,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 import { allows, channelSpec } from './ipc-channels.mjs';
 import { editorAvailable, editorDirs, officeEditorAvailable, startEditorServer } from './editor-server.mjs';
+import { tabCommandOf } from './tabs.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -50,8 +52,8 @@ const SAVE_TIMEOUT_MS = 180_000;
 // 아무 곳에도 이어지지 않는 주소: 맞춤법 사전 내려받기·프록시를 여기로 보내 인터넷에 나가지 못하게 한다
 const DEAD_URL = 'http://127.0.0.1:9/';
 const DEAD_PROXY = 'socks5://127.0.0.1:9';
-/** 열린 Office 편집 창이 이보다 많으면 메모리 안내 (창마다 약 0.5GB) */
-const OFFICE_WINDOWS_NOTICE = 4;
+/** 불러온 Office 편집 탭이 이보다 많으면 메모리 안내 (탭마다 약 0.5GB, 지연 탭은 세지 않는다 D12) */
+const OFFICE_TABS_NOTICE = 4;
 /** 자동 저장 복구 사본 폴더 (userData 아래) */
 export const OFFICE_DRAFTS_DIR = 'office-drafts';
 /** 편집기 설정 값 하나의 크기 한도 (JSON 바이트) */
@@ -351,10 +353,15 @@ function safeFileName(name, fallback) {
 }
 
 /**
- * 편집 창 관리자 (한글·Office 두 종류).
+ * 편집 문서 뷰 관리자 (한글·Office 두 종류). 문서마다 WebContentsView 하나를 만들어 main이 정한 탭 창에 붙인다.
  * @param {object} o
  * @param {import('electron').App} o.app
- * @param {typeof import('electron').BrowserWindow} o.BrowserWindow
+ * @param {typeof import('electron').WebContentsView} o.WebContentsView
+ * @param {(info: { path: string, kind: string, convertedFrom: string|null }) => object} o.hostFor  편집 뷰를 붙일 탭 창(tab-window.mjs shell) — main이 정한다
+ * @param {(path: string, change: { title?: string, dirty?: boolean, closed?: true }) => void} [o.onTabChange]  탭 제목·저장 안 함·닫힘
+ * @param {(path: string, cmd: { cmd: string, n?: number }) => void} [o.onTabCommand]  탭 단축키 (닫기 말고, tabs.mjs tabCommandOf)
+ * @param {(path: string) => void} [o.onPanelRequest]  편집기의 'AI · 도구' 단추
+ * @param {(parent: import('electron').BaseWindow) => void} [o.onOpenRequest]  편집 탭의 Ctrl+O (부모 = 탭 창)
  * @param {import('electron').IpcMain} o.ipcMain
  * @param {typeof import('electron').session} o.session
  * @param {import('electron').Dialog} o.dialog
@@ -377,8 +384,8 @@ function safeFileName(name, fallback) {
  * @param {{ maxBytes?: number, fontsTimeoutMs?: number, printIntervalMs?: number }} [o.limits]  시험용 한도 (기본 512MB, 글꼴 준비 20초, 인쇄 간격 3초)
  */
 export function createEditorManager({
-  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
-  app, BrowserWindow, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange, onPanel, onClosed, toPdf, toPrint, onOpenRequest, onNewRequest, onQuitCanceled,
+  app, WebContentsView, hostFor, ipcMain, session, dialog, shell, appRoot, userData, getBackups, onSaved, onDownloaded, onDirtyChange,
+  onTabChange, onTabCommand, onPanelRequest, toPdf, toPrint, onOpenRequest, onQuitCanceled,
   dirs, officeState, fonts: fontsModule, fixups: fixupsModule, nativeTheme, icon, testHooks = false, userName,
   // 화면 언어: t(한국어) → 번역 (창 제목), lang() → 'ko' | 'en' | 'ja' (편집기 메뉴 언어. 일본어 메뉴는 없어 영어로)
   t = (x) => x, lang = () => 'ko', i18nData = () => null,
@@ -389,8 +396,8 @@ export function createEditorManager({
   const maxBytes = Number.isFinite(limits.maxBytes) ? limits.maxBytes : MAX_BYTES;
   const fontsTimeoutMs = Number.isFinite(limits.fontsTimeoutMs) ? limits.fontsTimeoutMs : 20_000;
   const printIntervalMs = Number.isFinite(limits.printIntervalMs) ? limits.printIntervalMs : PRINT_MIN_INTERVAL_MS;
-  const entries = new Map();    // 문서 키 → 창 정보
-  const byWc = new Map();       // webContents id → 창 정보
+  const entries = new Map();    // 문서 키 → 탭 정보 { host, view, wc, … }
+  const byWc = new Map();       // webContents id → 탭 정보
   const pending = new Map();    // 요청 id → { resolve, timer, entry }
   const memoryState = new Map(); // officeState가 없을 때 편집기 설정
   let server = null; let serverStarting = null;
@@ -535,12 +542,17 @@ export function createEditorManager({
 
   // ── IPC ──────────────────────────────────────────────
 
-  /** 보낸 쪽이 편집 창의 host 페이지(최상위 틀)인지 → 그 창 정보 */
+  /** 편집 뷰가 살아 있는지 (wc가 없어지면 탭도 닫힌 것) */
+  const alive = (entry) => !!(entry?.wc && !entry.wc.isDestroyed());
+  /** 대화상자 부모 = 그 탭이 붙은 탭 창 */
+  const parentOf = (entry) => entry.host?.dialogParent?.() ?? undefined;
+
+  /** 보낸 쪽이 편집 뷰의 host 페이지(최상위 틀)인지 → 그 탭 정보 */
   function senderEntry(e) {
     const entry = byWc.get(e.sender?.id);
-    if (!entry || !entry.win || entry.win.isDestroyed()) return null;
+    if (!alive(entry)) return null;
     const frame = e.senderFrame;
-    if (!frame || frame !== entry.win.webContents.mainFrame) return null;
+    if (!frame || frame !== entry.wc.mainFrame) return null;
     try {
       const u = new URL(frame.url);
       if (u.origin !== server?.origin) return null;
@@ -584,15 +596,14 @@ export function createEditorManager({
   /** 편집 창 host 페이지로 보내기 (표에 있는 send 채널만) */
   function sendToEditor(entry, channel, payload) {
     channelSpec(channel, 'send');
-    entry.win.webContents.send(channel, payload);
+    entry.wc.send(channel, payload);
   }
 
   // 화면 번역 사전 (편집 창 preload가 처음에 sendSync로 받는다 — 앱에 든 공개 글이라 보낸 쪽을 가리지 않는다. 답은 꼭 준다)
   onIpc('editor:i18n', (e) => { try { e.returnValue = i18nData() ?? null; } catch { e.returnValue = null; } });
 
-  // 편집 창의 'AI · 도구' 단추 → main이 그 문서의 옆 창(AI 대화·버전·도구)을 이 창 옆에 띄운다
-  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
-  on('editor:panel', (entry) => { try { onPanel?.(entry.path, entry.win); } catch (err) { log('onPanel 오류:', err); } });
+  // 편집기의 'AI · 도구' 단추 → main이 그 문서의 AI 대화·버전·도구를 보인다
+  on('editor:panel', (entry) => { try { onPanelRequest?.(entry.path); } catch (err) { log('onPanelRequest 오류:', err); } });
 
   handle('editor:get-document', async (entry) => {
     const st = statOf(entry.path);
@@ -786,14 +797,14 @@ export function createEditorManager({
     entry.printing = true;
     try {
       // Windows 인쇄 대화상자로 바로 (쪽 그림을 숨은 창에 그려 인쇄). 못 하면 PDF를 기본 PDF 앱으로
-      if (typeof toPrint === 'function') return await toPrint(bytes, entry.win);
+      if (typeof toPrint === 'function') return await toPrint(bytes, parentOf(entry));
       return await printPdf(entry, await toPdf(bytes));
     } finally { entry.printing = false; entry.lastPrintAt = Date.now(); }
   });
 
   async function printPdf(entry, pdf) {
     if (!entry.printAllowed) {
-      const { response } = await dialog.showMessageBox(entry.win, {
+      const { response } = await dialog.showMessageBox(parentOf(entry), {
         type: 'question', title: labelOfEntry(entry),
         message: '인쇄용 PDF를 기본 PDF 앱으로 열까요?',
         detail: 'PDF 앱에서 인쇄합니다. 이 창에서는 다시 묻지 않습니다.',
@@ -846,7 +857,7 @@ export function createEditorManager({
     try { onDirtyChange?.(entry.path, dirty); } catch {}
   });
   on('editor:log', (entry, message) => log(`(${basename(entry.path)})`, String(message ?? '').slice(0, 2000)));
-  on('editor:close', (entry) => { entry.win.close(); });
+  on('editor:close', (entry) => { void requestClose(entry); });
   on('editor:reply', (entry, msg) => {
     const p = pending.get(msg?.id);
     if (!p || p.entry !== entry) return;
@@ -859,7 +870,7 @@ export function createEditorManager({
   function ask(entry, channel, payload = {}, timeoutMs = REPLY_TIMEOUT_MS) {
     channelSpec(channel, 'send'); // 표에 없는 채널은 null로 삼키지 않고 바로 던진다
     if (channel === 'editor:command') entry.userActAt = Date.now(); // 단축키·닫기 확인창의 '저장'은 사용자가 고른 것
-    if (!entry.win || entry.win.isDestroyed()) return Promise.resolve(null);
+    if (!alive(entry)) return Promise.resolve(null);
     const id = `${++seq}`;
     return new Promise((res) => {
       const timer = setTimeout(() => { pending.delete(id); res(null); }, timeoutMs);
@@ -903,7 +914,7 @@ export function createEditorManager({
 
   /** 저장 대화상자 → 절대 경로 | null (확장자가 없으면 붙이고, 붙인 이름이 이미 있으면 다시 묻는다) */
   async function askTarget(entry, { title, defaultPath, ext, filterName }) {
-    const r = await dialog.showSaveDialog(entry.win, {
+    const r = await dialog.showSaveDialog(parentOf(entry), {
       title, defaultPath, filters: [{ name: filterName, extensions: [ext] }], properties: ['showOverwriteConfirmation'],
     });
     if (r.canceled || !r.filePath) return null;
@@ -912,7 +923,7 @@ export function createEditorManager({
       target = `${target}.${ext}`;
       // 덮어쓰기 확인은 사용자가 적은 이름으로 받았으므로, 확장자를 붙인 이름이 이미 있으면 다시 묻는다
       if (statOf(target)) {
-        const { response } = await dialog.showMessageBox(entry.win, {
+        const { response } = await dialog.showMessageBox(parentOf(entry), {
           type: 'warning', title,
           message: `‘${basename(target)}’ 파일이 이미 있습니다. 바꿀까요?`,
           detail: '바꾸면 원래 파일의 내용은 백업 폴더에만 남습니다.',
@@ -1114,7 +1125,7 @@ export function createEditorManager({
    * reason: 편집 창 안내 문구용 ('restore' = 주 창의 원래대로)
    */
   function checkExternal(entry, { force = false, reason = null } = {}) {
-    if (!entry.win || entry.win.isDestroyed() || entry.saving || !entry.known) return false;
+    if (!alive(entry) || entry.saving || !entry.known) return false;
     const st = statOf(entry.path);
     if (!st) {
       if (entry.known.missing) return false;
@@ -1149,21 +1160,30 @@ export function createEditorManager({
     entry.watcher = null;
   }
 
-  // ── 창 ───────────────────────────────────────────────
+  // ── 탭 ───────────────────────────────────────────────
 
   const labelOfEntry = (entry) => labelOf(entry.kind, extOf(entry.path));
   function titleOf(entry) {
     const name = entry.convertedFrom ? `${basename(entry.convertedFrom)} → .${extOf(entry.path)}` : basename(entry.path);
     return `${entry.dirty ? '* ' : ''}${name} - ${t(labelOfEntry(entry))} (Office Kit)`;
   }
-  function updateTitle(entry) { if (entry.win && !entry.win.isDestroyed()) entry.win.setTitle(titleOf(entry)); }
+  /** 탭 제목·저장 안 함을 main에 알린다 (창 제목은 main이 활성 탭으로 정한다) */
+  function updateTitle(entry) {
+    if (!alive(entry)) return;
+    try { onTabChange?.(entry.path, { title: titleOf(entry), dirty: entry.dirty }); } catch (err) { log('onTabChange 오류:', err); }
+  }
 
+  /** 그 탭을 보이고 탭 창을 앞으로 → 했으면 true */
   function focus(entry) {
-    const w = entry.win;
-    if (!w || w.isDestroyed()) return;
-    if (w.isMinimized()) w.restore();
-    w.show();
-    w.focus();
+    if (!alive(entry) || !entry.host) return false;
+    try { entry.host.focusTab(entry.view); } catch { return false; }
+    const w = entry.host.win;
+    if (w && !w.isDestroyed()) {
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+    }
+    return true;
   }
 
   /** 그 종류의 편집기 틀(iframe)이 가도 되는 주소인지 */
@@ -1175,16 +1195,16 @@ export function createEditorManager({
     } catch { return false; }
   }
 
-  /** 닫기 흐름: 저장 안 한 변경이 있으면 저장 / 저장 안 함 / 취소 → 닫혔으면 true */
+  /** 탭 닫기 흐름: 저장 안 한 변경이 있으면 저장 / 저장 안 함 / 취소 → 닫혔으면 true */
   async function requestClose(entry) {
-    if (!entry.win || entry.win.isDestroyed()) return true;
+    if (!alive(entry)) return true;
     if (entry.closing) return entry.closing;
     entry.closing = (async () => {
       const answer = await ask(entry, 'editor:request-close');
       const dirty = answer ?? entry.dirty;
       if (dirty) {
         focus(entry);
-        const { response } = await dialog.showMessageBox(entry.win, {
+        const { response } = await dialog.showMessageBox(parentOf(entry), {
           type: 'warning', title: labelOfEntry(entry),
           message: `‘${basename(entry.path)}’의 바뀐 내용을 저장할까요?`,
           detail: '저장하지 않으면 마지막으로 저장한 뒤 고친 내용이 사라집니다.',
@@ -1196,11 +1216,12 @@ export function createEditorManager({
           if (saved !== true) return false; // 저장 실패는 창에 알림 띠로 보인다
         }
       }
-      if (!entry.win || entry.win.isDestroyed()) return true;
-      const closed = new Promise((r) => entry.win.once('closed', () => r(true)));
+      if (!alive(entry)) return true;
+      const closed = new Promise((r) => entry.wc.once('destroyed', () => r(true)));
       entry.allowClose = true;
       entry.cleanClose = true; // 정상 닫기 → 복구 사본을 지운다
-      entry.win.close();
+      try { entry.host?.detach(entry.view); } catch (err) { log('탭 떼기 오류:', err); }
+      entry.wc.close(); // 정리는 wc 'destroyed'에서
       return closed;
     })();
     try { return await entry.closing; } finally { entry.closing = null; }
@@ -1217,10 +1238,10 @@ export function createEditorManager({
     const local = u.protocol !== 'mailto:' && (isPrivateHost(u.hostname)
       || (server && [server.origin, server.studioOrigin, server.officeOrigin].includes(u.origin)));
     if (local) { log('열지 않은 주소(이 PC·사설망):', u.href.slice(0, 200)); return false; }
-    if (linkAsking || !entry.win || entry.win.isDestroyed()) return false; // 한 번에 하나만 묻는다
+    if (linkAsking || !alive(entry)) return false; // 한 번에 하나만 묻는다
     linkAsking = true;
     try {
-      const { response } = await dialog.showMessageBox(entry.win, {
+      const { response } = await dialog.showMessageBox(parentOf(entry), {
         type: 'question', title: labelOfEntry(entry),
         message: u.protocol === 'mailto:' ? '이 주소로 메일을 쓸까요?' : '이 주소를 기본 브라우저로 열까요?',
         detail: u.href.length > 500 ? `${u.href.slice(0, 500)}…` : u.href,
@@ -1258,16 +1279,14 @@ export function createEditorManager({
     child.once('closed', () => clearTimeout(timer));
   }
 
-  function createWindow(entry) {
+  /** 편집 뷰를 만들어 main이 정한 탭 창에 붙이고 보인다 (뷰·wc 정리는 여기서, D3) */
+  function createView(entry) {
     const dark = !!nativeTheme?.shouldUseDarkColors;
     const office = entry.kind === 'office';
     const partition = PARTITIONS[entry.kind];
-    const win = new BrowserWindow({
-      width: 1280, height: 900, minWidth: 720, minHeight: 520,
-      title: titleOf(entry), show: false,
-      backgroundColor: dark ? '#15171c' : '#f3f4f6',
-      autoHideMenuBar: true,
-      ...(icon ? { icon } : {}),
+    const host = hostFor?.({ path: entry.path, kind: entry.kind, convertedFrom: entry.convertedFrom });
+    if (!host) throw new Error('편집 탭을 붙일 창이 없습니다');
+    const view = new WebContentsView({
       webPreferences: {
         preload: office ? join(officeHostDir(), 'office-preload.cjs') : join(here, 'editor', 'editor-preload.cjs'),
         contextIsolation: true, sandbox: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
@@ -1276,15 +1295,16 @@ export function createEditorManager({
         // 편집기 메뉴·오른쪽 클릭의 '붙이기'는 execCommand('paste')를 쓴다 (Ctrl+V는 이것 없이도 된다)
         enableDeprecatedPaste: true,
         devTools: !app?.isPackaged,
+        // 숨은 탭에서도 편집기(자동 저장·AI 편집 반영)가 멈추지 않게 (D13)
+        backgroundThrottling: false,
       },
     });
-    entry.win = win;
-    const wc = win.webContents;
+    view.setBackgroundColor?.(dark ? '#15171c' : '#f3f4f6');
+    const wc = view.webContents;
+    entry.host = host;
+    entry.view = view;
+    entry.wc = wc;
     byWc.set(wc.id, entry);
-    // 앱 메뉴 단축키(Ctrl+O, F5 …)가 이 창에서 주 창 일을 하지 않게
-    win.removeMenu();
-    win.once('ready-to-show', () => win.show());
-    win.on('page-title-updated', (e) => e.preventDefault());
 
     // WebRTC가 프록시를 거치지 않는 UDP(STUN)로 밖에 나가지 못하게 (TCP는 세션의 죽은 프록시로 간다)
     try { wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp'); } catch {}
@@ -1340,49 +1360,39 @@ export function createEditorManager({
       if (code === 'KeyS') {
         e.preventDefault();
         void ask(entry, 'editor:command', { command: input.shift ? 'save-as' : 'save' }, SAVE_TIMEOUT_MS);
-      } else if (code === 'KeyW' && !input.shift) {
-        e.preventDefault();
-        win.close();
       } else if (code === 'KeyP' && !input.shift && entry.kind === 'hwp') {
         // 한글 편집기는 인쇄를 꺼 두었다 → host가 PDF를 만들어 인쇄 (Office 편집기는 자기 인쇄를 쓴다)
         e.preventDefault();
         void ask(entry, 'editor:command', { command: 'print' }, SAVE_TIMEOUT_MS);
       } else if (code === 'KeyO' && !input.shift) {
         e.preventDefault();
-        try { onOpenRequest?.(win); } catch (err) { log('onOpenRequest 오류:', err); }
-      } else if (code === 'KeyN' && !input.shift) {
+        try { onOpenRequest?.(parentOf(entry)); } catch (err) { log('onOpenRequest 오류:', err); }
+      } else {
+        // 탭 단축키 (tabs.mjs 표): Ctrl+W는 이 탭만 닫고, 나머지(탭 옮기기·홈·새 창)는 main에
+        const tc = tabCommandOf(input);
+        if (!tc) return;
         e.preventDefault();
-        try { onNewRequest?.(win); } catch (err) { log('onNewRequest 오류:', err); }
+        if (tc.cmd === 'close') void requestClose(entry);
+        else { try { onTabCommand?.(entry.path, tc); } catch (err) { log('onTabCommand 오류:', err); } }
       }
     });
     wc.on('render-process-gone', (_e, d) => {
       log('편집 창 화면 종료:', d.reason);
-      if (d.reason === 'clean-exit' || win.isDestroyed()) return;
+      if (d.reason === 'clean-exit' || wc.isDestroyed()) return;
       entry.dirty = false;
       updateTitle(entry);
       try { onDirtyChange?.(entry.path, false); } catch {}
-      dialog.showMessageBox(win, {
+      dialog.showMessageBox(parentOf(entry), {
         type: 'error', title: labelOfEntry(entry), noLink: true, buttons: ['확인'],
         message: '편집 창이 예기치 않게 멈췄습니다.',
         detail: office
           ? '마지막으로 저장한 문서를 다시 엽니다. 자동 저장된 편집 내용이 있으면 다시 열린 창에서 복구할 수 있습니다.'
           : '마지막으로 저장한 문서를 다시 엽니다. 저장하지 않은 내용은 사라졌을 수 있습니다.',
-      }).then(() => { if (!win.isDestroyed()) wc.loadURL(hostUrl(entry.kind)); }).catch(() => {});
+      }).then(() => { if (!wc.isDestroyed()) wc.loadURL(hostUrl(entry.kind)); }).catch(() => {});
     });
 
-    win.on('close', (e) => {
-      if (entry.allowClose) return;
-      e.preventDefault();
-      void requestClose(entry).then((closed) => {
-        if (!closed) {
-          // 끝내기 중 저장 확인에서 취소 → 앱 쪽 끝내기 상태도 되돌린다 (안 그러면 이후 창을 닫아도 끝내기로 오인한다)
-          if (quitting) { try { onQuitCanceled?.(); } catch (err) { log('onQuitCanceled 오류:', err); } }
-          quitting = false;
-        }
-        else if (quitting) app?.quit();
-      });
-    });
-    win.on('closed', () => {
+    // 탭 창 닫기는 main이 closeMany로 한다. 여기서는 wc가 없어지면(닫기·화면 정리) 정리한다
+    wc.once('destroyed', () => {
       stopWatch(entry);
       byWc.delete(wc.id);
       if (entries.get(entry.key) === entry) entries.delete(entry.key);
@@ -1391,12 +1401,15 @@ export function createEditorManager({
       if (entry.cleanClose && !entry.draftPending) removeDraft(entry);
       // 옛 형식에서 바꿔 연 임시 사본은 저장하지 않고 닫으면 지운다 (원본은 그대로)
       if (entry.convertedFrom) dropConvertedTemp(entry, entry.path);
-      entry.win = null;
-      try { onClosed?.(entry.path); } catch (err) { log('onClosed 오류:', err); }
+      try { host.detach(view); } catch {}
+      try { onTabChange?.(entry.path, { closed: true }); } catch (err) { log('onTabChange 오류:', err); }
     });
 
+    host.attach(view, 'content');
+    host.focusTab(view);
+    updateTitle(entry);
     wc.loadURL(hostUrl(entry.kind)).catch((err) => log('편집 창을 열지 못했습니다:', err?.message ?? err));
-    return win;
+    return view;
   }
 
   const hostUrl = (kind) => `${kind === 'office' ? server.officeHostUrl : server.hostUrl}${testHooks ? '?test=1' : ''}`;
@@ -1416,7 +1429,24 @@ export function createEditorManager({
     return { path: p, kind };
   }
 
-  const openOfficeCount = () => [...entries.values()].filter((e) => e.kind === 'office' && e.win && !e.win.isDestroyed()).length;
+  // 불러온 Office 편집 탭 수 (wc가 살아 있는 것만 — 지연 탭은 아직 entry가 없다)
+  const openOfficeCount = () => [...entries.values()].filter((e) => e.kind === 'office' && alive(e)).length;
+  const entryOf = (path) => (typeof path === 'string' ? entries.get(keyOf(path)) ?? null : null);
+
+  /** 차례로 닫기 → 다 닫혔으면 true. 취소하면 거기서 false (끝내기 중이었으면 onQuitCanceled 한 번 + 끝내기 상태 되돌림) */
+  async function closeMany(paths) {
+    for (const p of paths ?? []) {
+      const e = entryOf(p);
+      if (!alive(e)) continue;
+      if (!(await requestClose(e))) {
+        // 끝내기 중 저장 확인에서 취소 → 앱 쪽 끝내기 상태도 되돌린다 (안 그러면 이후 창을 닫아도 끝내기로 오인한다)
+        if (quitting) { try { onQuitCanceled?.(); } catch (err) { log('onQuitCanceled 오류:', err); } }
+        quitting = false;
+        return false;
+      }
+    }
+    return true;
+  }
 
   if (app) {
     app.on('before-quit', () => { quitting = true; });
@@ -1434,7 +1464,7 @@ export function createEditorManager({
       const { path: p, kind } = editablePath(path);
       const ok = available(kind);
       const existing = entries.get(keyOf(p));
-      if (existing?.win && !existing.win.isDestroyed()) {
+      if (alive(existing)) {
         focus(existing);
         return { path: existing.path, kind: existing.kind, reused: true, ...ok, notice: null };
       }
@@ -1447,36 +1477,35 @@ export function createEditorManager({
       await setupSession(srv, kind);
       if (kind === 'office') void ensureOfficeFonts(srv); // 미리 시작 (get-document가 기다린다)
       const again = entries.get(keyOf(p)); // 서버를 기다리는 사이 같은 문서를 또 열었으면
-      if (again?.win && !again.win.isDestroyed()) { focus(again); return { path: again.path, kind: again.kind, reused: true, ...ok, notice: null }; }
+      if (alive(again)) { focus(again); return { path: again.path, kind: again.kind, reused: true, ...ok, notice: null }; }
       const entry = {
-        path: p, key: keyOf(p), kind, win: null, dirty: false, known: null, saving: false, drafting: false,
+        path: p, key: keyOf(p), kind, host: null, view: null, wc: null, dirty: false, known: null, saving: false, drafting: false,
         allowClose: false, cleanClose: false, closing: null, watcher: null, watchTimer: null,
         draftPending: false, printing: false, lastPrintAt: 0, printAllowed: false,
         convertedFrom: typeof convertedFrom === 'string' && convertedFrom ? resolve(convertedFrom) : null,
       };
       entries.set(entry.key, entry);
-      try { createWindow(entry); } catch (err) { entries.delete(entry.key); throw err; }
+      try { createView(entry); } catch (err) { entries.delete(entry.key); throw err; }
       startWatch(entry);
       const count = kind === 'office' ? openOfficeCount() : 0;
-      const notice = count > OFFICE_WINDOWS_NOTICE
-        ? `문서 편집 창이 ${count}개 열려 있습니다. 창마다 메모리를 약 0.5GB 쓰므로, 쓰지 않는 창은 닫아 주세요.`
+      const notice = count > OFFICE_TABS_NOTICE
+        ? `문서 편집 탭이 ${count}개 열려 있습니다. 탭마다 메모리를 약 0.5GB 쓰므로, 쓰지 않는 탭은 닫아 주세요.`
         : null;
       return { path: p, kind, reused: false, ...ok, notice };
     },
-    /** 그 문서가 편집 창에 열려 있는지 */
+    /** 그 문서가 편집 탭으로 열려 있는지 */
     isOpen(path) {
-      const e = typeof path === 'string' ? entries.get(keyOf(path)) : null;
-      return !!(e?.win && !e.win.isDestroyed());
+      return alive(entryOf(path));
     },
     /** 그 문서에 저장 안 한 변경이 있는지 (host가 알려 준 마지막 상태) */
     isDirty(path) {
-      const e = typeof path === 'string' ? entries.get(keyOf(path)) : null;
-      return !!(e?.win && !e.win.isDestroyed() && e.dirty);
+      const e = entryOf(path);
+      return alive(e) && !!e.dirty;
     },
     /** 열린 편집 창에 저장 명령 → 저장했으면 true, 못 했으면 false, 창이 없으면 null */
     async save(path) {
-      const e = typeof path === 'string' ? entries.get(keyOf(path)) : null;
-      if (!e?.win || e.win.isDestroyed()) return null;
+      const e = entryOf(path);
+      if (!alive(e)) return null;
       return (await ask(e, 'editor:command', { command: 'save' }, SAVE_TIMEOUT_MS)) === true;
     },
     /**
@@ -1487,8 +1516,27 @@ export function createEditorManager({
       const e = typeof path === 'string' ? entries.get(keyOf(path)) : null;
       return e ? checkExternal(e, { force: force === true, reason: reason === 'restore' ? 'restore' : null }) : false;
     },
-    /** 열린 편집 창 문서 경로들 */
-    list() { return [...entries.values()].filter((e) => e.win && !e.win.isDestroyed()).map((e) => e.path); },
+    /** 열린 편집 탭 문서 경로들 */
+    list() { return [...entries.values()].filter(alive).map((e) => e.path); },
+    /** 탭 하나 닫기 (저장 확인) → 닫혔으면 true, 취소면 false, 열려 있지 않으면 null */
+    async close(path) {
+      const e = entryOf(path);
+      return alive(e) ? requestClose(e) : null;
+    },
+    /** 여러 탭을 차례로 닫기 → 다 닫혔으면 true (취소하면 거기서 false) */
+    closeMany,
+    /** 그 문서의 편집 뷰 (없으면 null) */
+    viewOf(path) {
+      const e = entryOf(path);
+      return alive(e) ? e.view : null;
+    },
+    /** webContents id → 그 편집 탭 { path, kind } | null */
+    entryOfWc(wcId) {
+      const e = byWc.get(wcId);
+      return alive(e) ? { path: e.path, kind: e.kind } : null;
+    },
+    /** 그 탭을 보이고 탭 창을 앞으로 → 했으면 true */
+    focus(path) { return focus(entryOf(path)); },
     /** 편집기 묶음 확인 (kind: 'hwp' 기본 | 'office') → { available, reason } */
     available,
     /** 파일 경로 → 'hwp' | 'office' | null */
@@ -1500,19 +1548,20 @@ export function createEditorManager({
       return e ? draftFileOf(e) : draftPathFor(userData, path);
     },
     /**
-     * 모든 편집 창 닫기 → 다 닫혔으면 true (사용자가 '취소'하면 false)
+     * 모든 편집 탭 닫기 = closeMany(list()) → 다 닫혔으면 true (사용자가 '취소'하면 false)
      * force: 묻지 않고 닫는다 (저장 안 한 변경은 사라짐 — Office 복구 사본은 남긴다)
      */
     async closeAll({ force = false } = {}) {
-      const list = [...entries.values()].filter((e) => e.win && !e.win.isDestroyed());
+      const list = [...entries.values()].filter(alive);
       if (force) {
-        for (const e of list) { e.allowClose = true; e.win.destroy(); }
+        for (const e of list) {
+          e.allowClose = true;
+          try { e.host?.detach(e.view); } catch {}
+          e.wc.close();
+        }
         return true;
       }
-      for (const e of list) {
-        if (!(await requestClose(e))) return false;
-      }
-      return true;
+      return closeMany(list.map((e) => e.path));
     },
     /** 서버 주소 (진단용) */
     serverInfo: () => (server

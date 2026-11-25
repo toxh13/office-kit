@@ -228,7 +228,7 @@ export function makeFakeElectron({ userData, documents, version = '0.0.0-test', 
     evOf, emit, emitAs, emitSync, invoke, invokeFrom, invokeAs, keyDown, crash,
     Menu: { buildFromTemplate: (t) => { fake.menu = t; return t; }, setApplicationMenu() {} },
     dialog: {
-      async showMessageBox(_w, opts) { fake.dialogs.push(opts); return { response: fake.dialogAnswers.shift() ?? 2 }; },
+      async showMessageBox(_w, opts) { fake.dialogs.push({ ...opts, parent: _w }); return { response: fake.dialogAnswers.shift() ?? 2 }; },
       async showSaveDialog(_w, opts) { fake.saveDialogs.push(opts); return fake.saveDialogAnswers.shift() ?? { canceled: true }; },
       async showOpenDialog() { return fake.openDialogAnswers.shift() ?? { canceled: true, filePaths: [] }; },
       showErrorBox(title, text) { fake.errorBox = title + ': ' + text; },

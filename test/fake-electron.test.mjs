@@ -74,6 +74,9 @@ test('dialog: 답을 넣은 차례대로, 없으면 기본값', async () => {
   assert.equal((await f.dialog.showMessageBox(null, {})).response, 1);
   assert.equal((await f.dialog.showMessageBox(null, {})).response, 2);
   assert.equal(f.dialogs.length, 3);
+  const parent = {};
+  await f.dialog.showMessageBox(parent, {});
+  assert.equal(f.dialogs.at(-1).parent, parent, '대화상자 부모를 기록한다');
   assert.deepEqual(await f.dialog.showSaveDialog(null, { t: 1 }), { canceled: true });
   assert.deepEqual(f.saveDialogs, [{ t: 1 }]);
   f.saveDialogAnswers.push({ canceled: false, filePath: 'a' });
