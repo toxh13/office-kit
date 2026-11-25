@@ -1902,7 +1902,6 @@ async function start() {
   });
   handle('hancom:setup', (args) => hancomSetup(args));
   handle('assoc:status', () => assocStatus());
-  handle('assoc:repair', () => assocRepair());
   handle('assoc:openSettings', () => assocOpenSettings());
   handle('hancom:remove', async (args) => {
     if (args?.consent !== true) throw fail('동의가 필요합니다');

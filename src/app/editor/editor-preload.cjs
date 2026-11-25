@@ -8,44 +8,77 @@ const toBytes = (v) => {
   return null;
 };
 
+// 허용 채널 표 (src/app/ipc-channels.mjs). 표에 없는 채널은 불러올 때 바로 던진다
+// <ipc-channels> 자동 생성: node scripts/gen-ipc-preload.mjs (손으로 고치지 않는다)
+const CHANNELS = { invoke: new Set(['editor:draft', 'editor:get-document', 'editor:hwp-pdf', 'editor:save', 'editor:save-as']), on: new Set(['editor:close', 'editor:dirty', 'editor:i18n', 'editor:log', 'editor:panel', 'editor:reply']), send: new Set(['editor:command', 'editor:external-change', 'editor:request-close']) };
+// </ipc-channels>
+const need = (call, channel) => {
+  if (!CHANNELS[call].has(channel)) throw new Error('IPC 표에 없는 채널: ' + channel);
+  return channel;
+};
+const sendTo = (channel, ...args) => { need('on', channel); ipcRenderer.send(channel, ...args); };
+const sendSync = (channel) => { need('on', channel); return ipcRenderer.sendSync(channel); };
+
+// 응답은 { ok, value } / { ok:false, error, code } 그대로 넘기고, 화면 쪽에서 풀어 쓴다
+const invoke = (channel) => {
+  need('invoke', channel);
+  return (...args) => ipcRenderer.invoke(channel, ...args);
+};
+
 // 구독 → 해제 함수 반환
-const subscribe = (channel) => (callback) => {
-  if (typeof callback !== 'function') return () => {};
-  const listener = (_event, data) => { try { callback(data); } catch {} };
-  ipcRenderer.on(channel, listener);
-  return () => ipcRenderer.removeListener(channel, listener);
+const subscribe = (channel) => {
+  need('send', channel);
+  return (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, data) => { try { callback(data); } catch {} };
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  };
 };
 
 // main이 묻는 요청({ id, ... })에 콜백 결과로 답한다. 콜백이 없거나 실패하면 null
-const answer = (channel, pick) => (callback) => {
-  if (typeof callback !== 'function') return () => {};
-  const listener = async (_event, req) => {
-    let value = null;
-    try { value = await callback(pick(req)); } catch { value = null; }
-    ipcRenderer.send('editor:reply', { id: req?.id, value: typeof value === 'boolean' ? value : null });
+const answer = (channel, pick) => {
+  need('send', channel);
+  need('on', 'editor:reply');
+  return (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = async (_event, req) => {
+      let value = null;
+      try { value = await callback(pick(req)); } catch { value = null; }
+      sendTo('editor:reply', { id: req?.id, value: typeof value === 'boolean' ? value : null });
+    };
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
   };
-  ipcRenderer.on(channel, listener);
-  return () => ipcRenderer.removeListener(channel, listener);
 };
 
-// 응답은 { ok, value } / { ok:false, error, code } 그대로 넘기고, 화면 쪽에서 풀어 쓴다
-// 화면 언어와 번역 사전 (처음 그리기 전에)
-const i18n = (() => { try { return ipcRenderer.sendSync('editor:i18n') ?? null; } catch { return null; } })();
+// 화면 언어와 번역 사전 (처음 그리기 전에). 표 검사는 try 밖에서 먼저
+const I18N_CHANNEL = need('on', 'editor:i18n');
+const i18n = (() => { try { return sendSync(I18N_CHANNEL) ?? null; } catch { return null; } })();
+
+// 채널 호출은 모두 표를 거친다 (불러올 때 바로 검사)
+const rpc = {
+  getDocument: invoke('editor:get-document'),
+  save: invoke('editor:save'),
+  draft: invoke('editor:draft'),
+  saveAs: invoke('editor:save-as'),
+  hwpPdf: invoke('editor:hwp-pdf'),
+};
 
 contextBridge.exposeInMainWorld('officeKitEditor', {
   /** { lang: 'ko'|'en'|'ja', dict } | null */
   i18n,
   /** 열린 문서 → { name, ext, bytes, size, mtimeMs, readOnly, studioUrl, available, reason } */
-  getDocument: () => ipcRenderer.invoke('editor:get-document'),
+  getDocument: () => rpc.getDocument(),
   /** 원래 자리에 저장 (bytes는 원래 형식으로 내보낸 것) → { name, ext, size, mtimeMs, backup } */
-  save: (bytes, opts) => ipcRenderer.invoke('editor:save', toBytes(bytes), { reason: opts?.reason === 'auto' ? 'auto' : 'user' }),
+  save: (bytes, opts) => rpc.save(toBytes(bytes), { reason: opts?.reason === 'auto' ? 'auto' : 'user' }),
   /** 자동 저장 복구 사본 읽기 → { bytes, size, mtimeMs } · 버리기 */
-  readDraft: () => ipcRenderer.invoke('editor:draft', 'read'),
-  discardDraft: () => ipcRenderer.invoke('editor:draft', 'discard'),
+  readDraft: () => rpc.draft('read'),
+  discardDraft: () => rpc.draft('discard'),
   /** 지금 내용(hwp 바이트)을 PDF로: op 'print'(기본 PDF 앱으로 인쇄) | 'save'(PDF로 저장) */
-  pdf: (bytes, op) => ipcRenderer.invoke('editor:hwp-pdf', toBytes(bytes), op === 'save' ? 'save' : 'print'),
+  pdf: (bytes, op) => rpc.hwpPdf(toBytes(bytes), op === 'save' ? 'save' : 'print'),
   /** 다른 이름으로 저장 (ext: 'hwp' | 'hwpx', bytes는 그 형식) → { canceled } | { name, ext, size, mtimeMs } */
-  saveAs: (bytes, ext) => ipcRenderer.invoke('editor:save-as', toBytes(bytes), String(ext ?? '')),
+  saveAs: (bytes, ext) => rpc.saveAs(toBytes(bytes), String(ext ?? '')),
   /** 다른 곳에서 파일이 바뀜 → cb({ missing, size, mtimeMs }) */
   onExternalChange: subscribe('editor:external-change'),
   /** 창을 닫기 전에 main이 묻는다 → cb()가 '저장 안 한 변경이 있는지'(boolean)를 돌려준다 */
@@ -53,11 +86,11 @@ contextBridge.exposeInMainWorld('officeKitEditor', {
   /** main이 시키는 일 ('save' | 'save-as', 단축키·닫기 확인창) → cb(command)가 성공 여부(boolean)를 돌려준다 */
   onCommand: answer('editor:command', (req) => String(req?.command ?? '')),
   /** 저장 안 한 변경 여부 알리기 (창 제목·닫기 확인에 쓴다) */
-  reportDirty: (dirty) => ipcRenderer.send('editor:dirty', dirty === true),
+  reportDirty: (dirty) => sendTo('editor:dirty', dirty === true),
   /** 진단 로그 (main 콘솔) */
-  log: (message) => ipcRenderer.send('editor:log', String(message ?? '').slice(0, 2000)),
+  log: (message) => sendTo('editor:log', String(message ?? '').slice(0, 2000)),
   /** 창 닫기 (저장 안 한 변경이 있으면 main이 확인창을 띄운다) */
-  close: () => ipcRenderer.send('editor:close'),
+  close: () => sendTo('editor:close'),
   /** 'AI · 도구' 단추: 이 문서의 옆 창(AI 대화·버전·도구)을 연다 */
-  panel: () => ipcRenderer.send('editor:panel'),
+  panel: () => sendTo('editor:panel'),
 });

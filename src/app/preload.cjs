@@ -1,19 +1,38 @@
 // preload.cjs — 화면(renderer)에 window.officeKit 만 노출한다. (sandbox라 CommonJS)
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
-// 응답은 { ok, value } / { ok:false, error, code } 그대로 넘기고, 화면 쪽에서 풀어 쓴다
-const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 
-// 구독 → 해제 함수 반환
-const subscribe = (channel) => (callback) => {
-  if (typeof callback !== 'function') return () => {};
-  const listener = (_event, data) => callback(data);
-  ipcRenderer.on(channel, listener);
-  return () => ipcRenderer.removeListener(channel, listener);
+// 허용 채널 표 (src/app/ipc-channels.mjs). 표에 없는 채널은 불러올 때 바로 던진다
+// <ipc-channels> 자동 생성: node scripts/gen-ipc-preload.mjs (손으로 고치지 않는다)
+const CHANNELS = { invoke: new Set(['ai:cancel', 'ai:materials', 'ai:providers', 'ai:reset', 'ai:send', 'app:init', 'app:relaunch', 'assoc:openSettings', 'assoc:status', 'batch:cancel', 'batch:pick', 'batch:pickOut', 'batch:saveReport', 'batch:scan', 'batch:start', 'doc:close', 'doc:diff', 'doc:edit', 'doc:new', 'doc:newCheck', 'doc:newInfo', 'doc:open', 'doc:openInApp', 'doc:openInWord', 'doc:pick', 'doc:pickFolder', 'doc:preview', 'doc:print', 'doc:restore', 'doc:savePdf', 'doc:showInFolder', 'doc:versions', 'hancom:remove', 'hancom:setup', 'hancom:status', 'integrations:set', 'integrations:status', 'panel:close', 'panel:full', 'pdftools:pick', 'pdftools:run', 'pii:mask', 'pii:scan', 'recent:clear', 'recent:list', 'recent:pin', 'recent:remove', 'settings:get', 'settings:set', 'shell:openBackups', 'shell:openExternal', 'shell:showItem']), on: new Set(['i18n:get', 'smoke:ready']), send: new Set(['ai:event', 'batch:progress', 'doc:changed', 'doc:editor', 'doc:opened', 'menu', 'panel', 'toast']) };
+// </ipc-channels>
+const need = (call, channel) => {
+  if (!CHANNELS[call].has(channel)) throw new Error('IPC 표에 없는 채널: ' + channel);
+  return channel;
+};
+const sendTo = (channel, ...args) => { need('on', channel); ipcRenderer.send(channel, ...args); };
+const sendSync = (channel) => { need('on', channel); return ipcRenderer.sendSync(channel); };
+
+// 응답은 { ok, value } / { ok:false, error, code } 그대로 넘기고, 화면 쪽에서 풀어 쓴다
+const invoke = (channel) => {
+  need('invoke', channel);
+  return (...args) => ipcRenderer.invoke(channel, ...args);
 };
 
-// 화면 언어와 번역 사전 (처음 그리기 전에 — 한국어면 빈 사전)
-const i18n = (() => { try { return ipcRenderer.sendSync('i18n:get') ?? null; } catch { return null; } })();
+// 구독 → 해제 함수 반환
+const subscribe = (channel) => {
+  need('send', channel);
+  return (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  };
+};
+
+// 화면 언어와 번역 사전 (처음 그리기 전에 — 한국어면 빈 사전). 표 검사는 try 밖에서 먼저
+const I18N_CHANNEL = need('on', 'i18n:get');
+const i18n = (() => { try { return sendSync(I18N_CHANNEL) ?? null; } catch { return null; } })();
 
 contextBridge.exposeInMainWorld('officeKit', {
   init: invoke('app:init'),
@@ -111,10 +130,9 @@ contextBridge.exposeInMainWorld('officeKit', {
     run: invoke('pdftools:run'),
   },
 
-  // 기본 프로그램: 상태(형식마다 Office Kit로 여는지) · 등록 고치기 · Windows 기본 앱 설정 열기
+  // 기본 프로그램: 상태(형식마다 Office Kit로 여는지) · Windows 기본 앱 설정 열기
   assoc: {
     status: invoke('assoc:status'),
-    repair: invoke('assoc:repair'),
     openSettings: invoke('assoc:openSettings'),
   },
 
@@ -144,5 +162,5 @@ contextBridge.exposeInMainWorld('officeKit', {
   },
 
   /** 확인용 캡처 신호 (OFFICEKIT_SMOKE일 때만 main이 듣는다) */
-  smokeReady: (info) => ipcRenderer.send('smoke:ready', info && typeof info === 'object' ? { ok: !!info.ok, kind: String(info.kind ?? ''), error: String(info.error ?? ''), editable: info.editable === true } : {}),
+  smokeReady: (info) => sendTo('smoke:ready', info && typeof info === 'object' ? { ok: !!info.ok, kind: String(info.kind ?? ''), error: String(info.error ?? ''), editable: info.editable === true } : {}),
 });

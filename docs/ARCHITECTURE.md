@@ -280,7 +280,7 @@ downloadHancomSecurityModule(destDir) → 한컴 공식 배포본만 받음 (사
   `changed: true, before: <버전 파일>`을 붙여 보내고, 화면은 대화창에 '바뀐 내용 보기 · 이 대화 전으로 되돌리기'를 띄운다.
 - 문서를 열면 편집 창도(`settings.openAction`: `'edit'` 기본 | `'preview'`): 사용자가 연 것(탐색기·끌어놓기·최근 목록·열기 대화상자)이면
   `doc:opened`에 `autoEdit: true`를 붙이고, 화면이 '직접 편집'과 같은 길(`doc:edit`)로 편집 창을 띄운다. 새 문서는 자기 '바로 편집 창 열기'를 따른다.
-- 기본 프로그램(`assoc:status`·`assoc:repair`·`assoc:openSettings`): 설치된 앱에서만 등록을 고쳐 쓰고 Windows 기본 앱 설정을 연다.
+- 기본 프로그램(`assoc:status`·`assoc:openSettings`): 설치된 앱에서만 등록을 고쳐 쓰고 Windows 기본 앱 설정을 연다.
 - 도구: 개인정보(`pii:scan`·`pii:mask` — 원본 옆 `<이름>_가림.<확장자>`), 한글 → HWPX 일괄 변환(`batch:pick`·`batch:scan`·`batch:start`(진행은 `batch:progress` 이벤트)·`batch:cancel`·`batch:saveReport`).
 - 확인용: `OFFICEKIT_SMOKE=<png경로>` 환경 변수로 실행하면 인수로 받은 파일을 열고 화면을 캡처한 뒤 종료 (못 열면 알림을 찍고 실패로 끝남). 최근 파일 목록·Windows 최근 항목은 건드리지 않는다.
   `OFFICEKIT_SMOKE_AUTOEDIT=1`: '열면 바로 편집 창'이 실제로 창을 띄웠는지 `[smoke]` 줄의 `autoEditor`로. `OFFICEKIT_SMOKE_DIFF=<파일>`: 연 뒤 그 파일로 덮어쓰고 '바뀐 내용' 창을 찍는다.

@@ -62,8 +62,6 @@ const TABLE = {
   'hancom:setup': { call: 'invoke', kinds: HOME },
   'hancom:remove': { call: 'invoke', kinds: HOME },
   'assoc:status': { call: 'invoke', kinds: HOME },
-  // 지금 화면에서 부르는 곳이 없다 (기본 프로그램 설정은 홈 화면 몫이라 home으로 둔다)
-  'assoc:repair': { call: 'invoke', kinds: HOME },
   'assoc:openSettings': { call: 'invoke', kinds: HOME },
 
   // ── 주 창: 도구 (개인정보·일괄 변환·PDF) ──
@@ -148,4 +146,25 @@ export function channelsFor(kinds) {
   }
   for (const list of Object.values(out)) list.sort();
   return out;
+}
+
+/** preload 파일 → 그 파일이 노출하는 뷰 종류 (블록은 scripts/gen-ipc-preload.mjs가 채운다) */
+export const PRELOADS = Object.freeze({
+  'src/app/preload.cjs': Object.freeze(['home', 'panel']),
+  'src/app/editor/editor-preload.cjs': Object.freeze(['hwp']),
+  'src/app/office-editor/office-preload.cjs': Object.freeze(['office']),
+});
+
+export const BLOCK_START = '// <ipc-channels> 자동 생성: node scripts/gen-ipc-preload.mjs (손으로 고치지 않는다)';
+export const BLOCK_END = '// </ipc-channels>';
+
+/** preload 파일에 들어갈 채널 블록 (BLOCK_START ~ BLOCK_END, 가운데 한 줄). 줄 끝은 eol로 */
+export function preloadBlock(kinds, eol = '\n') {
+  const c = channelsFor(kinds);
+  const set = (list) => `new Set([${list.map((ch) => `'${ch}'`).join(', ')}])`;
+  return [
+    BLOCK_START,
+    `const CHANNELS = { invoke: ${set(c.invoke)}, on: ${set(c.on)}, send: ${set(c.send)} };`,
+    BLOCK_END,
+  ].join(eol);
 }
