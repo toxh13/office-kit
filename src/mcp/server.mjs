@@ -34,14 +34,44 @@ const log = (...a) => console.error('[office-kit]', ...a);
 /** 경로: 절대 경로 또는 서버 작업 폴더(process.cwd()) 기준 상대 경로 */
 const abs = (p) => resolve(process.cwd(), String(p).trim().replace(/^"(.*)"$/, '$1'));
 
+// OFFICEKIT_EDIT_FILES: 고칠(덮어쓸) 수 있는 기존 파일 (앱 안 AI 대화 = 열린 문서). 이 값이 있으면(빈 배열 "[]"이어도) 그 밖의
+// 기존 파일은 overwrite=true여도 덮어쓰지 않는다 — 이 서버가 이번에 새로 만든 파일만 다시 고칠 수 있다
+// (문서 속 지시문에 휘둘린 AI가 같은 폴더의 다른 문서를 백업 없이 망가뜨리지 못하게). "[]"은 재료만 넘긴 대화 = 기존 파일 모두 잠금
+const createdHere = new Set();
+const keyOfPath = (p) => (process.platform === 'win32' ? realOf(p).toLowerCase() : realOf(p));
+
+/**
+ * 앱 안 AI 대화에서 읽어도 되는 파일인지: OFFICEKIT_READ_ROOTS(폴더) 안, OFFICEKIT_READ_FILES(넘겨받은 파일) 중 하나,
+ * 또는 이번에 이 서버가 새로 만든 파일. 둘 다 없으면(제한 없음) 모두 읽는다
+ */
+function readable(full) {
+  const readRoots = rootsOf('OFFICEKIT_READ_ROOTS');
+  if (!readRoots.length && !rawListOf('OFFICEKIT_READ_FILES').length) return true;
+  return readRoots.some((r) => inside(realOf(full), r)) || isReadFile(full) || createdHere.has(keyOfPath(full));
+}
+// 네트워크 경로는 열어 보지 않고(SMB 연결이 나가지 않게) 글자로만 비교한다
+const uncKey = (p) => resolve(p).toLowerCase().replace(/\//g, '\\');
+/** OFFICEKIT_READ_FILES(넘겨받은 파일) 중 하나인지 */
+function isReadFile(full) {
+  return rawListOf('OFFICEKIT_READ_FILES').some((f) => (isUncLike(f) || isUncLike(full)
+    ? uncKey(f) === uncKey(full)
+    : keyOfPath(resolve(f)) === keyOfPath(full)));
+}
+
 function mustExist(p) {
   const full = abs(p);
   guardUnc(full);
   if (!existsSync(full)) throw new Error(`파일이 없습니다: ${full}`);
-  // 앱 안 AI 대화: 열린 문서의 폴더 밖은 읽지 않는다 (문서 속 지시문이 다른 곳의 파일을 읽어 옮기지 못하게)
-  const readRoots = rootsOf('OFFICEKIT_READ_ROOTS');
-  if (readRoots.length && !readRoots.some((r) => inside(realOf(full), r))) {
-    throw new Error(`이 대화에서는 다음 폴더 안의 파일만 읽을 수 있습니다: ${readRoots.join(', ')} (요청한 경로: ${full})`);
+  // 앱 안 AI 대화: 열린 문서의 폴더와 넘겨받은 파일 밖은 읽지 않는다 (문서 속 지시문이 다른 곳의 파일을 읽어 옮기지 못하게)
+  if (!readable(full)) {
+    const readRoots = rootsOf('OFFICEKIT_READ_ROOTS');
+    if (!rawListOf('OFFICEKIT_READ_FILES').length) {
+      throw new Error(`이 대화에서는 다음 폴더 안의 파일만 읽을 수 있습니다: ${readRoots.join(', ')} (요청한 경로: ${full})`);
+    }
+    if (readRoots.length) {
+      throw new Error(`이 대화에서는 넘겨받은 파일과 다음 폴더 안의 파일만 읽을 수 있습니다: ${readRoots.join(', ')} (요청한 경로: ${full})`);
+    }
+    throw new Error(`이 대화에서는 넘겨받은 파일만 읽을 수 있습니다 (요청한 경로: ${full})`);
   }
   return full;
 }
@@ -64,17 +94,20 @@ function realOf(p) {
 const inside = (p, root) => { const r = relative(root, p); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
 
 // 값: JSON 배열(앱이 넘김 — 폴더 이름에 ;가 있어도 갈라지지 않게) 또는 경로 구분자(;)로 이은 글
-function rootsOf(name, env = process.env) {
+function rawListOf(name, env = process.env) {
   const raw = String(env[name] ?? '').trim();
   if (!raw) return [];
   let list;
   if (raw.startsWith('[')) { try { list = JSON.parse(raw); } catch { list = []; } } else list = raw.split(delimiter);
-  return list.map((s) => String(s).trim()).filter(Boolean).map((r) => realOf(resolve(r)));
+  return list.map((s) => String(s).trim()).filter(Boolean);
 }
+// 실제 경로(정션·링크를 푼 것)로 바꾼 목록
+function rootsOf(name, env = process.env) { return rawListOf(name, env).map((r) => realOf(resolve(r))); }
 // 네트워크(UNC)·장치 경로: \\server\share, //server, \\?\, \\.\ — 열어 보기만 해도 이름 조회·SMB 연결(로그인 해시)이 나간다
 const isUncLike = (p) => /^[\\/]{2}/.test(String(p));
-/** 앱 안 AI 대화(제한 모드)인지: 앱이 READ/WRITE 루트를 넘긴다 */
-const restricted = () => rootsOf('OFFICEKIT_READ_ROOTS').length > 0 || rootsOf('OFFICEKIT_WRITE_ROOTS').length > 0;
+/** 앱 안 AI 대화(제한 모드)인지: 앱이 READ/WRITE 루트나 넘겨받은 파일(READ_FILES)을 넘긴다 */
+const restricted = () => rootsOf('OFFICEKIT_READ_ROOTS').length > 0 || rootsOf('OFFICEKIT_WRITE_ROOTS').length > 0
+  || rawListOf('OFFICEKIT_READ_FILES').length > 0;
 /** 제한 모드에서 네트워크·장치 경로 거절 — 파일 시스템을 건드리기 전에 (루트 자체가 네트워크 폴더면 그 안은 허용) */
 function guardUnc(full) {
   if (!isUncLike(full)) return;
@@ -82,6 +115,8 @@ function guardUnc(full) {
   if (!restricted()) return;
   const roots = [...rootsOf('OFFICEKIT_READ_ROOTS'), ...rootsOf('OFFICEKIT_WRITE_ROOTS')];
   const lower = full.toLowerCase().replace(/\//g, '\\');
+  // 넘겨받은 네트워크 파일은 그 파일 하나만 (같은 공유의 다른 파일은 거절). 경로를 열어 보지 않고 글자로만 비교한다
+  if (rawListOf('OFFICEKIT_READ_FILES').some((f) => isUncLike(f) && uncKey(f) === lower)) return;
   if (!roots.some((r) => isUncLike(r) && (lower === r.toLowerCase() || lower.startsWith(`${r.toLowerCase().replace(/[\\/]+$/, '')}\\`)))) {
     throw new Error(`이 대화에서는 네트워크 경로(\\\\…)를 쓸 수 없습니다: ${full}`);
   }
@@ -90,11 +125,8 @@ function guardUnc(full) {
 /** OFFICEKIT_WRITE_ROOTS: 저장을 허락한 폴더들 (경로 구분자로 여러 개). 앱 안 AI 대화가 문서 폴더만 쓰게 할 때 */
 export function writeRoots(env = process.env) { return rootsOf('OFFICEKIT_WRITE_ROOTS', env); }
 
-// OFFICEKIT_EDIT_FILES: 고칠(덮어쓸) 수 있는 기존 파일 (앱 안 AI 대화 = 열린 문서). 이 값이 있으면 그 밖의 기존 파일은
-// overwrite=true여도 덮어쓰지 않는다 — 이 서버가 이번에 새로 만든 파일만 다시 고칠 수 있다
-// (문서 속 지시문에 휘둘린 AI가 같은 폴더의 다른 문서를 백업 없이 망가뜨리지 못하게)
-const createdHere = new Set();
-const keyOfPath = (p) => (process.platform === 'win32' ? realOf(p).toLowerCase() : realOf(p));
+// 덮어쓰기 잠금: OFFICEKIT_EDIT_FILES 값이 있기만 하면(빈 배열 "[]"이어도) 켠다 (createdHere 위 설명 참고)
+const editLocked = () => String(process.env.OFFICEKIT_EDIT_FILES ?? '').trim() !== '';
 
 /**
  * 저장 경로 확인: 형식(확장자), 허락된 폴더, 이미 있는 다른 파일 덮어쓰기.
@@ -113,14 +145,14 @@ function outPath(output, { source, allow, overwrite = false }) {
   }
   const editable = rootsOf('OFFICEKIT_EDIT_FILES');
   const exists = existsSync(full);
-  if (editable.length && exists && !editable.some((f) => keyOfPath(f) === keyOfPath(full)) && !createdHere.has(keyOfPath(full))) {
+  if (editLocked() && exists && !editable.some((f) => keyOfPath(f) === keyOfPath(full)) && !createdHere.has(keyOfPath(full))) {
     throw new Error(`이 대화에서는 열린 문서와 이번에 새로 만든 파일만 고칠 수 있습니다. 다른 파일은 덮어쓰지 않으니 새 이름으로 저장하세요: ${full}`);
   }
   if (exists && !(source && samePath(full, source)) && !overwrite) {
     throw new Error(`이미 있는 파일입니다: ${full} (덮어쓰려면 overwrite=true)`);
   }
   mkdirSync(dirname(full), { recursive: true });
-  if (editable.length && !exists) createdHere.add(keyOfPath(full));
+  if (editLocked() && !exists) createdHere.add(keyOfPath(full));
   return full;
 }
 
@@ -527,9 +559,9 @@ export function createServer() {
     const inputs = paths.map(abs);
     for (const full of inputs) { guardUnc(full); if (existsSync(full)) mustExist(full); }
     const { items: found, truncated } = collectHwpFiles(inputs);
-    // 폴더 안의 링크·정션을 따라간 결과가 읽기 허용 폴더 밖이면 뺀다
-    const readRoots = rootsOf('OFFICEKIT_READ_ROOTS');
-    const items = readRoots.length ? found.filter((it) => readRoots.some((r) => inside(realOf(it.src), r))) : found;
+    // 폴더 안의 링크·정션을 따라간 결과가 읽기 허용 폴더·넘겨받은 파일 밖이면 뺀다
+    const limited = rootsOf('OFFICEKIT_READ_ROOTS').length > 0 || rawListOf('OFFICEKIT_READ_FILES').length > 0;
+    const items = limited ? found.filter((it) => readable(it.src)) : found;
     if (!items.length) throw new Error('바꿀 한글(.hwp) 파일을 찾지 못했어요');
     const dir = outDir ? abs(outDir) : undefined;
     // 이름이 겹쳐 번호를 붙인 것까지 최종 저장 경로를 모두 먼저 확인한다 (하나라도 안 되면 시작하지 않는다)

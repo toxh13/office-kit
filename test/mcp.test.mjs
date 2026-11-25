@@ -503,3 +503,112 @@ describe('HWPX 일괄 변환도 읽기 제한·네트워크 경로 차단을 지
     assert.equal(readFileSync(csv, 'utf8'), '원래 내용');
   });
 });
+
+describe('앱 안 AI 대화: 읽기 재료(OFFICEKIT_READ_FILES)', () => {
+  // 고칠 문서 폴더(edit)와 재료 폴더(mat) — 재료는 넘겨받은 그 파일만 읽고, 같은 폴더의 다른 파일은 읽지 않는다
+  const base = tmp.path('read-files');
+  const editDir = join(base, 'edit');
+  const matDir = join(base, 'mat');
+  const 공문 = join(editDir, '공문.docx');
+  const 옆 = join(editDir, '옆.docx');
+  const 명단 = join(matDir, '명단.docx');
+  const 비밀 = join(matDir, '비밀.docx');
+  const J = (v) => JSON.stringify(v);
+
+  before(async () => {
+    mkdirSync(editDir, { recursive: true });
+    mkdirSync(matDir, { recursive: true });
+    for (const f of [공문, 옆, 명단, 비밀]) await ok('office_create', { output: f, markdown: '# 제목\n\n본문', overwrite: true });
+  });
+
+  async function withEnv(env, fn) {
+    const { client: c } = await connect([SERVER], env);
+    const run = (name, args) => c.callTool({ name, arguments: args }, undefined, { timeout: 120_000 });
+    try { return await fn(run); } finally { await c.close(); }
+  }
+
+  test('READ_FILES: 다른 폴더의 재료 파일은 읽고, 그 폴더의 다른 파일은 거절', async () => {
+    await withEnv({ OFFICEKIT_WRITE_ROOTS: J([editDir]), OFFICEKIT_READ_ROOTS: J([editDir]), OFFICEKIT_EDIT_FILES: J([공문]), OFFICEKIT_READ_FILES: J([공문, 명단]) }, async (run) => {
+      let r = await run('office_read', { path: 명단 });
+      assert.ok(!r.isError, `재료 파일은 읽는다: ${textOf(r)}`);
+      r = await run('office_read', { path: 비밀 });
+      assert.equal(r.isError, true, '재료 폴더의 다른 파일은 읽지 않는다');
+      assert.match(textOf(r), /넘겨받은 파일/);
+      r = await run('office_read', { path: 옆 });
+      assert.ok(!r.isError, `고칠 문서 폴더는 그대로 읽는다: ${textOf(r)}`);
+    });
+  });
+
+  test('READ_FILES만 있어도 제한 모드다 (UNC 거절)', async () => {
+    await withEnv({ OFFICEKIT_READ_FILES: J([명단]) }, async (run) => {
+      let r = await run('office_read', { path: '\\\\host\\share\\x.docx' });
+      assert.equal(r.isError, true);
+      assert.match(textOf(r), /네트워크 경로/);
+      r = await run('office_read', { path: 비밀 });
+      assert.equal(r.isError, true);
+      assert.match(textOf(r), /넘겨받은 파일/);
+    });
+  });
+
+  test('READ_FILES: 네트워크 재료는 그 파일만 (같은 공유의 다른 파일은 거절)', async () => {
+    await withEnv({ OFFICEKIT_READ_FILES: J(['\\\\host\\share\\명단.docx']), OFFICEKIT_WRITE_ROOTS: J([editDir]) }, async (run) => {
+      const r = await run('office_read', { path: '\\\\host\\share\\다른.docx' });
+      assert.equal(r.isError, true);
+      assert.match(textOf(r), /네트워크 경로/);
+    });
+  });
+
+  test('인터넷 재료(READ_ROOTS 없음): 고칠 문서 폴더의 다른 파일 읽기 거절, 이번에 만든 파일은 읽는다', async () => {
+    const 새 = join(editDir, '새.docx');
+    await withEnv({ OFFICEKIT_WRITE_ROOTS: J([editDir]), OFFICEKIT_EDIT_FILES: J([공문]), OFFICEKIT_READ_FILES: J([공문, 명단]) }, async (run) => {
+      let r = await run('office_read', { path: 옆 });
+      assert.equal(r.isError, true, '고칠 문서 폴더의 다른 파일은 읽지 않는다');
+      assert.match(textOf(r), /넘겨받은 파일/);
+      r = await run('office_read', { path: 공문 });
+      assert.ok(!r.isError, textOf(r));
+      r = await run('office_create', { output: 새, markdown: '# 새 문서' });
+      assert.ok(!r.isError, textOf(r));
+      r = await run('office_read', { path: 새 });
+      assert.ok(!r.isError, `이번에 만든 파일은 읽는다: ${textOf(r)}`);
+    });
+  });
+
+  test('재료 전용: 출력 폴더에 새 파일만, 기존 파일·재료 덮어쓰기와 폴더 밖 쓰기는 거절', async () => {
+    const before = readFileSync(명단);
+    const 비밀before = readFileSync(비밀);
+    await withEnv({ OFFICEKIT_WRITE_ROOTS: J([matDir]), OFFICEKIT_EDIT_FILES: '[]', OFFICEKIT_READ_FILES: J([명단]) }, async (run) => {
+      let r = await run('office_create', { output: join(matDir, '결과.docx'), markdown: '# 결과\n\n본문' });
+      assert.ok(!r.isError, textOf(r));
+      r = await run('office_create', { output: 비밀, markdown: '# 덮어쓰기', overwrite: true });
+      assert.equal(r.isError, true, '기존 파일은 overwrite=true여도 덮어쓰지 않는다');
+      assert.match(textOf(r), /이번에 새로 만든 파일만/);
+      r = await run('office_replace', { path: 명단, replacements: [{ find: '본문', replace: 'x' }], engine: 'file' });
+      assert.equal(r.isError, true, '재료 파일은 고치지 않는다');
+      assert.deepEqual(readFileSync(명단), before);
+      assert.deepEqual(readFileSync(비밀), 비밀before);
+      r = await run('office_create', { output: join(editDir, '밖.docx'), markdown: '# 밖' });
+      assert.equal(r.isError, true);
+      assert.match(textOf(r), /다음 폴더 안에만 저장/);
+    });
+  });
+
+  test('hwpx_batch: READ_FILES만 있으면 폴더 입력·재료 아닌 파일은 거절, 재료 파일은 바꾼다', async () => {
+    const sample = join(ROOT, 'examples', '신청서.hwp');
+    const a = join(matDir, 'a.hwp');
+    const b = join(matDir, 'b.hwp');
+    copyFileSync(sample, a);
+    copyFileSync(sample, b);
+    await withEnv({ OFFICEKIT_WRITE_ROOTS: J([matDir]), OFFICEKIT_EDIT_FILES: '[]', OFFICEKIT_READ_FILES: J([a]) }, async (run) => {
+      let r = await run('office_hwpx_batch', { paths: [matDir] });
+      assert.equal(r.isError, true, '폴더 입력은 거절');
+      assert.match(textOf(r), /넘겨받은 파일/);
+      r = await run('office_hwpx_batch', { paths: [b] });
+      assert.equal(r.isError, true, '재료가 아닌 파일은 거절');
+      assert.match(textOf(r), /넘겨받은 파일/);
+      assert.ok(!existsSync(join(matDir, 'b.hwpx')));
+      r = await run('office_hwpx_batch', { paths: [a] });
+      assert.ok(!r.isError, textOf(r));
+      assert.ok(existsSync(join(matDir, 'a.hwpx')));
+    });
+  });
+});
