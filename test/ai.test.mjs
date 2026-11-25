@@ -650,9 +650,12 @@ test('처리되지 않은 거부(unhandled rejection) 없음', async () => {
   assert.deepEqual(unhandled, []);
 });
 
-test('aiMcpEnv는 세미콜론·괄호·공백 경로를 JSON 배열로 넘긴다', () => {
-  const doc = 'D:\회의;자료 (최종)\견적서;최종.docx';
+test('aiMcpEnv는 세미콜론·괄호·공백 경로를 JSON 배열로 넘긴다', { skip: process.platform !== 'win32' && 'Windows 경로' }, () => {
+  const doc = 'D:\\회의;자료 (최종)\\견적서;최종.docx';
   const env = aiMcpEnv(doc);
+  // 폴더 이름 안에 ;가 있다 (;로 자르면 D:\회의 와 자료 (최종) 으로 갈라진다)
+  assert.equal(dirname(doc), 'D:\\회의;자료 (최종)');
+  assert.ok(JSON.parse(env.OFFICEKIT_WRITE_ROOTS)[0].includes(';'));
   assert.deepEqual(JSON.parse(env.OFFICEKIT_WRITE_ROOTS), [dirname(doc)]);
   assert.deepEqual(JSON.parse(env.OFFICEKIT_READ_ROOTS), [dirname(doc)]);
   assert.deepEqual(JSON.parse(env.OFFICEKIT_EDIT_FILES), [doc]);

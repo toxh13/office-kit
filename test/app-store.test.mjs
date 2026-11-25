@@ -348,7 +348,9 @@ test('미리보기 폴더: 늦게 끝난 미리보기는 지금 문서의 미리
   const dir = tmp();
   const files = createPreviewFiles(dir);
   // A 미리보기를 시작했는데 오래 걸리는 사이 B를 열어 B 미리보기가 먼저 끝났다
-  const rawA = join(dir, '가.docx.1.pdf');
+  // A의 PDF는 미리보기 폴더 밖에 둔다: B를 놓을 때의 폴더 정리가 아니라 늦은 결과를 버리는 쪽이 지웠음을 확인하려고
+  const elsewhere = tmp();
+  const rawA = join(elsewhere, '가.docx.1.pdf');
   const rawB = join(dir, '나.docx.2.pdf');
   writeFileSync(rawA, '%PDF-A');
   writeFileSync(rawB, '%PDF-B');
@@ -362,4 +364,5 @@ test('미리보기 폴더: 늦게 끝난 미리보기는 지금 문서의 미리
   assert.equal(existsSync(rawA), false, '늦은 A의 PDF는 지운다');
   assert.equal(readdirSync(dir).length, 1, 'B 폴더 하나만 남는다');
   rmSync(dir, { recursive: true, force: true });
+  rmSync(elsewhere, { recursive: true, force: true });
 });

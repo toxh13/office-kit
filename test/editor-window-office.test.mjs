@@ -939,6 +939,23 @@ test('바꿔 연 문서: 다른 이름으로 저장 뒤 사용자 폴더를 지�
     assert.equal(existsSync(myDir), true);
   });
 
+  await t.test('임시 경로가 userData/converted 밖인 바꿔 연 문서는 닫아도 그 폴더를 지우지 않고 기록만 남긴다', async () => {
+    const outside = join(base, '밖 폴더');
+    mkdirSync(outside, { recursive: true });
+    const temp = join(outside, '옛 문서.docx');
+    await createBlankDocument(temp);
+    const keep = join(outside, '사용자 파일.txt');
+    put(keep, '지우면 안 됨');
+    await mgr.openEditor(temp, { convertedFrom: original });
+    const w = fake.windows.at(-1);
+    const l0 = logs.length;
+    w.close();
+    assert.ok(await until(() => w.isDestroyed()));
+    assert.equal(existsSync(temp), true, '임시 사본이라던 파일이 지워졌다');
+    assert.equal(existsSync(keep), true, '같은 폴더의 다른 파일이 지워졌다');
+    assert.ok(logs.slice(l0).some((l) => l.includes('지우지 않았습니다')), logs.slice(l0).join('\n'));
+  });
+
   // v0.1.13 버그 9: 바꿀 때마다 임시 경로가 달라 자동 저장 사본을 다시 찾지 못했다
   await t.test('바꿔 연 문서의 자동 저장 사본은 원본 경로로 찾는다', async () => {
     const first = await openConverted();
