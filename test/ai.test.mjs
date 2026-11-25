@@ -657,3 +657,12 @@ test('aiMcpEnv는 세미콜론·괄호·공백 경로를 JSON 배열로 넘긴�
   assert.deepEqual(JSON.parse(env.OFFICEKIT_READ_ROOTS), [dirname(doc)]);
   assert.deepEqual(JSON.parse(env.OFFICEKIT_EDIT_FILES), [doc]);
 });
+
+test('aiMcpEnv는 comPidDir가 있으면 OFFICEKIT_COM_PIDDIR로 넘긴다', () => {
+  const doc = 'C:\\Users\\user\\문서\\보고서.docx';
+  assert.equal(aiMcpEnv(doc).OFFICEKIT_COM_PIDDIR, undefined);
+  const pidDir = 'C:\\Users\\user\\AppData\\Roaming\\office-kit\\com-pids\\abc';
+  const env = aiMcpEnv(doc, { comPidDir: pidDir });
+  assert.equal(env.OFFICEKIT_COM_PIDDIR, pidDir);
+  assert.deepEqual(JSON.parse(env.OFFICEKIT_EDIT_FILES), [doc]);
+});

@@ -1,7 +1,7 @@
 // com.mjs — 설치된 한컴/Word/PowerPoint/Excel을 PowerShell COM으로 조작한다.
 // 네이티브 모듈 없이 동작하도록 요청·응답을 임시 JSON 파일로 주고받는다.
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -152,6 +152,34 @@ function removeOwnerFiles(request, since) {
   }
 }
 
+/**
+ * AI 대화의 MCP 서버가 띄운 Office를 대화가 멈춘 뒤 끝낸다 (MCP 서버째 끝내도 DCOM이 띄운 Office는 남는다).
+ * pidDir의 '<pid>.pid'마다 프로세스를 끝내고(이미 없으면 무시) 파일을 지운다 → 끝낸 개수
+ * 파일 내용(JSON)에 문서 경로가 있으면 그 Office가 남긴 '~$' 소유자 파일도 지운다.
+ */
+export function killRegisteredOffice(pidDir) {
+  let names = [];
+  try { names = readdirSync(pidDir); } catch { return 0; }
+  let killed = 0;
+  for (const name of names) {
+    const m = /^(\d+)\.pid$/.exec(name);
+    if (!m) continue;
+    const file = join(pidDir, name);
+    let info = null;
+    try { info = JSON.parse(readFileSync(file, 'utf8')); } catch { /* PID만 적힌 파일 */ }
+    const pid = Number(m[1]);
+    let ok = false;
+    if (pid > 0) { try { process.kill(pid); ok = true; } catch { /* 이미 끝남 */ } }
+    try { rmSync(file, { force: true }); } catch { /* 지우기 실패 */ }
+    if (!ok) continue;
+    killed++;
+    if (info && typeof info === 'object' && typeof info.app === 'string') {
+      removeOwnerFiles({ app: info.app, path: info.path, save: info.save }, Number(info.since) || 0);
+    }
+  }
+  return killed;
+}
+
 function runPs(request, timeoutMs, lockTimeoutMs) {
   const dir = mkdtempSync(join(tmpdir(), 'officekit-'));
   const reqPath = join(dir, 'req.json');
@@ -160,15 +188,33 @@ function runPs(request, timeoutMs, lockTimeoutMs) {
   const startedPath = join(dir, 'started.txt');
   writeFileSync(reqPath, JSON.stringify({ securityModule: HANCOM_SECURITY_MODULE, pidFile: pidPath, startedFile: startedPath, ...request }), 'utf8');
   const since = Date.now();
+  // AI 대화의 MCP 서버에서는 앱이 OFFICEKIT_COM_PIDDIR을 넘긴다: 띄운 Office의 PID를 거기에도 적어 두면
+  // 대화를 멈춰 이 프로세스가 끝나도 앱이 그 Office를 끝낼 수 있다 (정상으로 끝나면 지운다)
+  const pidDir = process.env.OFFICEKIT_COM_PIDDIR || '';
+  let registered = null;
   return new Promise((done, fail) => {
     let stopped = null; // 'timeout' | 'lock'
     let timer = null;
     let poll = null;
+    let pidPoll = null;
+    if (pidDir) {
+      pidPoll = setInterval(() => {
+        let pid = 0;
+        try { pid = Number(readFileSync(pidPath, 'utf8').trim()); } catch { return; /* 아직 안 띄움 */ }
+        if (!Number.isInteger(pid) || pid <= 0) return;
+        clearInterval(pidPoll);
+        try {
+          const f = join(pidDir, `${pid}.pid`);
+          writeFileSync(f, JSON.stringify({ pid, app: request.app, path: request.path, save: request.save, since }), 'utf8');
+          registered = f;
+        } catch { /* 폴더가 없으면 적지 않는다 */ }
+      }, POLL_MS);
+    }
     const child = execFile(POWERSHELL,
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT, reqPath, resPath],
       { windowsHide: true },
       (err, _stdout, stderr) => {
-        clearTimeout(timer); clearInterval(poll);
+        clearTimeout(timer); clearInterval(poll); clearInterval(pidPoll);
         try {
           let res = null;
           if (existsSync(resPath)) {
@@ -197,6 +243,7 @@ function runPs(request, timeoutMs, lockTimeoutMs) {
         } finally {
           // 끝낸 PowerPoint가 사본(ppt-src)을 잠깐 더 쥐고 있을 수 있다: 지우기 실패로 프로세스가 죽지 않게
           try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 임시 폴더 */ }
+          if (registered) { try { rmSync(registered, { force: true }); } catch { /* 지우기 실패 */ } }
         }
       });
     const stop = (why) => {

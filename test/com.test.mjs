@@ -3,10 +3,10 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import JSZip from 'jszip';
-import { josa, koreanComError, comCall, LOCK_WAIT_MS } from '../src/core/com.mjs';
+import { josa, koreanComError, comCall, LOCK_WAIT_MS, killRegisteredOffice } from '../src/core/com.mjs';
 import { convertDocument, createDocument, openInApp, readDocument, replaceText } from '../src/core/index.mjs';
 import { COM_TESTS, MANUSCRIPT, tempDir } from './helpers/fixtures.mjs';
 
@@ -280,5 +280,34 @@ describe('프로그램 엔진 — OFFICEKIT_COM_TESTS=1 일 때만', { skip: !CO
         assert.match((await readDocument(out, { engine: 'app' })).text, /수익/);
       });
     }
+  });
+});
+
+// ── AI 작업을 멈췄을 때 남은 Office 정리 ─────────────────────
+
+describe('killRegisteredOffice', () => {
+  test('적힌 PID의 프로세스를 끝내고 파일을 지운다 → 끝낸 개수', async () => {
+    const dir = tmp.path('com-pids-live');
+    mkdirSync(dir, { recursive: true });
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+    const exited = new Promise((r) => child.once('exit', () => r(true)));
+    try {
+      writeFileSync(join(dir, `${child.pid}.pid`), JSON.stringify({ pid: child.pid, app: 'word' }), 'utf8');
+      assert.equal(killRegisteredOffice(dir), 1);
+      assert.equal(await Promise.race([exited, sleep(10_000).then(() => false)]), true, '프로세스가 끝나지 않음');
+      assert.deepEqual(readdirSync(dir), []);
+    } finally {
+      try { child.kill(); } catch { /* 이미 끝남 */ }
+    }
+  });
+  test('이미 없는 PID는 0, 파일은 지운다 · 폴더가 없어도 0', () => {
+    const dir = tmp.path('com-pids-gone');
+    mkdirSync(dir, { recursive: true });
+    // 쓰이지 않는 큰 PID (Windows PID는 4의 배수)
+    writeFileSync(join(dir, '4194300.pid'), '4194300', 'utf8');
+    writeFileSync(join(dir, 'note.txt'), 'x', 'utf8');
+    assert.equal(killRegisteredOffice(dir), 0);
+    assert.deepEqual(readdirSync(dir), ['note.txt']);
+    assert.equal(killRegisteredOffice(tmp.path('없는-폴더')), 0);
   });
 });

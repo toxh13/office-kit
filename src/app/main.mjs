@@ -64,6 +64,8 @@ async function start() {
   const settings = createSettings(userData);
   const backups = createBackups(join(userData, 'backups'));
   const previewDir = join(userData, 'preview');
+  // AI 대화마다 MCP 서버가 띄운 Office의 PID를 적는 폴더 (userData/com-pids/<chatId>)
+  const COM_PIDS = 'com-pids';
   // 프로그램으로 만든 미리보기 PDF는 파일이 그대로면 다시 쓴다 (Excel·Word 변환은 5~25초)
   const previewCache = createPreviewCache(join(userData, 'preview-cache'));
 
@@ -376,7 +378,16 @@ async function start() {
       new Promise((r) => { timer = setTimeout(() => r(false), ms); }),
     ]);
     clearTimeout(timer);
+    // 대화(MCP 서버)를 끝내도 그 서버가 띄운 Office는 남아 문서를 쥐고 있다 → 되돌리기 전에 끝낸다
+    for (const c of running) killChatOffice(c.pidDir);
     return ended ? running.length : -1;
+  }
+
+  /** 대화의 MCP 서버가 띄우고 못 끝낸 Office를 끝낸다 (remove: 대화가 끝났으면 PID 폴더도 지운다) */
+  function killChatOffice(dir, remove = false) {
+    if (!dir) return;
+    try { com.killRegisteredOffice?.(dir); } catch (err) { console.error('[ai] 남은 Office 정리 실패:', err?.message ?? err); }
+    if (remove) { try { rmSync(dir, { recursive: true, force: true }); } catch { /* 지우기 실패 */ } }
   }
 
   // 지금 파일 내용의 해시 (크기·수정 시각이 같으면 다시 읽지 않는다)
@@ -1402,15 +1413,19 @@ async function start() {
     const base = await mcpSpec();
     // 앱 안 AI는 열린 문서의 폴더에만 저장할 수 있다 (MCP 서버가 OFFICEKIT_WRITE_ROOTS로 막는다)
     // 읽기는 그 폴더 안만, 고치기는 열린 문서와 AI가 새로 만든 파일만 (다른 파일은 덮어쓰지 않음)
-    const mcp = { ...base, env: { ...(base.env ?? {}), ...ai.aiMcpEnv(path) } };
     // 준비하는 사이 '원래대로'를 눌렀으면 시작하지 않는다 (되돌린 파일을 다시 고치지 않게)
     if (restoring.has(k) || (restoreGen.get(k) ?? 0) !== gen) throw fail('문서를 원래대로 되돌려서 이 요청은 보내지 않았습니다.');
+    const chatId = randomUUID();
+    // MCP 서버가 띄운 Office의 PID를 대화마다 따로 적는다 → 멈추거나 끝나면 남은 Office를 끝낸다
+    const pidDir = join(userData, COM_PIDS, chatId);
+    let comPidDir;
+    try { mkdirSync(pidDir, { recursive: true }); comPidDir = pidDir; } catch (err) { console.error('[ai:send] PID 폴더', err?.message ?? err); }
+    const mcp = { ...base, env: { ...(base.env ?? {}), ...ai.aiMcpEnv(path, { comPidDir }) } };
     // AI가 고치기 전 상태를 버전으로 남긴다 (대화 한 번마다. 내용이 같으면 있던 것을 다시 씀)
     // → 끝날 때 이 버전과 다르면 화면에 '바뀐 내용 보기 · 이 대화 전으로 되돌리기'를 띄운다
     let before = null;
     try { before = keepVersion(path, 'ai'); } catch (err) { console.error('[ai:send] 백업', err?.message ?? err); }
     const sess = sessions.get(k);
-    const chatId = randomUUID();
     // 모델은 AI마다 따로 (다른 AI의 모델 이름을 넘기면 모든 요청이 실패한다)
     const model = settings.get('models')?.[selected] || undefined;
     let errored = false;
@@ -1428,12 +1443,13 @@ async function start() {
       cwd: typeof ai.defaultWorkspace === 'function' ? ai.defaultWorkspace() : join(userData, 'ai'),
       filePath: path, mcp, model, onEvent, lang: i18n.lang,
     });
-    chats.set(chatId, { handle, path });
+    chats.set(chatId, { handle, path, pidDir });
     Promise.resolve(handle.done)
       .then((r) => { if (r?.sessionId) sessions.set(k, { provider: selected, sessionId: String(r.sessionId) }); })
       .catch((err) => { if (!errored) send('ai:event', { type: 'error', message: err?.message ?? String(err), chatId, path }); })
       .finally(() => {
         chats.delete(chatId);
+        killChatOffice(pidDir, true);
         let changed = false;
         try { changed = !!before?.hash && existsSync(path) && currentHash(path) !== before.hash; } catch {}
         send('ai:event', { type: 'end', chatId, path, ...(changed ? { changed: true, before: before.file } : {}) });
