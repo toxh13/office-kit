@@ -73,10 +73,17 @@
     }
     const addBtn = h('button', {
       class: 'tc-add', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': st.open ? 'true' : 'false',
-      onclick: () => { st.open = !st.open; if (st.open) onOpenMenu(); redraw(false); },
+      onclick: () => {
+        st.open = !st.open;
+        if (st.open) onOpenMenu();
+        redraw(false);
+        // 막 열었을 때만 목록으로 초점을 옮긴다 (다시 그릴 때는 옮기지 않는다)
+        if (st.open) root.querySelector('.tc-item:not([aria-disabled])')?.focus?.();
+      },
     }, '+ 열린 탭 추가');
     const row = [...chips, addBtn];
-    const nodes = [h('div', { class: 'tc-row' }, ...row)];
+    const onEsc = (e) => { if (st.open && e.key === 'Escape') { e.stopPropagation(); st.open = false; redraw(true); } };
+    const nodes = [h('div', { class: 'tc-row', onkeydown: onEsc }, ...row)];
     if (st.open) {
       const items = m.addable.length
         ? m.addable.map((a) => {
@@ -87,7 +94,7 @@
         : [h('div', { class: 'tc-empty', text: '추가할 수 있는 열린 문서가 없어요' })];
       nodes.push(h('div', {
         class: 'tc-menu', role: 'menu',
-        onkeydown: (e) => { if (e.key === 'Escape') { e.stopPropagation(); st.open = false; redraw(true); } },
+        onkeydown: onEsc,
       }, ...items));
     }
     if (m.narrowed) nodes.push(h('div', { class: 'tc-note', text: '인터넷 재료가 있어 읽기 범위를 좁혔습니다' }));
@@ -98,7 +105,13 @@
         h('button', { class: 'link-btn', type: 'button', onclick: () => onPickOutDir() }, '출력 폴더 바꾸기')));
     }
     root.replaceChildren(...nodes);
-    if (st.open) root.querySelector('.tc-item:not([aria-disabled])')?.focus?.();
+    // 목록이 열려 있는 동안 바깥을 누르면 닫는다 (초점은 옮기지 않는다)
+    if (!st.listening && typeof document !== 'undefined' && document.addEventListener) {
+      st.listening = true;
+      document.addEventListener('pointerdown', (e) => {
+        if (st.open && !root.contains(e.target)) { st.open = false; render(root, st.m, st.opts); }
+      });
+    }
   }
 
   globalThis.OKTargetChips = Object.freeze({ model, targetOf, render });
