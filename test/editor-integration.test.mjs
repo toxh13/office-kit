@@ -21,6 +21,7 @@ import { createSettings, OFFICE_STATE_MAX_KEYS } from '../src/app/store.mjs';
 import { draftPathFor } from '../src/app/editor-window.mjs';
 import { startEditorServer } from '../src/app/editor-server.mjs';
 import { NOTICE_FILES, aboutModel, legalSections } from '../src/app/office-editor/host.js';
+import { makePdf } from './helpers/fixtures.mjs';
 
 const readDocumentText = async (p) => (await readDocument(p, { engine: 'file' })).text ?? '';
 
@@ -215,11 +216,14 @@ function makeOfficeVendor(dir) {
 const FAKE_AI = `
 export async function detectProviders() { return [{ id: 'claude', name: 'Claude (시험)', available: true, version: '1', hint: '' }]; }
 export function defaultWorkspace() { return process.env.OFFICEKIT_TEST_WS; }
-export function aiMcpEnv() { return {}; }
-export function startChat({ prompt, onEvent }) {
+export function aiMcpEnv(target) { globalThis.__okTargets = [...(globalThis.__okTargets ?? []), target]; return {}; }
+export function startChat({ prompt, onEvent, filePath, materials, outDir }) {
   globalThis.__okPrompts = [...(globalThis.__okPrompts ?? []), prompt];
-  const done = Promise.resolve().then(() => { onEvent({ type: 'done', sessionId: 's1', text: '네' }); return { sessionId: 's1', text: '네' }; });
-  return { cancel() {}, done };
+  globalThis.__okChats = [...(globalThis.__okChats ?? []), { prompt, filePath, materials, outDir }];
+  // '[hold]'가 든 요청은 시험이 __okRelease()를 부를 때까지 끝나지 않는다 (진행 중인 대화 흉내)
+  const hold = String(prompt).includes('[hold]') ? new Promise((r) => { globalThis.__okRelease = r; }) : Promise.resolve();
+  const done = hold.then(() => { onEvent({ type: 'done', sessionId: 's1', text: '네' }); return { sessionId: 's1', text: '네' }; });
+  return { cancel() { globalThis.__okRelease?.(); }, done };
 }
 `;
 // 글꼴 모듈 대신 (이 PC 글꼴을 읽지 않는다): 묶음 글꼴로
@@ -793,6 +797,119 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal((await call('ai:send', { prompt: '요약해줘' })).ok, true, '저장한 뒤에는 보낸다');
     assert.ok(await until(() => lastSent('ai:event', (d) => d.type === 'end' && d.path === docxPath)));
   });
+
+  // ── AI 대상 (고칠 문서 · 재료) ── 재료 = 편집 창으로 열려 있는 메모.docx, 고칠 문서 = 보고서.hwpx
+  const 재료 = docxPath;
+  const endOf = (chatId) => until(() => lastSent('ai:event', (d) => d.type === 'end' && d.chatId === chatId));
+  await t.test('AI 대상: 대상 없이 보내면 지금 문서가 고칠 문서 (지금과 같음)', async () => {
+    assert.equal((await call('doc:open', docPath)).ok, true);
+    const r = await call('ai:send', { prompt: '요약해줘', editorOk: true });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.value.newChat, false);
+    const tg = globalThis.__okTargets.at(-1);
+    assert.equal(tg.edit, docPath);
+    assert.deepEqual(tg.read, []);
+    assert.equal(tg.zone3, false);
+    const c = globalThis.__okChats.at(-1);
+    assert.equal(c.filePath, docPath);
+    assert.deepEqual(c.materials, []);
+    assert.ok(await endOf(r.value.chatId));
+  });
+  await t.test('AI 대상: 재료는 READ 목록과 데이터 줄 재료로, 재료가 고칠 문서와 같으면 뺀다', async () => {
+    const r = await call('ai:send', { prompt: '참고해서 고쳐줘', editorOk: true, target: { edit: docPath, read: [재료, docPath.toUpperCase()] } });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(globalThis.__okTargets.at(-1).read, [재료]);
+    assert.deepEqual(globalThis.__okChats.at(-1).materials, [재료]);
+    assert.ok(await endOf(r.value.chatId));
+  });
+  await t.test('AI 대상: 지금 문서가 바뀌었으면 TARGET_CHANGED, 열리지 않은 파일은 MATERIAL_NOT_OPEN, 11개는 거절', async () => {
+    let r = await call('ai:send', { prompt: '고쳐줘', editorOk: true, target: { edit: 재료, read: [] } });
+    assert.equal(r.code, 'TARGET_CHANGED');
+    r = await call('ai:send', { prompt: '고쳐줘', editorOk: true, target: { edit: docPath, read: [csvPath] } });
+    assert.equal(r.code, 'MATERIAL_NOT_OPEN');
+    assert.match(r.error, /목록\.csv/);
+    const many = join(base, '재료 여럿');
+    mkdirSync(many, { recursive: true });
+    const files = Array.from({ length: 11 }, (_, i) => { const p = join(many, `${i + 1}.csv`); writeFileSync(p, 'a,b\n'); return p; });
+    r = await call('ai:send', { prompt: '고쳐줘', editorOk: true, target: { edit: docPath, read: files } });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /10개/);
+  });
+  await t.test('AI 대상: AI가 고치는 중인 문서는 다른 대화의 재료가 될 수 없다 (D14)', async () => {
+    const held = await call('ai:send', { prompt: '[hold] 고쳐줘', editorOk: true });
+    assert.equal(held.ok, true, held.error);
+    try {
+      let r = await call('ai:send', { prompt: '또 고쳐줘', editorOk: true });
+      assert.equal(r.code, 'AI_BUSY');
+      assert.equal((await call('doc:open', 재료)).ok, true);
+      r = await call('ai:send', { prompt: '고쳐줘', target: { edit: 재료, read: [docPath] } });
+      assert.equal(r.code, 'MATERIAL_BUSY');
+      assert.match(r.error, /보고서\.hwpx/);
+      if (process.platform === 'win32') {
+        r = await call('ai:send', { prompt: '고쳐줘', target: { edit: 재료, read: [docPath.toLowerCase()] } });
+        assert.equal(r.code, 'MATERIAL_BUSY', '대소문자만 다른 경로도 같은 문서');
+      }
+    } finally {
+      globalThis.__okRelease();
+    }
+    assert.ok(await endOf(held.value.chatId));
+    const r = await call('ai:send', { prompt: '고쳐줘', target: { edit: 재료, read: [docPath] } });
+    assert.equal(r.ok, true, r.error);
+    assert.ok(await endOf(r.value.chatId));
+    assert.equal((await call('doc:open', docPath)).ok, true);
+  });
+  await t.test('AI 대상: 재료 전용 — 지금 문서가 PDF면 고칠 문서 없음, 버전 저장 없음, 출력 폴더 기본=첫 재료 폴더', async () => {
+    const pdf = join(docs, '자료.pdf');
+    writeFileSync(pdf, makePdf(1));
+    try {
+      assert.equal((await call('doc:open', pdf)).ok, true);
+      const n0 = (await call('doc:versions')).value.versions.length;
+      let r = await call('ai:send', { prompt: '요약해줘' });
+      assert.equal(r.ok, true, r.error);
+      assert.deepEqual(globalThis.__okTargets.at(-1), { edit: null, read: [pdf], outDir: docs, zone3: false });
+      const c = globalThis.__okChats.at(-1);
+      assert.equal(c.filePath, null);
+      assert.equal(c.outDir, docs);
+      const end = await endOf(r.value.chatId);
+      assert.ok(end);
+      assert.equal(end.changed, undefined, '고칠 문서가 없으면 바뀜 알림도 없다');
+      assert.equal((await call('doc:versions')).value.versions.length, n0, 'AI 전 버전을 남기지 않는다');
+      r = await call('ai:send', { prompt: '요약해줘', outDir: join(base, '없는 폴더') });
+      assert.equal(r.code, 'BAD_OUT_DIR');
+      r = await call('ai:send', { prompt: '요약해줘', outDir: base });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(globalThis.__okTargets.at(-1).outDir, base);
+      assert.equal(globalThis.__okChats.at(-1).outDir, base);
+      assert.ok(await endOf(r.value.chatId));
+    } finally {
+      assert.equal((await call('doc:open', docPath)).ok, true);
+      rmSync(pdf, { force: true });
+    }
+  });
+  await t.test('AI 대상: 인터넷 재료 → zone3:true, 빼고 보내면 이어 하기 세션을 버린다', { skip: process.platform !== 'win32' && 'Zone.Identifier' }, async () => {
+    const mark = `${재료}:Zone.Identifier`;
+    writeFileSync(mark, '[ZoneTransfer]\r\nZoneId=3\r\n');
+    try {
+      let r = await call('ai:send', { prompt: '참고해서 고쳐줘', editorOk: true, target: { edit: docPath, read: [재료] } });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(globalThis.__okTargets.at(-1).zone3, true);
+      assert.equal(r.value.newChat, false);
+      assert.ok(await endOf(r.value.chatId));
+      r = await call('ai:send', { prompt: '고쳐줘', editorOk: true, target: { edit: docPath, read: [] } });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(r.value.newChat, true, '인터넷 재료를 본 대화는 이어 하지 않는다');
+      assert.equal(globalThis.__okTargets.at(-1).zone3, false);
+      assert.ok(await endOf(r.value.chatId));
+      r = await call('ai:send', { prompt: '고쳐줘', editorOk: true, target: { edit: docPath, read: [] } });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(r.value.newChat, false);
+      assert.ok(await endOf(r.value.chatId));
+    } finally {
+      rmSync(mark, { force: true });
+    }
+  });
+  // 아래 시험은 메모.docx가 지금 문서인 상태에서 이어진다
+  assert.equal((await call('doc:open', docxPath)).ok, true);
 
   await t.test('Office 닫기: 저장 안 함 → 창 닫힘, 파일 그대로, 복구 사본 지움 (정상 닫기)', async () => {
     const r = await officeCall('editor:save', new Uint8Array(editedDocx), { reason: 'auto' });

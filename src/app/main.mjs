@@ -1378,8 +1378,17 @@ async function start() {
 
   const key = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
   const sessions = new Map();  // 문서 경로 → { provider, sessionId }
-  const chats = new Map();     // chatId → { handle, path }
+  // 세션 키 → 그 대화에 마지막으로 넘긴 인터넷 재료(Zone 3)의 key 목록 (빠지면 이어 하지 않고 새 대화)
+  const sessionZone3 = new Map();
+  // chatId → { handle, path: 화면 대화 칸 키(지금 문서), edit: 고칠 문서 | null, read: 재료 목록, pidDir }
+  const chats = new Map();
+  const MAX_MATERIALS = 10;
   let providerCache = null;
+
+  /** AI가 고칠 수 있는 문서인가: PDF는 안 되고, 인터넷에서 받은 파일(Zone 3)은 한글 문서만 */
+  const canEdit = (p) => extOf(p) !== 'pdf' && (core.isHwp(extOf(p)) || !core.isFromInternet(p));
+  /** 진행 중인 대화들이 고치는 문서의 key */
+  const runningEdits = () => new Set([...chats.values()].filter((c) => c.edit).map((c) => key(c.edit)));
 
   async function providers({ refresh } = {}) {
     const ai = await loadAi();
@@ -1397,41 +1406,97 @@ async function start() {
     return { providers: list, selected, preferred: want };
   }
 
-  async function sendChat({ prompt, editorOk } = {}) {
+  async function sendChat({ prompt, editorOk, target, outDir } = {}) {
     if (typeof prompt !== 'string' || !prompt.trim()) throw fail('보낼 내용을 입력하세요');
     if (prompt.length > 20_000) throw fail('메시지가 너무 깁니다 (2만 자 이하)');
     const doc = needDoc();
-    const path = doc.path;
-    const k = key(path);
+    // uiPath = 화면 대화 칸 키(지금 문서). 이어 하기 세션·되돌리기도 이 키를 쓴다 (재료 전용이어도)
+    const uiPath = doc.path;
+    const k = key(uiPath);
     if (restoring.has(k)) throw fail('문서를 원래대로 되돌리는 중입니다. 끝난 뒤 다시 보내 주세요.');
+    // 대화 대상 확정: 고칠 문서는 지금 문서(고칠 수 없는 문서면 없음), 재료는 화면이 넘긴 목록
+    const edit = canEdit(uiPath) ? uiPath : null;
+    const want = target && typeof target === 'object' ? target : {};
+    // 화면이 보던 고칠 문서와 지금 문서가 다르면 (보내는 사이 문서가 바뀜) 엉뚱한 문서를 고치지 않게 거절
+    if (typeof want.edit === 'string' && key(want.edit) !== key(edit ?? '')) throw fail('대화 대상이 바뀌었어요. 다시 보내 주세요.', 'TARGET_CHANGED');
+    const seen = new Set(edit ? [key(edit)] : []);
+    let read = [];
+    for (const p of Array.isArray(want.read) ? want.read : []) {
+      const f = existingFile(p, OPENABLE_EXTS);
+      if (seen.has(key(f))) continue;
+      seen.add(key(f));
+      read.push(f);
+    }
+    // 고칠 문서가 없으면 지금 문서가 맨 앞 재료
+    if (!edit) read = [uiPath, ...read.filter((p) => key(p) !== k)];
+    if (read.length > MAX_MATERIALS) throw fail('재료는 10개까지 넘길 수 있어요');
+    // AI가 고치는 중인 문서는 또 고치지도, 다른 대화의 재료로 넘기지도 않는다 (D14 · 열림 검사보다 먼저)
+    const checkBusy = () => {
+      const busy = runningEdits();
+      if (edit && busy.has(key(edit))) throw fail('AI가 이 문서를 이미 고치는 중이에요. 끝난 뒤 다시 보내 주세요.', 'AI_BUSY');
+      const p = read.find((m) => busy.has(key(m)));
+      if (p) throw fail(`‘${basename(p)}’은(는) AI가 고치는 중이라 재료로 넘길 수 없어요. 그 대화가 끝난 뒤 보내 주세요.`, 'MATERIAL_BUSY');
+    };
+    checkBusy();
+    // 재료는 지금 문서이거나 편집 창으로 열려 있는 문서만
+    const open = new Set((editors?.list() ?? []).map(key));
+    for (const p of read) {
+      if (key(p) !== k && !open.has(key(p))) throw fail(`열린 문서만 재료로 넘길 수 있어요: ${basename(p)}`, 'MATERIAL_NOT_OPEN');
+    }
     // 편집 창에 저장 안 한 내용이 있으면 먼저 묻는다: AI는 저장된 파일을 고치므로 편집 창 내용과 엇갈린다
     // (화면이 '그대로 보내기'를 고르면 editorOk:true로 다시 보낸다)
-    if (editorOk !== true && editors?.isDirty(path)) {
+    if (edit && editorOk !== true && editors?.isDirty(edit)) {
       throw fail('편집 창에 저장하지 않은 내용이 있어요. 편집 창에서 먼저 저장하거나, 그대로 보내기를 골라 주세요.', 'EDITOR_DIRTY');
     }
+    // 재료 전용이면 새 파일을 만들 출력 폴더 (주지 않으면 첫 재료의 폴더)
+    let out = null;
+    if (!edit) {
+      if (outDir != null) {
+        if (typeof outDir !== 'string' || outDir.length > 4096 || !isAbsolute(outDir) || !isDir(outDir)) throw fail('출력 폴더를 찾을 수 없어요', 'BAD_OUT_DIR');
+        out = resolve(outDir);
+      } else {
+        out = dirname(read[0]);
+      }
+    }
+    const zone3Keys = read.filter((p) => core.isFromInternet(p)).map(key);
+    const zone3 = zone3Keys.length > 0;
     const gen = restoreGen.get(k) ?? 0;
     const ai = await loadAi();
     const { providers: list, selected } = await providers();
     if (!selected) throw fail('사용할 수 있는 AI가 없습니다. Claude Code나 Codex를 설치하고 로그인하세요.', 'NO_PROVIDER');
     const base = await mcpSpec();
-    // 앱 안 AI는 열린 문서의 폴더에만 저장할 수 있다 (MCP 서버가 OFFICEKIT_WRITE_ROOTS로 막는다)
-    // 읽기는 그 폴더 안만, 고치기는 열린 문서와 AI가 새로 만든 파일만 (다른 파일은 덮어쓰지 않음)
     // 준비하는 사이 '원래대로'를 눌렀으면 시작하지 않는다 (되돌린 파일을 다시 고치지 않게)
     if (restoring.has(k) || (restoreGen.get(k) ?? 0) !== gen) throw fail('문서를 원래대로 되돌려서 이 요청은 보내지 않았습니다.');
+    // 준비하는 사이 다른 대화가 같은 문서를 고치기 시작했을 수 있다
+    checkBusy();
+    // 지난 대화에 넘긴 인터넷 재료가 이번에 빠졌으면 이어 하지 않는다 (그 내용이 대화 기록에 남아 있으므로 새 대화)
+    let newChat = false;
+    const keep = new Set(read.map(key));
+    if ((sessionZone3.get(k) ?? []).some((z) => !keep.has(z)) && sessions.has(k)) {
+      sessions.delete(k);
+      newChat = true;
+    }
     const chatId = randomUUID();
     // MCP 서버가 띄운 Office의 PID를 대화마다 따로 적는다 → 멈추거나 끝나면 남은 Office를 끝낸다
     const pidDir = join(userData, COM_PIDS, chatId);
     let comPidDir;
     try { mkdirSync(pidDir, { recursive: true }); comPidDir = pidDir; } catch (err) { console.error('[ai:send] PID 폴더', err?.message ?? err); }
-    const mcp = { ...base, env: { ...(base.env ?? {}), ...ai.aiMcpEnv({ edit: path }, { comPidDir }) } };
+    // 앱 안 AI의 권한 (MCP 서버가 OFFICEKIT_* 환경 변수로 막는다)
+    //   고칠 문서가 있으면: 읽기는 ① 문서 폴더 ② 재료 파일 ③ AI가 새로 만든 파일, 저장은 문서 폴더에,
+    //     고치기는 그 문서와 새로 만든 파일만 (다른 파일은 덮어쓰지 않음)
+    //   인터넷 재료가 있으면 ① 대신 문서 파일 하나만 읽는다 (폴더 통째 읽기 없음)
+    //   재료 전용(고칠 문서 없음)이면 재료 파일만 읽고, 출력 폴더에 새 파일만 만든다
+    const target2 = edit ? { edit, read, zone3 } : { edit: null, read, outDir: out, zone3 };
+    const mcp = { ...base, env: { ...(base.env ?? {}), ...ai.aiMcpEnv(target2, { comPidDir }) } };
     // AI가 고치기 전 상태를 버전으로 남긴다 (대화 한 번마다. 내용이 같으면 있던 것을 다시 씀)
-    // → 끝날 때 이 버전과 다르면 화면에 '바뀐 내용 보기 · 이 대화 전으로 되돌리기'를 띄운다
+    // → 끝날 때 이 버전과 다르면 화면에 '바뀐 내용 보기 · 이 대화 전으로 되돌리기'를 띄운다. 고칠 문서가 없으면 남기지 않는다
     let before = null;
-    try { before = keepVersion(path, 'ai'); } catch (err) { console.error('[ai:send] 백업', err?.message ?? err); }
+    if (edit) { try { before = keepVersion(edit, 'ai'); } catch (err) { console.error('[ai:send] 백업', err?.message ?? err); } }
     const sess = sessions.get(k);
     // 모델은 AI마다 따로 (다른 AI의 모델 이름을 넘기면 모든 요청이 실패한다)
     const model = settings.get('models')?.[selected] || undefined;
     let errored = false;
+    const path = uiPath;
     const onEvent = (ev) => {
       if (!ev || typeof ev !== 'object') return;
       if (ev.type === 'done' && ev.sessionId) sessions.set(k, { provider: selected, sessionId: String(ev.sessionId) });
@@ -1446,25 +1511,27 @@ async function start() {
         provider: selected, prompt, sessionId: sess?.provider === selected ? sess.sessionId : undefined,
         // 대화 기록은 같은 작업 폴더에서만 이어지므로 ai.mjs의 고정 폴더를 쓴다
         cwd: typeof ai.defaultWorkspace === 'function' ? ai.defaultWorkspace() : join(userData, 'ai'),
-        filePath: path, mcp, model, onEvent, lang: i18n.lang,
+        filePath: edit, materials: read, outDir: edit ? null : out, mcp, model, onEvent, lang: i18n.lang,
       });
     } catch (err) {
       // 대화를 시작하지 못했으면 만든 PID 폴더도 남기지 않는다
       if (comPidDir) { try { rmSync(comPidDir, { recursive: true, force: true }); } catch { /* 지우기 실패 */ } }
       throw err;
     }
-    chats.set(chatId, { handle, path, pidDir });
+    sessionZone3.set(k, zone3Keys);
+    chats.set(chatId, { handle, path, edit, read, pidDir });
     Promise.resolve(handle.done)
       .then((r) => { if (r?.sessionId) sessions.set(k, { provider: selected, sessionId: String(r.sessionId) }); })
       .catch((err) => { if (!errored) send('ai:event', { type: 'error', message: err?.message ?? String(err), chatId, path }); })
       .finally(() => {
         chats.delete(chatId);
         killChatOffice(pidDir, true);
+        // 바뀜 확인은 고친 문서로 (재료 전용이면 before가 없어 바뀜 알림도 없다)
         let changed = false;
-        try { changed = !!before?.hash && existsSync(path) && currentHash(path) !== before.hash; } catch {}
+        try { changed = !!before?.hash && existsSync(edit) && currentHash(edit) !== before.hash; } catch {}
         send('ai:event', { type: 'end', chatId, path, ...(changed ? { changed: true, before: before.file } : {}) });
       });
-    return { chatId, provider: list.find((p) => p.id === selected)?.name ?? selected };
+    return { chatId, provider: list.find((p) => p.id === selected)?.name ?? selected, newChat };
   }
 
   function cancelChat(chatId) {
