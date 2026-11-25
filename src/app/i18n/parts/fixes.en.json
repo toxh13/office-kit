@@ -36,5 +36,7 @@
  "AI가 이 문서를 이미 고치는 중이에요. 끝난 뒤 다시 보내 주세요.": "The AI is already editing this document. Please send again after it finishes.",
  "‘{0}’은(는) AI가 고치는 중이라 재료로 넘길 수 없어요. 그 대화가 끝난 뒤 보내 주세요.": "‘{0}’ is being edited by the AI, so it can’t be passed as material. Please send after that chat finishes.",
  "열린 문서만 재료로 넘길 수 있어요: {0}": "Only open documents can be passed as material: {0}",
- "출력 폴더를 찾을 수 없어요": "The output folder could not be found"
+ "출력 폴더를 찾을 수 없어요": "The output folder could not be found",
+ "{0}에 저장 안 한 편집이 있어 저장된 내용을 읽습니다.": "{0} has unsaved edits, so the saved content will be read.",
+ "‘{0}’을(를) 저장하지 못했어요. 편집 창에서 저장한 뒤 다시 보내 주세요.": "Couldn’t save ‘{0}’. Please save it in the editor window and send again."
 }

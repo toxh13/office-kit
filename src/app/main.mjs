@@ -1406,7 +1406,37 @@ async function start() {
     return { providers: list, selected, preferred: want };
   }
 
-  async function sendChat({ prompt, editorOk, target, outDir } = {}) {
+  /** 편집 창에 저장 안 한 내용이 있는가: 편집 창이 알린 상태이거나, 열린 창의 자동 저장 사본이 원본 파일보다 새것 (OV6) */
+  const unsaved = (p) => {
+    if (editors?.isDirty(p)) return true;
+    if (!editors?.isOpen(p)) return false;
+    try {
+      const d = editors.draftPath?.(p);
+      return !!d && existsSync(d) && statSync(d).mtimeMs > statSync(p).mtimeMs;
+    } catch { return false; }
+  };
+
+  /** AI 재료 후보: 고칠 문서(지금 문서)와 재료로 넘길 수 있는 열린 문서들 */
+  function listMaterials() {
+    if (!current) return { edit: null, open: [] };
+    const busy = runningEdits();
+    const cur = key(current.path);
+    const item = (p) => ({
+      path: p, name: basename(p), kind: kindOf(p), zone3: core.isFromInternet(p),
+      busy: busy.has(key(p)), dirty: unsaved(p), current: key(p) === cur,
+    });
+    const edit = canEdit(current.path) ? item(current.path) : null;
+    const seen = new Set(edit ? [cur] : []);
+    const open = [];
+    for (const p of [current.path, ...(editors?.list() ?? [])]) {
+      if (seen.has(key(p))) continue;
+      seen.add(key(p));
+      open.push(item(p));
+    }
+    return { edit, open };
+  }
+
+  async function sendChat({ prompt, editorOk, target, outDir, materialsOk, saveMaterials } = {}) {
     if (typeof prompt !== 'string' || !prompt.trim()) throw fail('보낼 내용을 입력하세요');
     if (prompt.length > 20_000) throw fail('메시지가 너무 깁니다 (2만 자 이하)');
     const doc = needDoc();
@@ -1442,6 +1472,18 @@ async function start() {
     const open = new Set((editors?.list() ?? []).map(key));
     for (const p of read) {
       if (key(p) !== k && !open.has(key(p))) throw fail(`열린 문서만 재료로 넘길 수 있어요: ${basename(p)}`, 'MATERIAL_NOT_OPEN');
+    }
+    // 저장 안 한 재료: AI는 저장된 파일을 읽으므로 편집 창 내용과 엇갈린다 (화면이 '그대로 보내기'면 materialsOk, '저장하고 보내기'면 saveMaterials)
+    const dirty = read.filter(unsaved);
+    if (dirty.length && materialsOk !== true) {
+      if (saveMaterials === true) {
+        for (const p of dirty) {
+          if ((await editors.save(p)) !== true) throw fail(`‘${basename(p)}’을(를) 저장하지 못했어요. 편집 창에서 저장한 뒤 다시 보내 주세요.`, 'MATERIAL_SAVE_FAILED');
+        }
+      } else {
+        const names = dirty.map((p) => `‘${basename(p)}’`).join(', ');
+        throw fail(`${names}에 저장 안 한 편집이 있어 저장된 내용을 읽습니다.`, 'MATERIAL_DIRTY');
+      }
     }
     // 편집 창에 저장 안 한 내용이 있으면 먼저 묻는다: AI는 저장된 파일을 고치므로 편집 창 내용과 엇갈린다
     // (화면이 '그대로 보내기'를 고르면 editorOk:true로 다시 보낸다)
@@ -1824,6 +1866,7 @@ async function start() {
   handle('ai:providers', (opts) => providers({ refresh: opts?.refresh === true }));
   handle('ai:send', (args) => sendChat(args));
   handle('ai:cancel', (chatId) => cancelChat(chatId));
+  handle('ai:materials', () => listMaterials());
   handle('ai:reset', () => { if (current) sessions.delete(key(current.path)); return null; });
 
   handle('integrations:status', () => integrationStatus());

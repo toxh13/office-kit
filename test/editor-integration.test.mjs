@@ -908,6 +908,94 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
       rmSync(mark, { force: true });
     }
   });
+  await t.test('AI 재료: 저장 안 한 재료 → MATERIAL_DIRTY, 그대로 보내기는 통과, 저장하고 보내기는 저장 실패를 알린다', async () => {
+    assert.equal((await call('doc:open', docPath)).ok, true);
+    const win = officeWin; // 재료 = 메모.docx 편집 창
+    fake.emit('editor:dirty', win.webContents, true);
+    try {
+      const target = { edit: docPath, read: [재료] };
+      let r = await call('ai:send', { prompt: '참고해서 고쳐줘', editorOk: true, target });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'MATERIAL_DIRTY');
+      assert.match(r.error, /메모\.docx/);
+      assert.match(r.error, /저장된 내용을 읽습니다/);
+      r = await call('ai:send', { prompt: '참고해서 고쳐줘', editorOk: true, materialsOk: true, target });
+      assert.equal(r.ok, true, r.error);
+      assert.ok(await endOf(r.value.chatId));
+      const n0 = sentTo(win, 'editor:command').length;
+      r = await call('ai:send', { prompt: '참고해서 고쳐줘', editorOk: true, saveMaterials: true, target });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'MATERIAL_SAVE_FAILED');
+      assert.match(r.error, /메모\.docx/);
+      const cmds = sentTo(win, 'editor:command').slice(n0);
+      assert.equal(cmds.length, 1);
+      assert.equal(cmds[0].data.command, 'save');
+    } finally {
+      fake.emit('editor:dirty', win.webContents, false);
+    }
+  });
+  await t.test('AI 재료: 편집 창은 깨끗해도 파일보다 새 자동 저장 사본이 있으면 묻는다 (OV6)', async () => {
+    const draft = draftPathFor(ud, 재료);
+    mkdirSync(dirname(draft), { recursive: true });
+    writeFileSync(draft, 'PK');
+    const target = { edit: docPath, read: [재료] };
+    try {
+      const orig = statSync(재료).mtimeMs;
+      utimesSync(draft, new Date(orig + 60_000), new Date(orig + 60_000));
+      let r = await call('ai:send', { prompt: '참고해서 고쳐줘', editorOk: true, target });
+      assert.equal(r.code, 'MATERIAL_DIRTY');
+      utimesSync(draft, new Date(orig - 60_000), new Date(orig - 60_000));
+      r = await call('ai:send', { prompt: '참고해서 고쳐줘', editorOk: true, target });
+      assert.equal(r.ok, true, r.error);
+      assert.ok(await endOf(r.value.chatId));
+    } finally {
+      rmSync(draft, { force: true });
+    }
+  });
+  await t.test('AI 재료: ai:materials — 고칠 문서·열린 편집 창·AI 작업 중·재료 전용·인터넷 표시', async () => {
+    assert.equal((await call('doc:open', docPath)).ok, true);
+    let r = (await call('ai:materials')).value;
+    assert.equal(r.edit.path, docPath);
+    assert.equal(r.edit.current, true);
+    assert.ok(r.open.some((m) => m.path === 재료 && m.kind === 'Word' && m.busy === false));
+    assert.ok(!r.open.some((m) => m.path === docPath));
+    const held = await call('ai:send', { prompt: '[hold] 고쳐줘', editorOk: true });
+    assert.equal(held.ok, true, held.error);
+    try {
+      assert.equal((await call('doc:open', 재료)).ok, true);
+      r = (await call('ai:materials')).value;
+      assert.equal(r.edit.path, 재료);
+      const busy = r.open.find((m) => m.path === docPath);
+      assert.ok(busy, '고칠 문서가 바뀌어도 열린 편집 창은 후보');
+      assert.equal(busy.busy, true);
+    } finally {
+      globalThis.__okRelease();
+    }
+    assert.ok(await endOf(held.value.chatId));
+    assert.equal((await call('doc:open', docPath)).ok, true);
+    const pdf = join(docs, '자료2.pdf');
+    writeFileSync(pdf, makePdf(1));
+    try {
+      assert.equal((await call('doc:open', pdf)).ok, true);
+      r = (await call('ai:materials')).value;
+      assert.equal(r.edit, null);
+      assert.equal(r.open[0].path, pdf);
+      assert.equal(r.open[0].current, true);
+    } finally {
+      assert.equal((await call('doc:open', docPath)).ok, true);
+      rmSync(pdf, { force: true });
+    }
+    if (process.platform === 'win32') {
+      const mark = `${재료}:Zone.Identifier`;
+      writeFileSync(mark, '[ZoneTransfer]\r\nZoneId=3\r\n');
+      try {
+        r = (await call('ai:materials')).value;
+        assert.equal(r.open.find((m) => m.path === 재료).zone3, true);
+      } finally {
+        rmSync(mark, { force: true });
+      }
+    }
+  });
   // 아래 시험은 메모.docx가 지금 문서인 상태에서 이어진다
   assert.equal((await call('doc:open', docxPath)).ok, true);
 

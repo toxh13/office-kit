@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('officeKit', {
     providers: invoke('ai:providers'),
     send: invoke('ai:send'),
     cancel: invoke('ai:cancel'),
+    materials: invoke('ai:materials'),
     reset: invoke('ai:reset'),
   },
 

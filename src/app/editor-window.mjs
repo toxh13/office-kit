@@ -1451,6 +1451,12 @@ export function createEditorManager({
       const e = typeof path === 'string' ? entries.get(keyOf(path)) : null;
       return !!(e?.win && !e.win.isDestroyed() && e.dirty);
     },
+    /** 열린 편집 창에 저장 명령 → 저장했으면 true, 못 했으면 false, 창이 없으면 null */
+    async save(path) {
+      const e = typeof path === 'string' ? entries.get(keyOf(path)) : null;
+      if (!e?.win || e.win.isDestroyed()) return null;
+      return (await ask(e, 'editor:command', { command: 'save' }, SAVE_TIMEOUT_MS)) === true;
+    },
     /**
      * 다른 곳(AI·다른 프로그램)에서 파일을 바꿨을 때 알려 주기 → 편집 창에 알렸으면 true (내용이 같으면 false)
      * force: 내용이 같아도 알린다, reason: 'restore'(원래대로) 등 편집 창 안내 문구용
