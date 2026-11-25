@@ -57,5 +57,6 @@
  "열린 문서": "Open documents",
  "홈": "Home",
  "‘{0}’ 닫기": "Close ‘{0}’",
- "아직 불러오지 않음": "Not loaded yet"
+ "아직 불러오지 않음": "Not loaded yet",
+ "저장 안 한 변경 있음": "Unsaved changes"
 }

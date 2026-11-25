@@ -1,6 +1,6 @@
 // tabstrip.js — 탭 창 맨 위 탭 줄 화면. main이 보낸 탭 목록(okTabs.onList)을 그리고, 누름·키보드를 main에 넘긴다.
 // 접근성: role=tablist / role=tab + aria-selected, 로빙 tabindex(활성 0, 나머지 -1),
-//   ←/→/Home/End = 초점 이동(활성은 그대로), Enter/Space = 활성, Delete = 그 탭 닫기(홈 제외).
+//   (활성 탭이 없으면 첫 탭이 0), ←/→/Home/End = 초점 이동(활성은 그대로), Enter/Space = 활성, Delete = 그 탭 닫기(홈 제외).
 'use strict';
 
 // ── 순수 함수 (시험이 DOM 없이 불러 쓴다) ──
@@ -16,14 +16,20 @@
       default: return index;
     }
   }
-  g.OKTabstrip = { focusAfterKey };
+  /** 로빙 tabindex 0을 받을 탭 자리: 활성 탭, 활성이 없거나 목록에 없으면 첫 탭 (탭이 없으면 -1) */
+  function tabStopIndex(ids, active) {
+    if (!ids.length) return -1;
+    const at = ids.indexOf(active);
+    return at >= 0 ? at : 0;
+  }
+  g.OKTabstrip = { focusAfterKey, tabStopIndex };
 })(globalThis);
 
 // ── 화면 ──
 if (typeof document !== 'undefined') {
   (() => {
     const K = window.okTabs;
-    const { focusAfterKey } = globalThis.OKTabstrip;
+    const { focusAfterKey, tabStopIndex } = globalThis.OKTabstrip;
     const list = document.getElementById('tabs');
     const aiToggle = document.getElementById('ai-toggle');
 
@@ -36,6 +42,7 @@ if (typeof document !== 'undefined') {
     })();
 
     let state = { tabs: [], active: null, panelCollapsed: false };
+    let tabStop = -1; // 키보드 Tab으로 들어올 탭 자리 (render가 정한다)
 
     /** 요소 만들기 (글은 textContent로만 넣는다) */
     function h(tag, props = {}, ...children) {
@@ -85,7 +92,7 @@ if (typeof document !== 'undefined') {
         .filter(Boolean).join(' ');
       const button = h('button', {
         type: 'button', role: 'tab', id: 'tab-' + tab.id, class: cls,
-        'aria-selected': selected ? 'true' : 'false', tabindex: selected ? '0' : '-1',
+        'aria-selected': selected ? 'true' : 'false', tabindex: index === tabStop ? '0' : '-1',
         'data-id': tab.id,
         onclick: () => activate(tab),
         onkeydown: (e) => onKey(e, tab, index),
@@ -94,7 +101,7 @@ if (typeof document !== 'undefined') {
       },
       tab.dirty ? h('span', { class: 'dirty-dot', 'aria-hidden': 'true', text: '●' }) : null,
       isHome(tab) ? h('span', { class: 'tab-home', text: name }) : h('span', { class: 'tab-name', 'data-no-i18n': true, title: name, text: name }),
-      tab.dirty ? srOnly('저장 안 함') : null,
+      tab.dirty ? srOnly('저장 안 한 변경 있음') : null,
       tab.loaded === false ? srOnly('아직 불러오지 않음') : null,
       tab.zone3 ? srOnly('인터넷 파일') : null);
       const wrap = h('div', { class: isHome(tab) ? 'tab-wrap home' : 'tab-wrap', role: 'presentation' }, button);
@@ -111,6 +118,7 @@ if (typeof document !== 'undefined') {
     function render() {
       // 다시 그려도 초점은 같은 탭에 (닫혀 없어졌으면 활성 탭으로)
       const focusedId = document.activeElement?.closest?.('[role="tab"]')?.dataset.id ?? null;
+      tabStop = tabStopIndex(state.tabs.map((t) => t.id), state.active);
       list.replaceChildren(...state.tabs.map(renderTab));
       if (focusedId !== null) {
         const again = tabButtons().find((b) => b.dataset.id === focusedId)

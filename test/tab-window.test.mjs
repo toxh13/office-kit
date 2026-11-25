@@ -165,6 +165,15 @@ test('탭 줄 화면: focusAfterKey — ←/→ 돌아감, Home/End, 그 밖은 
   assert.equal(f(1, 'ArrowLeft', 3), 0); assert.equal(f(1, 'ArrowRight', 3), 2);
 });
 
+test('탭 줄 화면: tabStopIndex — 활성 탭이 0, 활성이 없거나 목록에 없으면 첫 탭', () => {
+  const ctx = {}; vm.runInNewContext(readFileSync(join(ROOT, 'src/app/renderer/tabstrip.js'), 'utf8'), ctx);
+  const s = ctx.OKTabstrip.tabStopIndex;
+  assert.equal(s(['home', 't1', 't2'], 't1'), 1);
+  assert.equal(s(['home', 't1', 't2'], null), 0);
+  assert.equal(s(['home', 't1', 't2'], 'gone'), 0);
+  assert.equal(s([], null), -1);
+});
+
 test('탭 줄 화면: role=tablist·role=tab·aria-selected·aria-label, 인라인 스크립트 없음(CSP)', () => {
   const html = read('src/app/renderer/tabstrip.html');
   assert.match(html, /<script src="tabstrip\.js" defer><\/script>/);
@@ -174,7 +183,7 @@ test('탭 줄 화면: role=tablist·role=tab·aria-selected·aria-label, 인라�
   assert.match(html, /role="tablist"/);
   assert.match(html, /aria-label="열린 문서"/);
   const js = read('src/app/renderer/tabstrip.js');
-  for (const s of ['tablist', 'aria-selected', "'tab'", 'aria-pressed', 'tabindex', 'Delete', '저장 안 함', '아직 불러오지 않음', '인터넷 파일', 'AI 도우미']) {
+  for (const s of ['tablist', 'aria-selected', "'tab'", 'aria-pressed', 'tabindex', 'Delete', '저장 안 한 변경 있음', '아직 불러오지 않음', '인터넷 파일', 'AI 도우미']) {
     assert.ok(html.includes(s) || js.includes(s), `탭 줄 화면에 ${s} 없음`);
   }
   assert.match(js, /‘\$\{[^}]+\}’ 닫기/, '닫기 단추 이름');
