@@ -1057,18 +1057,19 @@ test('편집 탭 뷰: 탭 창에 붙는 WebContentsView (가짜 electron)', asyn
     assert.deepEqual(seen, ['* 메모.docx - 문서 편집 (Office Kit)', '메모.docx - 문서 편집 (Office Kit)']);
   });
 
-  await t.test('탭 명령: Ctrl+Tab·Ctrl+1·Ctrl+N은 onTabCommand로, Ctrl+Shift+W는 아님', async () => {
+  await t.test('탭 명령: Ctrl+Tab·Ctrl+N은 onTabCommand로, Ctrl+Shift+W는 아님', async () => {
     const wc = tab(0).wc;
     assert.equal(key(wc, 'Tab').prevented, true);
     assert.equal(key(wc, 'Tab', { shift: true }).prevented, true);
-    assert.equal(key(wc, 'Digit1').prevented, true);
+    assert.equal(key(wc, 'Digit1').prevented, false, 'Ctrl+1~9 passes through to the editor');
+    assert.equal(key(wc, 'Digit9').prevented, false);
     assert.equal(key(wc, 'KeyN').prevented, true);
     assert.equal(key(wc, 'KeyT').prevented, true);
     assert.deepEqual(commands, [
-      [doc, { cmd: 'next' }], [doc, { cmd: 'prev' }], [doc, { cmd: 'index', n: 1 }], [doc, { cmd: 'new-window' }], [doc, { cmd: 'home' }],
+      [doc, { cmd: 'next' }], [doc, { cmd: 'prev' }], [doc, { cmd: 'new-window' }], [doc, { cmd: 'home' }],
     ]);
     assert.equal(key(wc, 'KeyW', { shift: true }).prevented, false);
-    assert.equal(commands.length, 5);
+    assert.equal(commands.length, 4);
     assert.equal(wc.isDestroyed(), false);
   });
 

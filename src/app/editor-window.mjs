@@ -1370,7 +1370,8 @@ export function createEditorManager({
       } else {
         // 탭 단축키 (tabs.mjs 표): Ctrl+W는 이 탭만 닫고, 나머지(탭 옮기기·홈·새 창)는 main에
         const tc = tabCommandOf(input);
-        if (!tc) return;
+        // Ctrl+1~9는 편집기가 쓴다 (셀 서식 Ctrl+1 등) → 가로채지 않고 통과
+        if (!tc || tc.cmd === 'index') return;
         e.preventDefault();
         if (tc.cmd === 'close') void requestClose(entry);
         else { try { onTabCommand?.(entry.path, tc); } catch (err) { log('onTabCommand 오류:', err); } }

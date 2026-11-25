@@ -1705,10 +1705,9 @@
     $('#btn-hancom-dll').addEventListener('click', () => hancomSetup('pick'));
     $('#btn-hancom-remove').addEventListener('click', hancomRemove);
 
-    // 단축키 (메뉴에 없는 것. Ctrl+N은 메뉴에도 있지만 화면이 먼저 받으면 여기서 연다)
+    // 단축키 (메뉴에 없는 것. Ctrl+N 새 문서는 탭 단축키(새 창)로 바뀌었다)
     window.addEventListener('keydown', (e) => {
       if (!e.ctrlKey || e.altKey) return;
-      if (e.code === 'KeyN' && !e.shiftKey) { e.preventDefault(); openNewDoc(); return; }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); stepZoom(1); }
       else if (e.key === '-') { e.preventDefault(); stepZoom(-1); }
       else if (e.key === '0') { e.preventDefault(); state.zoom = 'auto'; applyZoom(); }

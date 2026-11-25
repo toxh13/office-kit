@@ -9,7 +9,7 @@ import { allows, channelSpec, VIEW_ROUTES } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
 import { createTabWindow } from './tab-window.mjs';
-import { createTabList, docKey } from './tabs.mjs';
+import { createTabList, docKey, tabCommandOf } from './tabs.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(here, '../..');
@@ -962,7 +962,7 @@ async function start() {
       // 편집 탭의 Ctrl+O (부모 = 탭 창)
       onOpenRequest: (parent) => { pickAndOpen(parent).catch((err) => console.error('[open]', err)); },
       // 탭 단축키(Ctrl+Tab·Ctrl+1…9·Ctrl+T·Ctrl+N)는 아직 쓰지 않는다 (탭 단축키 작업에서 연결)
-      onTabCommand: () => {},
+      onTabCommand: (p, cmd) => { const hit = findTab(p); if (hit) runTabCommand(hit.tw, cmd); },
       // 끝내기 중 저장 확인에서 취소 → 끝내기 상태를 되돌린다
       onQuitCanceled: () => { appQuitting = false; },
     });
@@ -1433,6 +1433,7 @@ async function start() {
       if (/^https?:\/\//i.test(url)) void openWebLink(url, wc);
       return { action: 'deny' };
     });
+    bindTabKeys(wc, tw);
     wc.on('will-navigate', (e) => e.preventDefault());
     wc.on('will-frame-navigate', (e) => {
       if (e.isMainFrame) { e.preventDefault(); return; }
@@ -1471,6 +1472,7 @@ async function start() {
     windowOrder.unshift(shell.id);
     viewRecs.set(shell.tabstrip.webContents, { kinds: ['tabstrip'], tw, role: 'tabstrip' });
     shell.tabstrip.webContents.once?.('destroyed', () => viewRecs.delete(shell.tabstrip.webContents));
+    bindTabKeys(shell.tabstrip.webContents, tw);
     tw.tabs.on('change', () => sendTabs(tw));
     tw.home = makeHubView(tw, 'home');
     makeHub(tw.home.webContents, tw, 'home');
@@ -1563,6 +1565,33 @@ async function start() {
     // 편집 뷰가 이미 없으면 탭만 뺀다
     if (r === null) removeTab(tw, id);
     return r !== false;
+  }
+
+  /** 탭 단축키 실행 (어느 뷰에서 눌렀든 그 탭 창에서): 홈·닫기·이웃 탭·번째 탭. 새 창(Ctrl+N)은 아직 없다 */
+  function runTabCommand(tw, cmd) {
+    if (!tw || !cmd || !tabWindows.has(tw.shell.id)) return;
+    if (cmd.cmd === 'home') activateTab(tw, 'home');
+    else if (cmd.cmd === 'next' || cmd.cmd === 'prev') {
+      const t = tw.tabs.step(cmd.cmd === 'next' ? 1 : -1);
+      if (t) activateTab(tw, t.id);
+    } else if (cmd.cmd === 'index') {
+      const t = tw.tabs.at(cmd.n);
+      if (t) activateTab(tw, t.id);
+    } else if (cmd.cmd === 'close') {
+      const t = tw.tabs.active;
+      // 홈 탭은 닫지 않는다 (판정 6)
+      if (t && t.type !== 'home') void closeTab(tw, t.id).catch((err) => console.error('[tabs] 탭 닫기:', err?.message ?? err));
+    }
+  }
+
+  /** 홈·문서 탭·패널·탭 줄 뷰의 키 입력: 탭 단축키면 가로채 그 탭 창에서 실행 */
+  function bindTabKeys(wc, tw) {
+    wc.on('before-input-event', (e, input) => {
+      const tc = tabCommandOf(input);
+      if (!tc) return;
+      e.preventDefault();
+      runTabCommand(tw, tc);
+    });
   }
 
   /** 그 탭 창의 AI 대상 (판정 3): 편집 탭 → 그 문서, 문서 탭 → 그 뷰의 문서, 홈 → null */

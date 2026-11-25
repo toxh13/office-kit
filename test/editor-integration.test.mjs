@@ -1223,6 +1223,87 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(lastTarget()?.path, p);
   });
 
+  await t.test('단축키: 탭 줄·홈·문서·패널·편집 어디에 초점이 있어도 Ctrl+Tab/Ctrl+1~9/Ctrl+T가 같은 탭 창에서 동작', async () => {
+    const pdf = join(docs, '단축키 시험.pdf');
+    writeFileSync(pdf, makePdf(1));
+    assert.equal((await call('doc:open', pdf)).ok, true);
+    const edWc = editorOf(/자리 시험\.docx - 문서 편집/).wc;
+    const docV = docWc(pdf);
+    const press = (wc, code, { shift = false, alt = false } = {}) => {
+      const e = { prevented: false, preventDefault() { this.prevented = true; } };
+      wc.emit('before-input-event', e, { type: 'keyDown', code, control: true, shift, alt, meta: false });
+      return e.prevented;
+    };
+    const ids = () => tabList().tabs.map((x) => x.id);
+    const goHome = async () => { assert.equal((await callAs('tabstrip', 'tabs:home')).ok, true); assert.equal(tabList().active, 'home'); };
+    const wins = fake.windows.length;
+    assert.ok(ids().length >= 3, '홈 + 편집 탭 + 문서 탭');
+    // Ctrl+Tab / Ctrl+Shift+Tab: 탭 줄·홈·패널·문서·편집 어디서든, 끝에서 처음으로 돈다
+    await goHome();
+    assert.equal(press(panelWc, 'Tab'), true);
+    assert.equal(tabList().active, ids()[1], '패널에서 Ctrl+Tab → 다음 탭');
+    assert.equal(press(edWc, 'Tab', { shift: true }), true);
+    assert.equal(tabList().active, 'home', '편집 뷰에서 Ctrl+Shift+Tab → 이전 탭');
+    assert.equal(press(tabstripWc, 'Tab', { shift: true }), true);
+    assert.equal(tabList().active, ids().at(-1), '탭 줄에서 Ctrl+Shift+Tab → 처음에서 마지막으로');
+    assert.equal(press(docV, 'Tab'), true);
+    assert.equal(tabList().active, 'home', '문서 뷰에서 Ctrl+Tab → 마지막에서 처음으로');
+    assert.equal(press(homeWc, 'Tab'), true);
+    assert.equal(tabList().active, ids()[1]);
+    // Ctrl+1~9: 탭 줄·홈·패널·문서 뷰에서 → 그 번째 탭 (9는 마지막)
+    assert.equal(press(docV, 'Digit9'), true);
+    assert.equal(tabList().active, ids().at(-1), 'Ctrl+9 → 마지막 탭');
+    assert.equal(press(panelWc, 'Digit1'), true);
+    assert.equal(tabList().active, 'home');
+    assert.equal(press(tabstripWc, 'Digit2'), true);
+    assert.equal(tabList().active, ids()[1]);
+    // 편집 뷰는 Ctrl+1~9를 가로채지 않는다 (셀 서식 Ctrl+1 등 편집기 기본 동작)
+    const before = tabList().active;
+    assert.equal(press(edWc, 'Digit1'), false, '편집 뷰 Ctrl+1은 통과');
+    assert.equal(press(edWc, 'Digit9'), false);
+    assert.equal(tabList().active, before);
+    // 없는 번째 탭은 무시 (막기만 한다)
+    if (ids().length < 8) {
+      assert.equal(press(homeWc, 'Digit8'), true);
+      assert.equal(tabList().active, before);
+    }
+    // Ctrl+T: 홈 탭
+    assert.equal(press(docV, 'KeyT'), true);
+    assert.equal(tabList().active, 'home');
+    await callAs('tabstrip', 'tabs:activate', ids().at(-1));
+    assert.equal(press(edWc, 'KeyT'), true);
+    assert.equal(tabList().active, 'home', '편집 뷰 Ctrl+T도 홈');
+    // Ctrl+Alt 조합·Ctrl+N(새 창은 아직 없음)은 탭을 건드리지 않는다
+    assert.equal(press(panelWc, 'Tab', { alt: true }), false);
+    assert.equal(press(panelWc, 'KeyN'), true);
+    assert.equal(tabList().active, 'home');
+    assert.equal(fake.windows.length, wins, '새 창을 만들지 않는다');
+  });
+
+  await t.test('Ctrl+W: 문서 탭은 닫고, 홈 탭에서는 아무 일도 없다', async () => {
+    const pdf = join(docs, '단축키 시험.pdf');
+    const press = (wc, code) => {
+      const e = { prevented: false, preventDefault() { this.prevented = true; } };
+      wc.emit('before-input-event', e, { type: 'keyDown', code, control: true, shift: false, alt: false, meta: false });
+      return e.prevented;
+    };
+    const docV = docWc(pdf);
+    const n = tabList().tabs.length;
+    // 홈 탭: 어느 뷰에서 눌러도 그대로
+    assert.equal((await callAs('tabstrip', 'tabs:home')).ok, true);
+    for (const wc of [homeWc, panelWc, tabstripWc]) {
+      assert.equal(press(wc, 'KeyW'), true);
+      assert.equal(tabList().tabs.length, n);
+      assert.equal(tabList().active, 'home');
+    }
+    // 문서 탭: 그 탭이 닫히고 뷰도 닫힌다
+    assert.equal((await callAs('tabstrip', 'tabs:activate', tabOf(pdf).id)).ok, true);
+    assert.equal(press(docV, 'KeyW'), true);
+    assert.ok(await until(() => tabOf(pdf) === null, 5000), '문서 탭이 닫힌다');
+    assert.equal(docV.isDestroyed(), true);
+    assert.equal(tabList().tabs.length, n - 1);
+  });
+
   await t.test('겹친 편집 탭 열기: 두 문서 탭의 직접 편집을 동시에 → 각자 제자리 편집 탭, 중복 없음', async () => {
     const a = join(docs, '동시 가.docx');
     const b = join(docs, '동시 나.docx');
