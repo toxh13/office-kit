@@ -60,9 +60,10 @@ export function securityZone(path) {
 export const isFromInternet = (path) => securityZone(path) >= 3;
 export const UNTRUSTED_APP_MESSAGE = '인터넷에서 받은 문서라 안전을 위해 Office 프로그램으로 자동으로 열지 않습니다 (자동으로 열면 보호된 보기를 거치지 않아요). '
   + '믿을 수 있는 문서면 파일 속성에서 \'차단 해제\'를 고른 뒤 다시 하거나, \'프로그램에서 열기\'로 보호된 보기에서 확인하세요.';
-/** 프로그램(COM)으로 열기 전에 부른다: 인터넷에서 받은 Word·PowerPoint·Excel·PDF 문서면 code 'UNTRUSTED' 오류 (한글은 해당 없음) */
+/** 프로그램(COM)으로 열기 전에 부른다: 인터넷에서 받은 Word·PowerPoint·Excel 문서면 code 'UNTRUSTED' 오류 (한글·PDF는 해당 없음) */
 export function assertTrustedForApp(path) {
-  if (!HWP_EXTS.has(extOf(path)) && isFromInternet(path)) throw Object.assign(new Error(UNTRUSTED_APP_MESSAGE), { code: 'UNTRUSTED' });
+  const ext = extOf(path);
+  if (!HWP_EXTS.has(ext) && ext !== 'pdf' && isFromInternet(path)) throw Object.assign(new Error(UNTRUSTED_APP_MESSAGE), { code: 'UNTRUSTED' });
 }
 
 // 프로그램 엔진을 못 쓰는 이유
@@ -87,7 +88,7 @@ async function pickEngine(path, { engine = 'auto', write = false } = {}) {
   // 인터넷에서 받은 파일: 프로그램(COM)으로 열지 않고 파일 엔진으로 (파일 엔진으로 못 하면 거절)
   if (!HWP_EXTS.has(ext) && isFromInternet(path)) {
     if (engine !== 'app' && fileOk) return 'file';
-    assertTrustedForApp(path);
+    throw Object.assign(new Error(UNTRUSTED_APP_MESSAGE), { code: 'UNTRUSTED' });
   }
   // 파일 엔진으로 읽을 수 있으면 프로그램 확인(PowerShell)도 하지 않는다
   if (engine !== 'app' && !write && fileOk) return 'file';
@@ -329,7 +330,7 @@ export async function convertDocument(path, output) {
     const can = [...new Set([...appTargets, ...(HWP_EXTS.has(from) ? RHWP_TARGETS : [])])].filter((t) => t !== from);
     throw new Error(`${kindOf(path)} 문서는 .${to || '(확장자 없음)'} 형식으로 바꿀 수 없습니다${can.length ? ` (가능: ${can.join(', ')})` : ''}`);
   }
-  // 인터넷에서 받은 Word·PowerPoint·Excel·PDF 문서는 프로그램(COM)으로 변환하지 않는다 (한글은 해당 없음)
+  // 인터넷에서 받은 Word·PowerPoint·Excel 문서는 프로그램(COM)으로 변환하지 않는다 (한글·PDF는 해당 없음)
   if (appTargets.includes(to)) assertTrustedForApp(path);
   if (appTargets.includes(to) && (await comAvailableFor(from))) {
     await comCall({ app, op: 'convert', path, save: output, saveFormat: to }, { timeoutMs: 180_000 });

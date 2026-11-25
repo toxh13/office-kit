@@ -797,6 +797,13 @@ describe('인터넷에서 받은 문서는 프로그램(COM)으로 열지 않음
     assert.doesNotThrow(() => assertTrustedForApp(tmp.path('doc.docx'))); // 표시 없는 파일
   });
 
+  test('assertTrustedForApp: 인터넷에서 받은 PDF는 통과 (PDF → Word 변환은 막지 않음)', () => {
+    const pdf = tmp.path('web.pdf');
+    writeFileSync(pdf, makePdf());
+    markInternet(pdf);
+    assert.doesNotThrow(() => assertTrustedForApp(pdf));
+  });
+
   test('word_edit·word_inspect: PowerShell을 부르지 않고 UNTRUSTED', async () => {
     const { wordEdit, wordInspect } = await import('../src/core/word.mjs');
     await withFakePowerShell(async () => {
