@@ -2,7 +2,6 @@
 //   글꼴 모듈(W5)·저장 뒤 고치기 모듈(W6)은 흉내 낸 것을 넣는다
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
@@ -10,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
+import { makeFakeElectron } from './helpers/fake-electron.mjs';
 import { createBlankDocument } from '../src/core/create.mjs';
 import {
   ALL_EDITABLE_EXTS, checkOoxmlBytes, cleanConvertedCopies, createEditorManager, draftPathFor, EDITABLE_EXTS, EDITOR_KINDS, editorKindOf,
@@ -35,98 +35,6 @@ function get(url) {
     req.on('error', fail);
     req.end();
   });
-}
-
-// ── 가짜 electron ────────────────────────────────────────
-
-function makeFake() {
-  const fake = {
-    windows: [], dialogs: [], dialogAnswers: [], saveDialogs: [], saveDialogAnswers: [], opened: [], openPathResult: '',
-    external: [], sessions: new Map(), replies: new Map(), commands: [], commandAnswer: null,
-  };
-  let wcSeq = 0;
-  const app = Object.assign(new EventEmitter(), { isPackaged: false, getVersion: () => '0.2.0-test', quit() {} });
-  class WebContents extends EventEmitter {
-    constructor() { super(); this.id = ++wcSeq; this.sent = []; this.mainFrame = { url: '' }; }
-    send(channel, data) {
-      this.sent.push({ channel, data });
-      // host 흉내: 닫기 전 질문·명령에 답한다
-      if (channel === 'editor:request-close') setImmediate(() => emit('editor:reply', this, { id: data.id, value: fake.replies.get(this.id) ?? false }));
-      if (channel === 'editor:command') {
-        fake.commands.push(data.command);
-        if (fake.commandAnswer) setImmediate(async () => emit('editor:reply', this, { id: data.id, value: await fake.commandAnswer(this, data.command) }));
-      }
-    }
-    setWindowOpenHandler(fn) { this.openHandler = fn; }
-    setWebRTCIPHandlingPolicy(p) { this.webrtcPolicy = p; }
-    loadURL(u) { this.mainFrame.url = u; return Promise.resolve(); }
-    toggleDevTools() {}
-  }
-  class BrowserWindow extends EventEmitter {
-    constructor(opts = {}) {
-      super();
-      this.opts = opts; this.title = opts.title ?? ''; this.destroyed = false;
-      this.webContents = new WebContents();
-      fake.windows.push(this);
-    }
-    isDestroyed() { return this.destroyed; }
-    close() {
-      if (this.destroyed) return;
-      let prevented = false;
-      this.emit('close', { preventDefault: () => { prevented = true; } });
-      if (!prevented) this.destroy();
-    }
-    destroy() { if (this.destroyed) return; this.destroyed = true; this.emit('closed'); }
-    setTitle(t) { this.title = t; }
-    getTitle() { return this.title; }
-    show() {} focus() {} restore() {} removeMenu() {}
-    isMinimized() { return false; }
-  }
-  const ipcMain = {
-    handlers: new Map(), listeners: new Map(),
-    handle(c, fn) { if (this.handlers.has(c)) throw new Error(`이미 등록된 채널: ${c}`); this.handlers.set(c, fn); },
-    on(c, fn) { if (!this.listeners.has(c)) this.listeners.set(c, []); this.listeners.get(c).push(fn); },
-  };
-  const evOf = (wc, frame = wc.mainFrame) => ({ sender: wc, senderFrame: frame });
-  function emit(channel, wc, ...args) { for (const fn of ipcMain.listeners.get(channel) ?? []) fn(evOf(wc), ...args); }
-  // 이 시험들은 사용자가 저장·내려받기·인쇄를 누른 것으로 친다 (사용자 조작 없는 요청 거절은 따로 시험)
-  async function invoke(wc, channel, ...args) {
-    const fn = ipcMain.handlers.get(channel);
-    if (!fn) throw new Error(`없는 채널: ${channel}`);
-    if (!fake.noUserAct && ['editor:save', 'editor:download', 'editor:print'].includes(channel)) wc.emit?.('input-event', {}, { type: 'mouseDown' });
-    return fn(evOf(wc), ...args);
-  }
-  const session = {
-    fromPartition(name) {
-      if (!fake.sessions.has(name)) {
-        const s = Object.assign(new EventEmitter(), {
-          name, handlers: {},
-          webRequest: { onBeforeRequest(_f, fn) { s.handlers.beforeRequest = fn; } },
-          setPermissionRequestHandler(fn) { s.handlers.permission = fn; },
-          setPermissionCheckHandler(fn) { s.handlers.permissionCheck = fn; },
-          setDevicePermissionHandler() {}, setDisplayMediaRequestHandler() {},
-          setSpellCheckerEnabled(v) { s.spellcheck = v; },
-          setSpellCheckerDictionaryDownloadURL(u) { s.dictionaryUrl = u; },
-          async setProxy(cfg) { s.proxy = cfg; },
-        });
-        fake.sessions.set(name, s);
-      }
-      return fake.sessions.get(name);
-    },
-  };
-  Object.assign(fake, {
-    app, BrowserWindow, ipcMain, session, emit, invoke, evOf,
-    dialog: {
-      async showMessageBox(_w, opts) { fake.dialogs.push(opts); return { response: fake.dialogAnswers.shift() ?? 2 }; },
-      async showSaveDialog(_w, opts) { fake.saveDialogs.push(opts); return fake.saveDialogAnswers.shift() ?? { canceled: true }; },
-    },
-    shell: {
-      async openPath(p) { fake.opened.push(p); return fake.openPathResult; },
-      async openExternal(u) { fake.external.push(u); },
-    },
-    nativeTheme: { shouldUseDarkColors: false },
-  });
-  return fake;
 }
 
 /** 시험용 묶음: 한글(studio·sdk) + Office(vendor/office-editor) + Office host 폴더 */
@@ -175,7 +83,7 @@ test('Office 편집 창 (가짜 electron)', async (t) => {
   const hwpx = join(docs, '보고서.hwpx');
   for (const p of [docx, xlsx, pptx, hwpx]) await createBlankDocument(p);
 
-  const fake = makeFake();
+  const fake = makeFakeElectron({ version: '0.2.0-test' });
   const logs = [];
   const fontsCalls = [];
   const fontsDir = join(base, 'fonts');
@@ -424,7 +332,7 @@ test('Office 편집 창 (가짜 electron)', async (t) => {
 
   await t.test('fixOoxml 모양(W6 실제 모듈 이름)도 받는다: { bytes, fixes, error, notify }', async () => {
     const base2 = mkdtempSync(join(tmpdir(), 'ok-office-fix-'));
-    const fake2 = makeFake();
+    const fake2 = makeFakeElectron({ version: '0.2.0-test' });
     const doc = join(base2, '발표.pptx');
     await createBlankDocument(doc);
     const m2 = createEditorManager({
@@ -451,7 +359,7 @@ test('Office 편집 창 (가짜 electron)', async (t) => {
 
   await t.test('글꼴 준비가 너무 늦으면 기다리지 않고 묶음 글꼴로 연다 (limits.fontsTimeoutMs)', async () => {
     const base3 = mkdtempSync(join(tmpdir(), 'ok-office-slow-'));
-    const fake3 = makeFake();
+    const fake3 = makeFakeElectron({ version: '0.2.0-test' });
     const doc = join(base3, '느림.docx');
     await createBlankDocument(doc);
     const lines = [];
@@ -846,7 +754,7 @@ test('바꿔 연 문서: 다른 이름으로 저장 뒤 사용자 폴더를 지�
   const dirs = makeBundles(join(base, 'vendor'));
   const original = join(userDir, '옛 문서.doc');
   put(original, 'old');
-  const fake = makeFake();
+  const fake = makeFakeElectron({ version: '0.2.0-test' });
   const logs = [];
   let onSavedHook = null;
   const mgr = createEditorManager({
@@ -998,7 +906,7 @@ test('끝내기 중 저장 확인에서 취소하면 onQuitCanceled가 한 번 �
   const dirs = makeBundles(join(base, 'vendor'));
   const doc = join(base, '메모.docx');
   await createBlankDocument(doc);
-  const fake = makeFake();
+  const fake = makeFakeElectron({ version: '0.2.0-test' });
   let canceled = 0;
   const mgr = createEditorManager({
     app: fake.app, BrowserWindow: fake.BrowserWindow, ipcMain: fake.ipcMain, session: fake.session, dialog: fake.dialog,

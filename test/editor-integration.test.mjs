@@ -5,8 +5,6 @@
 //     한글(hwpx) + 문서·표·슬라이드(docx·xlsx·pptx). OFFICEKIT_SMOKE_OUT=<폴더>면 찍은 그림을 거기에 남긴다
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { register } from 'node:module';
-import { EventEmitter } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -22,6 +20,7 @@ import { draftPathFor } from '../src/app/editor-window.mjs';
 import { startEditorServer } from '../src/app/editor-server.mjs';
 import { NOTICE_FILES, aboutModel, legalSections } from '../src/app/office-editor/host.js';
 import { makePdf } from './helpers/fixtures.mjs';
+import { makeFakeElectron, installFakeElectron } from './helpers/fake-electron.mjs';
 
 const readDocumentText = async (p) => (await readDocument(p, { engine: 'file' })).text ?? '';
 
@@ -40,151 +39,6 @@ async function until(fn, ms = 8000, step = 40) {
     if (Date.now() > end) return v;
     await sleep(step);
   }
-}
-
-// ── 가짜 electron ────────────────────────────────────────
-
-function makeFakeElectron({ userData, documents }) {
-  const fake = { windows: [], dialogAnswers: [], dialogs: [], replies: new Map(), sessions: {}, external: [], saveDialogAnswers: [], opened: [] };
-  let wcSeq = 0;
-
-  const app = Object.assign(new EventEmitter(), {
-    isPackaged: false,
-    paths: { userData, documents },
-    setPath(k, v) { this.paths[k] = v; },
-    getPath(k) { return this.paths[k] ?? tmpdir(); },
-    requestSingleInstanceLock: () => true,
-    quit() { this.quitCalls += 1; },
-    exit(code) { this.exitCode = code; },
-    whenReady: () => Promise.resolve(),
-    getVersion: () => '0.0.0-test',
-    addRecentDocument() {},
-    commandLine: { switches: new Map(), appendSwitch(k, v = '') { this.switches.set(k, v); } },
-    quitCalls: 0,
-    exitCode: undefined,
-  });
-
-  class WebContents extends EventEmitter {
-    constructor() {
-      super();
-      this.id = ++wcSeq;
-      this.sent = [];
-      this.session = new EventEmitter();
-      this.mainFrame = { url: '' };
-    }
-    send(channel, data) {
-      this.sent.push({ channel, data });
-      // 편집 창 host 흉내: 닫기 전 질문에 답한다 (fake.replies: webContents id → 저장 안 한 내용 있음?)
-      if (channel === 'editor:request-close') {
-        setImmediate(() => emit('editor:reply', this, { id: data.id, value: fake.replies.get(this.id) ?? false }));
-      }
-      // 저장 명령: 이 시험에서는 저장하지 못한 것으로 답한다 (180초 기다리지 않게)
-      if (channel === 'editor:command') setImmediate(() => emit('editor:reply', this, { id: data.id, value: false }));
-    }
-    setWindowOpenHandler(fn) { this.openHandler = fn; }
-    setWebRTCIPHandlingPolicy(p) { this.webrtcPolicy = p; }
-    loadFile(f) { this.mainFrame.url = pathToFileURL(f).href; return Promise.resolve(); }
-    loadURL(u) { this.mainFrame.url = u; return Promise.resolve(); }
-    toggleDevTools() {}
-    executeJavaScript() { return Promise.resolve(null); }
-  }
-
-  class BrowserWindow extends EventEmitter {
-    static all = new Set();
-    static getAllWindows() { return [...BrowserWindow.all]; }
-    constructor(opts = {}) {
-      super();
-      this.opts = opts;
-      this.title = opts.title ?? '';
-      this.destroyed = false;
-      this.webContents = new WebContents();
-      BrowserWindow.all.add(this);
-      fake.windows.push(this);
-      app.emit('browser-window-created', {}, this);
-    }
-    isDestroyed() { return this.destroyed; }
-    close() {
-      if (this.destroyed) return;
-      let prevented = false;
-      this.emit('close', { preventDefault: () => { prevented = true; } });
-      if (!prevented) this.destroy();
-    }
-    destroy() {
-      if (this.destroyed) return;
-      this.destroyed = true;
-      BrowserWindow.all.delete(this);
-      this.emit('closed');
-    }
-    loadFile(f) { return this.webContents.loadFile(f); }
-    loadURL(u) { return this.webContents.loadURL(u); }
-    setTitle(t) { this.title = t; }
-    getTitle() { return this.title; }
-    show() { this.visible = true; } hide() { this.visible = false; } focus() {} restore() {} maximize() {} unmaximize() {} moveTop() {} removeMenu() {}
-    isVisible() { return this.visible !== false; }
-    isMinimized() { return false; }
-    isMaximized() { return false; }
-    getNormalBounds() { return { ...this.getBounds() }; }
-    getBounds() { return { ...(this.bounds ?? { x: 0, y: 0, width: 1200, height: 800 }) }; }
-    setBounds(b) { this.bounds = { ...this.getBounds(), ...b }; }
-    setMinimumSize(w, h) { this.minSize = [w, h]; }
-    getMinimumSize() { return this.minSize ?? [1000, 680]; }
-  }
-
-  const ipcMain = {
-    handlers: new Map(), listeners: new Map(),
-    handle(channel, fn) {
-      if (this.handlers.has(channel)) throw new Error(`이미 등록된 채널: ${channel}`);
-      this.handlers.set(channel, fn);
-    },
-    on(channel, fn) {
-      if (!this.listeners.has(channel)) this.listeners.set(channel, []);
-      this.listeners.get(channel).push(fn);
-    },
-  };
-  const evOf = (wc) => ({ sender: wc, senderFrame: wc.mainFrame });
-  function emit(channel, wc, ...args) { for (const fn of ipcMain.listeners.get(channel) ?? []) fn(evOf(wc), ...args); }
-  async function invokeFrom(wc, channel, ...args) {
-    const fn = ipcMain.handlers.get(channel);
-    if (!fn) throw new Error(`없는 채널: ${channel}`);
-    return fn(evOf(wc), ...args);
-  }
-
-  // 편집 창 세션 (partition마다 따로: 'officekit-editor' = 한글, 'officekit-office' = 문서·표·슬라이드)
-  function makeSession(partition) {
-    const h = {};
-    fake.sessions[partition] = h;
-    return {
-      webRequest: { onBeforeRequest(_filter, fn) { h.beforeRequest = fn; } },
-      setPermissionRequestHandler(fn) { h.permission = fn; },
-      setPermissionCheckHandler(fn) { h.permissionCheck = fn; }, setDevicePermissionHandler() {}, setDisplayMediaRequestHandler() {},
-      setSpellCheckerEnabled() {}, on() {},
-      setSpellCheckerDictionaryDownloadURL(u) { h.dictionaryUrl = u; },
-      async setProxy(cfg) { h.proxy = cfg; },
-    };
-  }
-  const partitions = new Map();
-
-  Object.assign(fake, {
-    app, BrowserWindow, ipcMain, emit, invokeFrom,
-    Menu: { buildFromTemplate: (t) => { fake.menu = t; return t; }, setApplicationMenu() {} },
-    dialog: {
-      async showMessageBox(_win, opts) { fake.dialogs.push(opts); return { response: fake.dialogAnswers.shift() ?? 2 }; },
-      async showSaveDialog() { return fake.saveDialogAnswers.shift() ?? { canceled: true }; },
-      async showOpenDialog() { return { canceled: true, filePaths: [] }; },
-      showErrorBox(title, text) { fake.errorBox = `${title}: ${text}`; },
-    },
-    nativeTheme: { shouldUseDarkColors: false, themeSource: 'system' },
-    screen: {
-      getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
-      getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
-    },
-    session: {
-      defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, setSpellCheckerDictionaryDownloadURL(u) { fake.defaultDictionaryUrl = u; } },
-      fromPartition: (p) => { if (!partitions.has(p)) partitions.set(p, makeSession(p)); return partitions.get(p); },
-    },
-    shell: { openPath: async (p) => { fake.opened.push(p); return ''; }, openExternal: async (u) => { fake.external.push(u); }, showItemInFolder() {} },
-  });
-  return fake;
 }
 
 const put = (p, data = 'x') => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, data); };
@@ -268,15 +122,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   for (const k of ['OFFICEKIT_SMOKE', 'OFFICEKIT_SMOKE_EDITOR', 'OFFICEKIT_EDITOR_TEST']) delete process.env[k];
   process.argv = [process.argv[0], docPath];
 
-  const fake = makeFakeElectron({ userData: ud, documents: docs });
-  globalThis.__okFakeElectron = fake;
-  const names = ['app', 'BrowserWindow', 'Menu', 'dialog', 'ipcMain', 'nativeTheme', 'screen', 'session', 'shell'];
-  const fakeSource = `const f = globalThis.__okFakeElectron; ${names.map((n) => `export const ${n} = f.${n};`).join(' ')} export default f;`;
-  register(`data:text/javascript,${encodeURIComponent(`
-    export async function resolve(spec, ctx, next) {
-      if (spec === 'electron') return { url: ${JSON.stringify(`data:text/javascript,${encodeURIComponent(fakeSource)}`)}, shortCircuit: true };
-      return next(spec, ctx);
-    }`)}`);
+  const fake = makeFakeElectron({ userData: ud, documents: docs, commandAnswer: async () => false });
+  installFakeElectron(fake);
 
   t.after(async () => {
     fake.app.emit('will-quit');
@@ -396,8 +243,8 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const st = await until(() => lastSent('doc:editor', (d) => d.open));
     assert.deepEqual(st, { path: docPath, open: true, dirty: false });
     // 편집 창 밖으로 나가는 요청은 막는다
-    const ses = fake.sessions['officekit-editor'];
-    const blocked = await new Promise((r) => ses.beforeRequest({ url: 'https://cdn.jsdelivr.net/x.woff2' }, r));
+    const ses = fake.sessions.get('officekit-editor');
+    const blocked = await new Promise((r) => ses.handlers.beforeRequest({ url: 'https://cdn.jsdelivr.net/x.woff2' }, r));
     assert.equal(blocked.cancel, true);
     // HTTP 밖의 연결·맞춤법 사전 내려받기도 인터넷에 나가지 못하게 (죽은 프록시·사전 주소, WebRTC는 프록시 안 거친 UDP 금지)
     // 바로 가는 것은 host·studio 서버의 주소:포트뿐 (<-loopback>: 이 PC의 다른 포트는 죽은 프록시로)
@@ -675,9 +522,9 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(officeWin.opts.webPreferences.partition, 'officekit-office');
     assert.match(officeWin.opts.webPreferences.preload, /office-preload\.cjs$/);
     assert.equal(officeWin.webContents.webrtcPolicy, 'disable_non_proxied_udp');
-    const ses = fake.sessions['officekit-office'];
+    const ses = fake.sessions.get('officekit-office');
     assert.equal(ses.proxy.proxyRules, 'socks5://127.0.0.1:9');
-    const blocked = await new Promise((res) => ses.beforeRequest({ url: 'https://example.com/x.js' }, res));
+    const blocked = await new Promise((res) => ses.handlers.beforeRequest({ url: 'https://example.com/x.js' }, res));
     assert.equal(blocked.cancel, true);
     officeCall = (channel, ...args) => fake.invokeFrom(officeWin.webContents, channel, ...args);
     const st = await until(() => lastSent('doc:editor', (d) => d.path === docxPath && d.open));
