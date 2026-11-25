@@ -57,6 +57,28 @@ export function outputFor({ src, root }, outDir) {
   return join(resolve(outDir), rel.startsWith('..') ? '' : rel, name);
 }
 
+/**
+ * 일괄 변환의 최종 결과 경로 계획 → [{ out, renamed }] (items와 같은 차례)
+ * 같은 결과 이름이 겹치면 뒤에 오는 쪽에 ' (2)', ' (3)'…을 붙인다 (Windows는 대소문자 무시).
+ * 붙인 이름은 디스크에 이미 있는 파일이면 건너뛴다 — 원래 이름(번호 없음)만 있어도 쓰고, 덮어쓸지는 overwrite가 정한다.
+ */
+export function planBatchOutputs(items, outDir) {
+  const used = new Set();
+  return items.map((item) => {
+    const natural = outputFor(item, outDir);
+    let out = natural;
+    if (used.has(keyOf(out))) {
+      const ext = extname(natural);
+      const stem = natural.slice(0, natural.length - ext.length);
+      let n = 2;
+      while (used.has(keyOf(`${stem} (${n})${ext}`)) || existsSync(`${stem} (${n})${ext}`)) n++;
+      out = `${stem} (${n})${ext}`;
+    }
+    used.add(keyOf(out));
+    return { out, renamed: out !== natural };
+  });
+}
+
 const norm = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
 
 function snapshot(path) {
@@ -85,29 +107,20 @@ export function verifyConversion(src, out) {
 
 /**
  * 한꺼번에 바꾸기. items: collectHwpFiles().items
- * opts: outDir(없으면 원본 옆), overwrite(같은 이름 .hwpx가 있으면 덮어쓰기), onProgress({ index, total, result }), isCancelled()
+ * opts: outDir(없으면 원본 옆), overwrite(같은 이름 .hwpx가 있으면 덮어쓰기), onProgress({ index, total, result }), isCancelled(),
+ *   plan(planBatchOutputs 결과: 저장 경로를 미리 확인한 경우 그 경로를 그대로 쓴다)
  * → { results: [{ src, out, status, engine?, notes, pages?, tables?, error? }], summary: { ok, check, skipped, fail, total, cancelled } }
  */
-export async function convertHwpBatch(items, { outDir, overwrite = false, onProgress, isCancelled, convert = convertDocument } = {}) {
+export async function convertHwpBatch(items, { outDir, overwrite = false, onProgress, isCancelled, convert = convertDocument, plan } = {}) {
   const results = [];
   let cancelled = false;
-  // 이번 일괄 변환에서 이미 쓴 결과 경로 (Windows는 대소문자 무시)
-  const used = new Set();
+  // 같은 이름이 겹치면 뒤에 오는 쪽에 (2), (3)을 붙여 앞의 결과나 이미 있는 다른 파일을 덮어쓰지 않는다
+  const outputs = Array.isArray(plan) && plan.length === items.length ? plan : planBatchOutputs(items, outDir);
   for (let i = 0; i < items.length; i++) {
     if (isCancelled?.()) { cancelled = true; break; }
     const { src } = items[i];
-    let out = outputFor(items[i], outDir);
-    let renamedNote = null;
-    if (used.has(out.toLowerCase())) {
-      // 같은 이름이 겹치면 뒤에 오는 쪽에 (2), (3)을 붙여 앞의 결과를 덮어쓰지 않는다
-      const ext = extname(out);
-      const stem = out.slice(0, out.length - ext.length);
-      let n = 2;
-      while (used.has(`${stem} (${n})${ext}`.toLowerCase())) n++;
-      out = `${stem} (${n})${ext}`;
-      renamedNote = `이름이 겹쳐 ‘${basename(out)}’로 저장`;
-    }
-    used.add(out.toLowerCase());
+    const { out, renamed } = outputs[i];
+    const renamedNote = renamed ? `이름이 겹쳐 ‘${basename(out)}’로 저장` : null;
     let r;
     if (existsSync(out) && !overwrite) {
       r = { src, out, status: 'skipped', notes: ['같은 이름의 HWPX 파일이 이미 있어 건너뛰었어요'] };

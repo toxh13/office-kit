@@ -14,7 +14,7 @@ import {
 import { PLACEHOLDER } from '../core/officefile.mjs';
 import { pageImage } from '../core/render.mjs';
 import { PII_TYPES, scanDocument, maskDocument, maskedPathFor } from '../core/pii.mjs';
-import { collectHwpFiles, convertHwpBatch, outputFor, writeBatchReport, BATCH_STATUS_KO } from '../core/batch.mjs';
+import { collectHwpFiles, convertHwpBatch, planBatchOutputs, writeBatchReport, BATCH_STATUS_KO } from '../core/batch.mjs';
 import { register as registerHwp } from './tools/hwp.mjs';
 import { register as registerWord } from './tools/word.mjs';
 import { register as registerPpt } from './tools/ppt.mjs';
@@ -532,10 +532,11 @@ export function createServer() {
     const items = readRoots.length ? found.filter((it) => readRoots.some((r) => inside(realOf(it.src), r))) : found;
     if (!items.length) throw new Error('바꿀 한글(.hwp) 파일을 찾지 못했어요');
     const dir = outDir ? abs(outDir) : undefined;
-    // 저장할 곳이 모두 허락된 폴더 안인지 먼저 확인 (하나라도 밖이면 시작하지 않는다)
-    for (const it of items) outPath(outputFor(it, dir), { allow: new Set(['hwpx']), overwrite: true });
+    // 이름이 겹쳐 번호를 붙인 것까지 최종 저장 경로를 모두 먼저 확인한다 (하나라도 안 되면 시작하지 않는다)
+    const plan = planBatchOutputs(items, dir);
+    for (const p of plan) outPath(p.out, { allow: new Set(['hwpx']), overwrite: true });
     const reportPath = report ? outPath(report, { allow: new Set(['csv']), overwrite }) : null;
-    const r = await convertHwpBatch(items, { outDir: dir, overwrite });
+    const r = await convertHwpBatch(items, { outDir: dir, overwrite, plan });
     let reportError = '';
     if (reportPath) { try { writeBatchReport(reportPath, r.results); } catch (e) { reportError = e?.message ?? String(e); } }
     const s = r.summary;

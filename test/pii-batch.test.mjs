@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findPii, groupPii, maskDocument, scanDocument, maskedPathFor, piiTargetCheck } from '../src/core/pii.mjs';
-import { collectHwpFiles, convertHwpBatch, outputFor, batchReportCsv } from '../src/core/batch.mjs';
+import { collectHwpFiles, convertHwpBatch, outputFor, batchReportCsv, planBatchOutputs } from '../src/core/batch.mjs';
 import { createDocument, readDocument } from '../src/core/index.mjs';
 
 const EXAMPLES = join(import.meta.dirname, '..', 'examples');
@@ -109,6 +109,40 @@ test('일괄 변환: 같은 이름 결과는 덮어쓰지 않고 (2), (3)을 붙
     assert.ok(r.results[1].notes.includes('이름이 겹쳐 ‘보고서 (2).hwpx’로 저장'));
     assert.ok(r.results[2].notes.includes('이름이 겹쳐 ‘보고서 (3).hwpx’로 저장'));
     assert.ok(!r.results[0].notes.some((n) => n.includes('이름이 겹쳐')));
+  } finally { clean(dir); }
+});
+
+test('일괄 변환: 디스크에 이미 있는 다른 \'보고서 (2).hwpx\'는 덮어쓰지 않고 (3)을 붙인다', async () => {
+  const dir = tmp();
+  try {
+    for (const f of ['A', 'B']) mkdirSync(join(dir, f));
+    copyFileSync(join(EXAMPLES, '신청서.hwp'), join(dir, 'A', '보고서.hwp'));
+    copyFileSync(join(EXAMPLES, '신청서.hwp'), join(dir, 'B', '보고서.hwp'));
+    const out = join(dir, '모음');
+    mkdirSync(out);
+    const unrelated = join(out, '보고서 (2).HWPX'); // 대소문자만 다른 이름도 같은 파일로 본다 (Windows)
+    writeFileSync(unrelated, '상관없는 파일');
+    const { items } = collectHwpFiles([join(dir, 'A', '보고서.hwp'), join(dir, 'B', '보고서.hwp')]);
+    const plan = planBatchOutputs(items, out);
+    const second = process.platform === 'win32' ? '보고서 (3).hwpx' : '보고서 (2).hwpx';
+    assert.deepEqual(plan.map((p) => p.out), [join(out, '보고서.hwpx'), join(out, second)]);
+    assert.deepEqual(plan.map((p) => p.renamed), [false, true]);
+    const r = await convertHwpBatch(items, { outDir: out, overwrite: true });
+    assert.deepEqual(r.results.map((x) => x.status), ['ok', 'ok'], JSON.stringify(r.results));
+    assert.equal(r.results[1].out, join(out, second));
+    assert.equal(readFileSync(unrelated, 'utf8'), '상관없는 파일', '다른 파일은 그대로');
+    assert.ok(r.results[1].notes.includes(`이름이 겹쳐 ‘${second}’로 저장`));
+  } finally { clean(dir); }
+});
+
+test('일괄 변환: 결과 이름 계획 — 원래 이름은 있어도 그대로 (덮어쓰기는 overwrite가 정한다)', () => {
+  const dir = tmp();
+  try {
+    const a = join(dir, 'a.hwp');
+    writeFileSync(join(dir, 'a.hwpx'), 'old');
+    writeFileSync(join(dir, 'a (2).hwpx'), 'other');
+    const plan = planBatchOutputs([{ src: a, root: dir }], undefined);
+    assert.deepEqual(plan, [{ out: join(dir, 'a.hwpx'), renamed: false }]);
   } finally { clean(dir); }
 });
 

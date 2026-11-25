@@ -472,6 +472,27 @@ describe('HWPX 일괄 변환도 읽기 제한·네트워크 경로 차단을 지
     assert.ok(!existsSync(join(outside, 'x.hwpx')));
   });
 
+  test('hwpx_batch: 제한 모드에서 이름이 겹쳐 바뀐 결과도 열린 문서 밖의 기존 파일을 건드리지 않는다', async () => {
+    const root = tmp.path('batch-renamed');
+    for (const f of ['A', 'B', 'out']) mkdirSync(join(root, f), { recursive: true });
+    copyFileSync(sample, join(root, 'A', 'x.hwp'));
+    copyFileSync(sample, join(root, 'B', 'x.hwp'));
+    const other = join(root, 'out', 'x (2).hwpx');
+    writeFileSync(other, '사용자의 다른 파일', 'utf8');
+    const { client: c } = await connect([SERVER], {
+      OFFICEKIT_WRITE_ROOTS: JSON.stringify([root]), OFFICEKIT_READ_ROOTS: JSON.stringify([root]),
+      OFFICEKIT_EDIT_FILES: JSON.stringify([join(root, '열린.hwpx')]),
+    });
+    let r;
+    try {
+      r = await c.callTool({ name: 'office_hwpx_batch', arguments: { paths: [join(root, 'A', 'x.hwp'), join(root, 'B', 'x.hwp')], outDir: join(root, 'out'), overwrite: true } }, undefined, { timeout: 120_000 });
+    } finally { await c.close(); }
+    assert.equal(readFileSync(other, 'utf8'), '사용자의 다른 파일', '열린 문서가 아닌 기존 파일을 덮어썼다');
+    assert.ok(!r.isError, textOf(r));
+    assert.ok(existsSync(join(root, 'out', 'x.hwpx')));
+    assert.ok(existsSync(join(root, 'out', 'x (3).hwpx')));
+  });
+
   test('hwpx_batch 보고서 csv는 overwrite=false면 기존 파일을 덮지 않는다', async () => {
     const dir = tmp.path('batch-report');
     mkdirSync(dir, { recursive: true });
