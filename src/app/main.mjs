@@ -379,7 +379,8 @@ async function start() {
     ]);
     clearTimeout(timer);
     // 대화(MCP 서버)를 끝내도 그 서버가 띄운 Office는 남아 문서를 쥐고 있다 → 되돌리기 전에 끝낸다
-    for (const c of running) killChatOffice(c.pidDir);
+    // 시간 안에 안 끝났으면 MCP 서버가 아직 그 Office로 일하는 중일 수 있다: 대화의 마무리(finally)에 맡긴다
+    if (ended) for (const c of running) killChatOffice(c.pidDir);
     return ended ? running.length : -1;
   }
 
@@ -1437,12 +1438,19 @@ async function start() {
         send('ai:event', { type: ev.type, text: ev.text, message: ev.message, id: ev.id, name: ev.name, ok: ev.ok, summary: ev.summary, delta: ev.delta, chatId, path });
       }
     };
-    const handle = ai.startChat({
-      provider: selected, prompt, sessionId: sess?.provider === selected ? sess.sessionId : undefined,
-      // 대화 기록은 같은 작업 폴더에서만 이어지므로 ai.mjs의 고정 폴더를 쓴다
-      cwd: typeof ai.defaultWorkspace === 'function' ? ai.defaultWorkspace() : join(userData, 'ai'),
-      filePath: path, mcp, model, onEvent, lang: i18n.lang,
-    });
+    let handle;
+    try {
+      handle = ai.startChat({
+        provider: selected, prompt, sessionId: sess?.provider === selected ? sess.sessionId : undefined,
+        // 대화 기록은 같은 작업 폴더에서만 이어지므로 ai.mjs의 고정 폴더를 쓴다
+        cwd: typeof ai.defaultWorkspace === 'function' ? ai.defaultWorkspace() : join(userData, 'ai'),
+        filePath: path, mcp, model, onEvent, lang: i18n.lang,
+      });
+    } catch (err) {
+      // 대화를 시작하지 못했으면 만든 PID 폴더도 남기지 않는다
+      if (comPidDir) { try { rmSync(comPidDir, { recursive: true, force: true }); } catch { /* 지우기 실패 */ } }
+      throw err;
+    }
     chats.set(chatId, { handle, path, pidDir });
     Promise.resolve(handle.done)
       .then((r) => { if (r?.sessionId) sessions.set(k, { provider: selected, sessionId: String(r.sessionId) }); })
@@ -2116,6 +2124,8 @@ async function start() {
   try { cleanOfficeDrafts(); } catch (err) { console.error('[editor] 자동 저장 사본 정리 실패:', err?.message ?? err); }
   // 강제 종료·충돌로 남은 바꿔 연 임시 사본 (아직 편집 창이 없으므로 모두 지운다)
   try { cleanConvertedCopies?.(userData); } catch (err) { console.error('[editor] 바꿔 연 임시 사본 정리 실패:', err?.message ?? err); }
+  // 강제 종료로 남은 AI 대화의 PID 기록은 지우기만 한다 (그 PID는 이제 다른 프로그램일 수 있어 끝내지 않는다)
+  try { rmSync(join(userData, COM_PIDS), { recursive: true, force: true }); } catch (err) { console.error('[ai] 남은 PID 기록 정리 실패:', err?.message ?? err); }
   buildMenu();
   createWindow({ hidden: docWindowStart });
   if (launchDoc) openAsDocument(launchDoc).catch((err) => { showHub(); send('toast', { type: 'error', message: err.message }); });
