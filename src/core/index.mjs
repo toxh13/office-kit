@@ -60,6 +60,10 @@ export function securityZone(path) {
 export const isFromInternet = (path) => securityZone(path) >= 3;
 export const UNTRUSTED_APP_MESSAGE = '인터넷에서 받은 문서라 안전을 위해 Office 프로그램으로 자동으로 열지 않습니다 (자동으로 열면 보호된 보기를 거치지 않아요). '
   + '믿을 수 있는 문서면 파일 속성에서 \'차단 해제\'를 고른 뒤 다시 하거나, \'프로그램에서 열기\'로 보호된 보기에서 확인하세요.';
+/** 프로그램(COM)으로 열기 전에 부른다: 인터넷에서 받은 Word·PowerPoint·Excel·PDF 문서면 code 'UNTRUSTED' 오류 (한글은 해당 없음) */
+export function assertTrustedForApp(path) {
+  if (!HWP_EXTS.has(extOf(path)) && isFromInternet(path)) throw Object.assign(new Error(UNTRUSTED_APP_MESSAGE), { code: 'UNTRUSTED' });
+}
 
 // 프로그램 엔진을 못 쓰는 이유
 async function noAppReason(path, write) {
@@ -83,7 +87,7 @@ async function pickEngine(path, { engine = 'auto', write = false } = {}) {
   // 인터넷에서 받은 파일: 프로그램(COM)으로 열지 않고 파일 엔진으로 (파일 엔진으로 못 하면 거절)
   if (!HWP_EXTS.has(ext) && isFromInternet(path)) {
     if (engine !== 'app' && fileOk) return 'file';
-    throw new Error(UNTRUSTED_APP_MESSAGE);
+    assertTrustedForApp(path);
   }
   // 파일 엔진으로 읽을 수 있으면 프로그램 확인(PowerShell)도 하지 않는다
   if (engine !== 'app' && !write && fileOk) return 'file';
@@ -225,12 +229,19 @@ export async function listFields(path, opts = {}) {
   if (HWP_EXTS.has(ext)) {
     const h = Hwp.open(path);
     try { fields = h.fields().map((f) => ({ name: f.name, value: f.value, kind: '누름틀' })); } finally { h.close(); }
-  } else if (comAppFor(ext) === 'word' && opts.engine !== 'file' && (await comAvailableFor(ext))) {
+  } else if (comAppFor(ext) === 'word' && opts.engine !== 'file' && wordAppAllowed(path, opts.engine) && (await comAvailableFor(ext))) {
     fields = list((await comCall({ app: 'word', op: 'fields', path })).fields);
   }
   const known = new Set(fields.map((f) => f.name));
   for (const f of await placeholderList(path, ext, opts)) if (!known.has(f.name)) { known.add(f.name); fields.push(f); }
   return fields;
+}
+
+// Word 칸(콘텐츠 컨트롤·책갈피)을 Word(COM)로 다뤄도 되는지. 인터넷에서 받은 문서는 engine 'app'이면 거절,
+// 자동이면 Word를 건너뛰고 {{자리표시자}}만 파일 엔진으로 다룬다
+function wordAppAllowed(path, engine) {
+  if (engine === 'app') { assertTrustedForApp(path); return true; }
+  return !isFromInternet(path);
 }
 
 /** 칸 채우기: values = { 이름: 값 } → { filled, missing, output } */
@@ -254,7 +265,7 @@ export async function fillFields(path, values, { output, engine } = {}) {
       Object.keys(mine).forEach((n) => filled.add(n));
       current = output;
     }
-  } else if (comAppFor(ext) === 'word' && engine !== 'file' && (await comAvailableFor(ext))) {
+  } else if (comAppFor(ext) === 'word' && engine !== 'file' && wordAppAllowed(path, engine) && (await comAvailableFor(ext))) {
     const res = await comCall({ app: 'word', op: 'fill', path, values, save: output, saveFormat: extOf(output) });
     list(res.filled).forEach((n) => filled.add(n));
     current = output;
@@ -318,6 +329,8 @@ export async function convertDocument(path, output) {
     const can = [...new Set([...appTargets, ...(HWP_EXTS.has(from) ? RHWP_TARGETS : [])])].filter((t) => t !== from);
     throw new Error(`${kindOf(path)} 문서는 .${to || '(확장자 없음)'} 형식으로 바꿀 수 없습니다${can.length ? ` (가능: ${can.join(', ')})` : ''}`);
   }
+  // 인터넷에서 받은 Word·PowerPoint·Excel·PDF 문서는 프로그램(COM)으로 변환하지 않는다 (한글은 해당 없음)
+  if (appTargets.includes(to)) assertTrustedForApp(path);
   if (appTargets.includes(to) && (await comAvailableFor(from))) {
     await comCall({ app, op: 'convert', path, save: output, saveFormat: to }, { timeoutMs: 180_000 });
     return { engine: app, output };
@@ -345,6 +358,7 @@ export async function convertDocument(path, output) {
  */
 export async function previewPdf(path, output) {
   path = mustExist(path);
+  assertTrustedForApp(path);
   if (comAppFor(extOf(path)) !== 'excel' || !(await comAvailableFor(extOf(path)))) return convertDocument(path, output);
   const work = mkdtempSync(join(tmpdir(), 'officekit-xlpdf-'));
   try {

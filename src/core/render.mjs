@@ -11,7 +11,7 @@ import { Resvg } from '@resvg/resvg-js';
 import JSZip from 'jszip';
 import { Hwp } from './hwp.mjs';
 import { comCall, comAppFor, comAvailableFor } from './com.mjs';
-import { previewPdf, extOf, kindOf, isHwp } from './index.mjs';
+import { previewPdf, extOf, kindOf, isHwp, assertTrustedForApp } from './index.mjs';
 
 const FONT = { loadSystemFonts: true, defaultFontFamily: '맑은 고딕', sansSerifFamily: '맑은 고딕' };
 
@@ -104,6 +104,8 @@ async function slideImage(path, page, dpi) {
   const lock = await pptProtection(path);
   if (lock === 'open') throw new Error(LOCKED_OPEN);
   if (lock === 'ppt') throw new Error(LOCKED_PPT);
+  // 인터넷에서 받은 문서는 PowerPoint(COM)로 열지 않는다 (보호된 보기를 거치지 않으므로)
+  assertTrustedForApp(path);
   const facts = await pptFacts(path);
   if (facts) checkPage(page, facts.count);
   else if (!Number.isInteger(page) || page < 1) throw new Error(`쪽 번호가 범위를 벗어났습니다: ${page}쪽 (슬라이드 번호는 1부터 시작)`);
@@ -168,6 +170,7 @@ export async function pageImage(path, page = 1, { dpi = 110 } = {}) {
 
   if (comAppFor(ext) === 'ppt') return { ...(await slideImage(path, page, dpi)), page, engine: 'powerpoint' };
 
+  assertTrustedForApp(path); // 인터넷에서 받은 문서는 프로그램(COM)으로 PDF를 만들지 않는다
   let pdf;
   try { pdf = await pdfFor(path); } catch (e) {
     throw new Error(`${kindOf(path)} 문서를 그림으로 보려면 PDF 변환이 필요합니다: ${e.message}`);

@@ -3,6 +3,7 @@
 import { accessSync, closeSync, constants, existsSync, openSync, readSync, rmSync, statSync } from 'node:fs';
 import { extname, resolve, basename, dirname, join } from 'node:path';
 import { comCall, probe } from './com.mjs';
+import { assertTrustedForApp } from './index.mjs';
 
 export const WORD_EXTS = new Set(['docx', 'doc', 'rtf', 'odt']);
 export const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp']);
@@ -37,6 +38,8 @@ function wordFile(path) {
   if (!WORD_EXTS.has(extOf(full))) {
     throw new Error(`Word 문서(.docx/.doc/.rtf/.odt)만 다룹니다: ${basename(full)} — 한글은 hwp_edit, PowerPoint는 ppt_edit, Excel은 excel_edit`);
   }
+  // 인터넷에서 받은 문서는 Word(COM)로 열지 않는다 (보호된 보기를 거치지 않으므로)
+  assertTrustedForApp(full);
   return full;
 }
 

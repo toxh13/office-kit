@@ -8,6 +8,7 @@ import JSZip from 'jszip';
 import { z } from 'zod';
 import { saveZip } from './officefile.mjs';
 import { comCall, comAvailableFor } from './com.mjs';
+import { assertTrustedForApp } from './index.mjs';
 
 export const PPT_EXTS = ['pptx', 'ppt', 'odp'];
 export const LAYOUT_KEYS = ['title', 'title_content', 'section', 'two_content', 'comparison', 'title_only', 'blank'];
@@ -326,6 +327,8 @@ function mustBePpt(path) {
   path = resolve(path);
   if (!existsSync(path)) throw new Error(`파일이 없습니다: ${path}`);
   if (!PPT_EXTS.includes(extOf(path))) throw new Error(`PowerPoint 문서(.pptx/.ppt/.odp)가 아닙니다: ${path}`);
+  // 인터넷에서 받은 문서는 PowerPoint(COM)로 열지 않는다 (보호된 보기를 거치지 않으므로)
+  assertTrustedForApp(path);
   return path;
 }
 

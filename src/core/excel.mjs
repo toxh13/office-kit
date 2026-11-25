@@ -9,6 +9,7 @@ import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { comCall, comAvailableFor, probe } from './com.mjs';
 import { parseCsv } from './officefile.mjs';
+import { assertTrustedForApp, isFromInternet } from './index.mjs';
 
 // ── 기본 ─────────────────────────────────────────────────
 
@@ -2513,6 +2514,8 @@ export async function excelInspect(path, { engine = 'auto' } = {}) {
   const fileOk = ['xlsx', 'xlsm', 'csv'].includes(ext);
   if (engine === 'file' && !fileOk) throw new Error(await needExcel(`.${ext} 파일은 Excel 없이 열 수 없습니다`));
   if (engine === 'app' || (engine === 'auto' && !fileOk)) {
+    // 인터넷에서 받은 문서는 Excel(COM)로 열지 않는다 (보호된 보기를 거치지 않으므로)
+    assertTrustedForApp(path);
     if (!(await excelReady(ext))) throw new Error(await needExcel(`.${ext} 파일을 Excel로 살펴볼 수 없습니다`));
     return { ...(await appInspect(path)), path, format: ext };
   }
@@ -2541,7 +2544,10 @@ export async function excelEdit(path, operations, { output, engine = 'auto' } = 
   // csv → csv의 값 작업은 Excel이 있어도 파일 엔진으로: Excel은 csv를 열 때 '0123'·'1/2' 같은 값을 숫자·날짜로 바꾸고
   // BOM 없는 UTF-8을 ANSI로 읽는다. 파일 엔진은 인코딩·구분자·줄바꿈을 그대로 지킨다
   const csvByFile = engine === 'auto' && ext === 'csv' && outExt === 'csv' && ops.every((o) => CSV_FILE_OPS.has(o.op) && !hasFormulaValue(o));
-  const appOk = engine === 'file' || csvByFile ? false : await excelReady(ext);
+  // 인터넷에서 받은 문서는 Excel(COM)로 열지 않는다: engine 'app'이면 거절, 자동이면 파일 엔진으로 (못 하면 거절)
+  if (engine === 'app') assertTrustedForApp(path);
+  const untrusted = engine === 'auto' && isFromInternet(path);
+  const appOk = engine === 'file' || csvByFile || untrusted ? false : await excelReady(ext);
   let eng;
   if (engine === 'app') {
     if (!appOk) throw new Error(await needExcel('engine:\'app\'으로 고칠 수 없습니다'));
@@ -2550,6 +2556,8 @@ export async function excelEdit(path, operations, { output, engine = 'auto' } = 
   else {
     // 파일 엔진: xlsx(csv) 같은 형식으로만, ×인 작업은 못 함
     const why = engine === 'file' ? '파일 엔진(Excel 없이)으로는' : 'Excel 없이는';
+    // 인터넷에서 받은 문서를 파일 엔진으로 못 고치면: Excel이 있어도 쓸 수 없는 이유를 알린다
+    if (untrusted && (ext === 'xlsm' || !['xlsx', 'csv'].includes(ext) || outExt !== ext || ops.some((o) => !EXCEL_OPS[o.op].file))) assertTrustedForApp(path);
     if (ext === 'xlsm') throw new Error(await needExcel(`${why} .xlsm(매크로 문서)을 고칠 수 없습니다 (매크로가 사라짐)`, ext));
     if (!['xlsx', 'csv'].includes(ext)) throw new Error(await needExcel(`${why} .${ext} 파일을 고칠 수 없습니다`, ext));
     if (outExt !== ext) throw new Error(await needExcel(`${why} 같은 형식(.${ext})으로만 저장할 수 있습니다 (요청: .${outExt})`, ext));

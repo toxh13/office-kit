@@ -4,12 +4,13 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { inflateSync } from 'node:zlib';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   createDocument, readDocument, documentInfo, listFields, fillFields, replaceText, setCells, convertDocument,
+  assertTrustedForApp, UNTRUSTED_APP_MESSAGE,
 } from '../src/core/index.mjs';
 import { pageImage } from '../src/core/render.mjs';
 import { MANUSCRIPT, COM_TESTS, ROOT, tempDir, makePdf, isPng, pngSize, xlsxWithChart, zipParts, zipText } from './helpers/fixtures.mjs';
@@ -750,5 +751,89 @@ describe('writeFileAtomic', () => {
     assert.throws(() => writeFileAtomic(f, bad));
     assert.equal(readFileSync(f, 'utf8'), '원본');
     assert.deepEqual(readdirSync(tmp.dir).filter((n) => n.endsWith('.tmp')), []);
+  });
+});
+
+// ── 인터넷에서 받은 문서 (Zone.Identifier) ─────────────────
+// Word·PowerPoint·Excel을 COM으로 열면 보호된 보기를 거치지 않는다 → core 진입점 모두 PowerShell을 부르기 전에 거절해야 한다
+describe('인터넷에서 받은 문서는 프로그램(COM)으로 열지 않음', { skip: process.platform !== 'win32' && 'Windows 전용 (Zone.Identifier)' }, () => {
+  const markInternet = (p) => writeFileSync(`${p}:Zone.Identifier`, '[ZoneTransfer]\r\nZoneId=3\r\n', 'utf8');
+  // execFile을 가짜로 바꿔 PowerShell 호출을 센다 (실제로는 아무것도 띄우지 않음)
+  const cp = createRequire(import.meta.url)('node:child_process');
+  let calls = [];
+  async function withFakePowerShell(fn) {
+    const orig = cp.execFile;
+    calls = [];
+    cp.execFile = (file, args, opts, cb) => {
+      calls.push(args);
+      const done = [opts, cb].find((f) => typeof f === 'function');
+      setImmediate(() => done(Object.assign(new Error('가짜 PowerShell'), { code: 'ENOENT' }), '', ''));
+      return { kill() {}, on() {}, once() {} };
+    };
+    syncBuiltinESMExports();
+    try { return await fn(); } finally { cp.execFile = orig; syncBuiltinESMExports(); }
+  }
+  const untrusted = async (promise) => {
+    const err = await promise.then(() => null, (e) => e);
+    assert.ok(err, '거절되지 않음');
+    assert.equal(err.code, 'UNTRUSTED', err.message);
+    assert.equal(err.message, UNTRUSTED_APP_MESSAGE);
+  };
+  const files = {};
+  before(async () => {
+    for (const ext of ['docx', 'pptx', 'xlsx']) {
+      files[ext] = tmp.path(`web.${ext}`);
+      await createDocument(files[ext], MANUSCRIPT);
+      markInternet(files[ext]);
+    }
+    files.hwp = tmp.path('web.hwp');
+    await createDocument(files.hwp, MANUSCRIPT);
+    markInternet(files.hwp);
+  });
+
+  test('assertTrustedForApp: 한글은 통과, 그 밖은 UNTRUSTED', () => {
+    assert.doesNotThrow(() => assertTrustedForApp(files.hwp));
+    assert.throws(() => assertTrustedForApp(files.docx), (e) => e.code === 'UNTRUSTED' && e.message === UNTRUSTED_APP_MESSAGE);
+    assert.doesNotThrow(() => assertTrustedForApp(tmp.path('doc.docx'))); // 표시 없는 파일
+  });
+
+  test('word_edit·word_inspect: PowerShell을 부르지 않고 UNTRUSTED', async () => {
+    const { wordEdit, wordInspect } = await import('../src/core/word.mjs');
+    await withFakePowerShell(async () => {
+      await untrusted(wordEdit(files.docx, [{ op: 'insert_page_break', after: 1 }], { output: tmp.path('web-out.docx') }));
+      await untrusted(wordInspect(files.docx));
+    });
+    assert.equal(calls.length, 0, JSON.stringify(calls));
+  });
+
+  test('ppt·excel·변환·쪽 그림·칸 채우기(app): PowerShell을 부르지 않고 UNTRUSTED', async () => {
+    const { pptInspect, pptEdit } = await import('../src/core/ppt.mjs');
+    const { excelInspect, excelEdit } = await import('../src/core/excel.mjs');
+    await withFakePowerShell(async () => {
+      await untrusted(pptInspect(files.pptx));
+      await untrusted(pptEdit(files.pptx, [{ op: 'delete_slide', slide: 2 }], { output: tmp.path('web-out.pptx') }));
+      await untrusted(excelInspect(files.xlsx, { engine: 'app' }));
+      await untrusted(excelEdit(files.xlsx, [{ op: 'set_cells', sheet: 1, cells: { A1: 1 } }], { output: tmp.path('web-out.xlsx'), engine: 'app' }));
+      await untrusted(convertDocument(files.docx, tmp.path('web-out.pdf')));
+      await untrusted(pageImage(files.docx, 1));
+      await untrusted(pageImage(files.pptx, 1));
+      await untrusted(listFields(files.docx, { engine: 'app' }));
+      await untrusted(fillFields(files.docx, { 담당자: '홍길동' }, { output: tmp.path('web-fill.docx'), engine: 'app' }));
+    });
+    assert.equal(calls.length, 0, JSON.stringify(calls));
+  });
+
+  test('파일 엔진으로 되는 일은 그대로 (자동 엔진)', async () => {
+    const { excelInspect } = await import('../src/core/excel.mjs');
+    await withFakePowerShell(async () => {
+      const f = await listFields(files.docx);
+      assert.ok(Array.isArray(f));
+      const r = await fillFields(files.docx, { 담당자: '홍길동' }, { output: tmp.path('web-fill2.docx') });
+      assert.ok(existsSync(r.output));
+      const x = await excelInspect(files.xlsx);
+      assert.equal(x.format, 'xlsx');
+      assert.equal((await readDocument(files.docx)).engine, 'file');
+    });
+    assert.equal(calls.length, 0, JSON.stringify(calls));
   });
 });
