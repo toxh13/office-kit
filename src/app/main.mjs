@@ -1423,7 +1423,7 @@ async function start() {
     const pidDir = join(userData, COM_PIDS, chatId);
     let comPidDir;
     try { mkdirSync(pidDir, { recursive: true }); comPidDir = pidDir; } catch (err) { console.error('[ai:send] PID 폴더', err?.message ?? err); }
-    const mcp = { ...base, env: { ...(base.env ?? {}), ...ai.aiMcpEnv(path, { comPidDir }) } };
+    const mcp = { ...base, env: { ...(base.env ?? {}), ...ai.aiMcpEnv({ edit: path }, { comPidDir }) } };
     // AI가 고치기 전 상태를 버전으로 남긴다 (대화 한 번마다. 내용이 같으면 있던 것을 다시 씀)
     // → 끝날 때 이 버전과 다르면 화면에 '바뀐 내용 보기 · 이 대화 전으로 되돌리기'를 띄운다
     let before = null;
