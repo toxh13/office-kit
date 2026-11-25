@@ -693,11 +693,11 @@ describe('기존 작업과 함께', () => {
       h.addField('담당자', { label: '2장 담당' });
       h.addField('기한', { label: '기한' });
       h.addField('담당자', { label: '3장 담당' });
-      assert.equal(applyHwpOp(h, { op: 'fill', values: { 담당자: '김선호', 기한: '10월' } }), '채우기: 담당자(3곳), 기한');
-      assert.deepEqual(h.fields().map((f) => [f.name, f.value]), [['담당자', '김선호'], ['담당자', '김선호'], ['기한', '10월'], ['담당자', '김선호']]);
+      assert.equal(applyHwpOp(h, { op: 'fill', values: { 담당자: '홍길동', 기한: '10월' } }), '채우기: 담당자(3곳), 기한');
+      assert.deepEqual(h.fields().map((f) => [f.name, f.value]), [['담당자', '홍길동'], ['담당자', '홍길동'], ['기한', '10월'], ['담당자', '홍길동']]);
       for (const e of FORMATS) {
-        reopen(h.save(tmp.path(`fill-all.${e}`)), (r) => assert.deepEqual(r.fields().map((f) => f.value), ['김선호', '김선호', '10월', '김선호'], e));
-        assert.equal((svgTexts(svgOf(tmp.path(`fill-all.${e}`))).map((x) => x.t).join('').match(/김선호/g) ?? []).length, 3, `${e} 그려진 값`);
+        reopen(h.save(tmp.path(`fill-all.${e}`)), (r) => assert.deepEqual(r.fields().map((f) => f.value), ['홍길동', '홍길동', '10월', '홍길동'], e));
+        assert.equal((svgTexts(svgOf(tmp.path(`fill-all.${e}`))).map((x) => x.t).join('').match(/홍길동/g) ?? []).length, 3, `${e} 그려진 값`);
       }
       assert.deepEqual(h.fill({ 기한: '11월' }), ['기한']);
     } finally { h.close(); }

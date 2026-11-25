@@ -309,11 +309,11 @@ describe('칸 채우기: 머리글·띄어 쓴 자리표시자', () => {
     const names = (await listFields(src, FILE)).map((f) => f.name).sort();
     assert.deepEqual(names, ['날짜', '담당자', '작성자']);
     const out = tmp.path('header-out.docx');
-    const r = await fillFields(src, { 작성자: '김선호', 담당자: '홍길동', 날짜: '2026-10-17', 없음: 'x' }, { output: out, engine: 'file' });
+    const r = await fillFields(src, { 작성자: '홍길동', 담당자: '홍길동', 날짜: '2026-10-17', 없음: 'x' }, { output: out, engine: 'file' });
     assert.deepEqual(r.filled, ['작성자', '담당자', '날짜']);
     assert.deepEqual(r.missing, ['없음']);
     const header = (await zipParts(out)).find((f) => /^word\/header\d*\.xml$/.test(f));
-    assert.match(await zipText(out, header), /김선호/);
+    assert.match(await zipText(out, header), /홍길동/);
     const body = await textOf(out);
     assert.ok(body.includes('본문 홍길동 입니다') && !body.includes('{{'), body);
   });
@@ -844,3 +844,20 @@ describe('인터넷에서 받은 문서는 프로그램(COM)으로 열지 않음
     assert.equal(calls.length, 0, JSON.stringify(calls));
   });
 });
+
+test('예제 문서에 개인 경로가 없다', () => {
+  // 공개 저장소: examples/ 아래 모든 파일(HWP 요약 정보 포함)에 실제 사용자 폴더 경로가 남아 있으면 안 된다.
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
+  const files = walk(join(ROOT, 'examples'));
+  assert.ok(files.length > 0);
+  const re = /:\\Users\\(?!user\\|사용자\\)/i;
+  for (const f of files) {
+    const buf = readFileSync(f);
+    for (const enc of ['utf8', 'utf16le']) {
+      assert.ok(!re.test(buf.toString(enc)), `${f} (${enc}) 에 개인 경로가 있다`);
+    }
+    // UTF-16LE는 홀수 오프셋에서 시작하는 글도 있으므로 한 바이트 밀어서 한 번 더 본다.
+    assert.ok(!re.test(buf.subarray(1).toString('utf16le')), `${f} (utf16le+1) 에 개인 경로가 있다`);
+  }
+});
+

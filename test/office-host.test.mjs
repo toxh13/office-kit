@@ -153,9 +153,9 @@ test('session.get: 설계 6장 모양 (ko-KR, 이름이 없으면 나, 파일 �
 });
 
 test('session.get: 사용자 이름은 main이 준 것 (변경 내용 추적·메모 작성자), 제어 문자 빼고 64자까지', async () => {
-  const { port } = setup({ doc: { userName: '김선호' } });
+  const { port } = setup({ doc: { userName: '홍길동' } });
   const { msg } = await ask(port, 'session.get');
-  assert.deepEqual(msg.result.user, { name: '김선호' });
+  assert.deepEqual(msg.result.user, { name: '홍길동' });
   assert.deepEqual(sessionInfo({ name: 'a.docx', ext: 'docx', userName: ' 이\u0007름 ' }).user, { name: '이름' });
   assert.equal(sessionInfo({ name: 'a.docx', ext: 'docx', userName: 'ㄱ'.repeat(100) }).user.name.length, 64);
   for (const v of ['', '   ', null, 7, {}]) assert.deepEqual(sessionInfo({ name: 'a.docx', ext: 'docx', userName: v }).user, { name: '나' }, String(v));

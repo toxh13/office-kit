@@ -122,6 +122,7 @@ office-editor-source-<version>.zip attached to each Release.
 
 - @resvg/resvg-js — Mozilla Public License 2.0 (used unmodified)
   https://github.com/yisibl/resvg-js
+  License text: LICENSES/MPL-2.0.txt
 
 - docx — MIT License, Dolan Miu
   https://github.com/dolanmiu/docx

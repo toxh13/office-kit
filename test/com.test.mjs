@@ -51,7 +51,7 @@ describe('COM 오류 → 한국어', () => {
     for (const msg of [
       'This file is in use by another application or user. (C:\\a\\b.docx)',
       'The process cannot access the file because it is being used by another process.',
-      "'b.xlsx' is locked for editing by '김선호'.",
+      "'b.xlsx' is locked for editing by '홍길동'.",
       'save failed: C:\\a\\b.pptx (The file is in use by another process.)',
       'open failed: C:\\a\\b.docx (Word cannot save this file because it is already open elsewhere.)',
       'Your changes could not be saved because of a sharing violation.',

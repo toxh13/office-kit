@@ -27,3 +27,15 @@ preview-cache/
 Thumbs.db
 desktop.ini
 ~$*
+
+# 비밀·인증서·로컬 설정
+.env*
+*.pfx
+*.p12
+*.pem
+*.key
+.claude/settings.local.json
+
+# 시험 범위 보고서·묶음 파일
+coverage/
+*.tgz
