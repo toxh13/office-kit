@@ -74,10 +74,10 @@ async function start() {
 
   // 허브(Hub): 홈 종류 뷰(홈 탭·문서 탭)마다 따로 두는 문맥 (판정 2·3: 홈 탭은 문서를 품지 않는다 → 홈 허브의 current는 늘 null)
   //   { wc, tw: 그 탭 창, tabId: 문서 탭 id (홈이면 'home'), current: 열린 문서 { path, backup, stat, renderedStat, quietUntil } | null,
-  //     watcher·watchTimer: 열린 문서의 파일 감시, pendingFile: 화면이 준비되면 열 파일(첫 탭 창의 홈만), rendererReady }
+  //     watcher·watchTimer: 열린 문서의 파일 감시, rendererReady }
   const hubs = new Map();   // webContents → Hub
   function makeHub(wc, tw, tabId) {
-    const hub = { wc, tw, tabId, current: null, watcher: null, watchTimer: null, pendingFile: null, rendererReady: false };
+    const hub = { wc, tw, tabId, current: null, watcher: null, watchTimer: null, rendererReady: false };
     hubs.set(wc, hub);
     // 뷰가 닫히면 허브도 정리한다 (감시 끄기)
     wc.once('destroyed', () => { stopWatch(hub); hubs.delete(wc); });
@@ -188,6 +188,8 @@ async function start() {
       hasSession: sessions.has(key(hub.current.path)),
       editor: editorState(hub.current.path),
       aiBusy: aiBusyFor(hub.current.path),
+      // 인터넷에서 받은 Office 문서: 보기 전용 (띠 + 'Windows 프로그램으로 열기', 직접 편집 없음 — D5)
+      zone3Preview: zone3Office(hub.current.path),
     };
   }
 
@@ -215,6 +217,8 @@ async function start() {
   /** 열 때 편집 탭으로 열지 (설정 '문서를 열면': 편집 / 미리보기). 편집 탭으로 열 수 있는 형식만 */
   // 확인용 캡처는 OFFICEKIT_SMOKE_AUTOEDIT=1일 때만 (다른 캡처는 주 창만 찍는다)
   const wantsEditor = (p) => (!SMOKE || process.env.OFFICEKIT_SMOKE_AUTOEDIT === '1') && settings.get('openAction') !== 'preview' && !!editorKind(p);
+  /** 인터넷에서 받은 Office 문서인가 (Zone 3, 한글·PDF 제외) → 어느 길로 열든 보기 전용 문서 탭 (D5) */
+  const zone3Office = (p) => { const ext = extOf(p); return ext !== 'pdf' && !core.isHwp(ext) && core.isFromInternet(p); };
 
   /**
    * 문서 탭 뷰(허브)에 문서 열기: 처음 연 상태 버전·최근 목록·감시. 편집 탭으로 열지는 openPath가 정한다 (autoEdit 왕복 없음)
@@ -311,8 +315,9 @@ async function start() {
     } catch { return null; }
   }
 
-  // 미리보기 폴더 정리 (문서 하나의 PDF만 남긴다)
+  // 미리보기 폴더 정리: 지금 열린 문서(모든 탭·창의 문서 탭)마다 가장 새 PDF만 남긴다
   const previewFiles = createPreviewFiles(previewDir);
+  const previewDocPaths = () => allHubs().map((h) => h.current?.path).filter(Boolean);
   const cleanPreviews = (keep) => previewFiles.clean(keep);
 
   const clip = (rows, maxRows = 500, maxCols = 60) => (rows ?? []).slice(0, maxRows).map((r) => (r ?? []).slice(0, maxCols).map((v) => String(v ?? '')));
@@ -358,7 +363,7 @@ async function start() {
     if (hub.current === doc) { doc.renderedStat = st; doc.stat = st; }
     const base = { mode: m, ms: Date.now() - started, doc: hub.current === doc ? docInfo(hub) : null };
     if (res.kind === 'pdf') {
-      const pdf = previewFiles.settle(res.file, doc.path, { current: hub.current === doc });
+      const pdf = previewFiles.settle(res.file, doc.path, { current: hub.current === doc, keep: previewDocPaths() });
       // 늦게 끝난 미리보기: 지금 문서의 PDF를 지우지 않고, 화면도 이 결과를 버린다
       if (!pdf) return { ...base, kind: 'stale' };
       return { ...base, kind: 'pdf', engine: res.engine, cached: !!res.cached, url: `${pathToFileURL(pdf.file).href}#view=FitH&navpanes=0`, pages: res.pages };
@@ -1090,6 +1095,8 @@ async function start() {
 
   /** 편집 탭으로 열 수 있는 문서인지 미리 확인 → 종류 ('hwp' | 'office'). 아니면 한국어 이유(code)로 던진다 */
   function editorCheck(p) {
+    // 인터넷에서 받은 Office 문서는 앱 안에서 편집하지 않는다 (보기 전용 문서 탭, D5)
+    if (zone3Office(p)) throw fail(core.UNTRUSTED_APP_MESSAGE, 'UNTRUSTED');
     const kind = editorKind(p);
     if (!kind && extOf(p) === 'pdf') {
       throw fail('PDF는 앱 안에서 바로 고칠 수 없어요. 글자를 고치려면 원본 문서(한글·Word 등)를 열어 고친 뒤 PDF로 다시 저장해 주세요. AI 대화로 내용을 묻거나 요약하는 것은 PDF에서도 돼요.', 'PDF_EDIT');
@@ -1259,8 +1266,7 @@ async function start() {
     if (r.canceled) return;
     for (const f of r.filePaths) {
       try {
-        if (wantsDocWindow(f)) await openAsDocument(f, tw);
-        else await openPath(tw, f);
+        await openFromExplorer(f, tw);
       } catch (err) { toastIn(tw, err.message); }
     }
   }
@@ -1333,14 +1339,26 @@ async function start() {
   }
 
   /**
-   * 탐색기에서 연 문서: 편집할 수 있으면 편집 탭으로 (옛 형식은 새 형식으로 바꿔 연다). 편집할 수 없는 문서(PDF·암호 문서 등)는 문서 탭으로.
-   * 이미 열린 문서(바꿔 연 원본 포함)면 그 탭으로
+   * 탐색기에서 연 문서(시작 인수·second-instance·편집 탭의 Ctrl+O) → { tabId, mode }: 늘 그 탭 창(없으면 최근 탭 창, 그것도 없으면 새 탭 창)의 새 탭.
+   * 이미 열린 문서(대소문자만 다른 경로·바꿔 연 원본 포함, 창을 넘어서도)면 그 탭으로. 설정이 '편집'이면 Word처럼 바로 편집 탭
+   * (옛 형식은 새 형식으로 바꿔 연다). 편집할 수 없는 문서(PDF·인터넷 Office·암호 문서 등)는 문서 탭으로.
+   * 갈래는 첫 await 전에 정한다 (줄에서 꺼낸 순간의 설정으로)
    */
-  async function openAsDocument(p, tw = null) {
+  async function openFromExplorer(p, tw = null) {
     p = docPath(p);
     tw = tw && tabWindows.has(tw.shell.id) ? tw : recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
     const hit = findTab(p);
-    if (hit) { activateTab(hit.tw, hit.tab.id); focusShell(hit.tw); return { path: p, mode: 'reused' }; }
+    if (hit) {
+      activateTab(hit.tw, hit.tab.id); focusShell(hit.tw);
+      if (!SMOKE) { try { settings.addRecent(hit.tab.path); } catch {} }
+      return { tabId: hit.tab.id, mode: 'reused' };
+    }
+    focusShell(tw);
+    // 설정 '미리보기'·확인용 캡처·시험(OFFICEKIT_DOC_WINDOW=0)·인터넷 Office(D5)는 홈에서 연 것과 같게
+    if (!wantsDocWindow(p) || SMOKE || process.env.OFFICEKIT_DOC_WINDOW === '0' || zone3Office(p)) {
+      const r = await openPath(tw, p);
+      return { tabId: r.tabId, mode: r.mode };
+    }
     const ext = extOf(p);
     const kind = editorKind(p);
     try {
@@ -1352,31 +1370,32 @@ async function start() {
           if (bad) throw fail(bad.message, bad.code);
         }
         noteOpened(p);
-        await openEditorTab(tw, p, { noted: true });
-        return { path: p, mode: 'editor' };
+        const r = await openEditorTab(tw, p, { noted: true });
+        return { tabId: r.tabId, mode: r.mode };
       }
       const to = CONVERT_FOR_EDIT[ext];
-      if (!to) { openDocTab(tw, p); return { path: p, mode: 'doc' }; }
+      if (!to) return { tabId: openDocTab(tw, p).tabId, mode: 'doc' };
       if (!editors.available('office').available) throw fail('편집기가 없어 미리보기로 엽니다', 'EDITOR_MISSING');
       noteOpened(p);
       const busy = busyWindow(`‘${basename(p)}’를 고칠 수 있게 바꾸는 중…`);
       let tmp;
       try { tmp = await convertForEditing(p, to); } finally { busy.close(); }
+      let r;
       try {
-        await openEditorTab(tw, tmp, { convertedFrom: p, noted: true });
+        r = await openEditorTab(tw, tmp, { convertedFrom: p, noted: true });
       } catch (err) {
         // 편집 탭을 못 열었으면 방금 만든 임시 사본 폴더(userData/converted/<…>)를 지운다 (탭이 열려 있으면 탭이 닫힐 때 지운다)
         if (!editors.isOpen(tmp)) { try { rmSync(dirname(tmp), { recursive: true, force: true }); } catch {} }
         throw err;
       }
-      return { path: p, mode: 'converted' };
+      return { tabId: r.tabId, mode: 'converted' };
     } catch (err) {
       // 편집 탭으로 못 열면 문서 탭(미리보기)으로 (이유를 알린다)
       console.error('[doc-window]', err?.message ?? err);
       const r = openDocTab(tw, p);
       const hub = hubOf(tw.docViews.get(r.tabId)?.webContents);
       setTimeout(() => sendTo(hub?.wc, 'toast', { type: 'warn', message: err?.message ?? String(err) }), 400);
-      return { path: p, mode: 'doc' };
+      return { tabId: r.tabId, mode: 'doc' };
     }
   }
 
@@ -1392,7 +1411,6 @@ async function start() {
   /** 그 허브(없으면 최근 탭 창)의 대화상자 부모 창 (판정 12) */
   const winOf = (hub) => ((hub?.tw && tabWindows.has(hub.tw.shell.id) ? hub.tw : recentWindow())?.shell.dialogParent() ?? undefined);
   const twOfWin = (w) => [...tabWindows.values()].find((tw) => tw.shell.win === w) ?? null;
-  const homeHubOf = (tw) => (tw?.home ? hubOf(tw.home.webContents) : null);
 
   /** 탭 창을 앞으로 */
   function focusShell(tw) {
@@ -1619,7 +1637,7 @@ async function start() {
   function openDocTab(tw, p, { activate = true } = {}) {
     p = docPath(p);
     const view = makeHubView(tw, 'doc');
-    const t = tw.tabs.add({ type: 'doc', path: p, title: basename(p) }, { activate: false });
+    const t = tw.tabs.add({ type: 'doc', path: p, title: basename(p), zone3: zone3Office(p) }, { activate: false });
     const hub = makeHub(view.webContents, tw, t.id);
     tw.docViews.set(t.id, view);
     tw.shell.attach(view, 'content');
@@ -1754,6 +1772,8 @@ async function start() {
       return { tabId: hit.tab.id, mode: 'reused', path: hit.tab.path, reused: true, editor: editorState(hit.tab.path), notice: null };
     }
     tw = tw && tabWindows.has(tw.shell.id) ? tw : recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
+    // 인터넷에서 받은 Office 문서는 설정과 상관없이 보기 전용 문서 탭 (D5)
+    if (zone3Office(p)) return openDocTab(tw, p, { activate });
     if (wantsEditor(p)) {
       try {
         editorCheck(p);
@@ -2239,15 +2259,12 @@ async function start() {
 
   handle('app:init', ({ hub, tw, wc }) => {
     if (hub) hub.rendererReady = true;
-    const pending = hub?.pendingFile ?? null;
-    // 명령줄로 받은 파일은 첫 탭 창 홈 뷰가 준비되면 그 파일 탭을 연다 (응답이 먼저 가도록 다음 틱에)
-    if (pending) {
-      hub.pendingFile = null;
-      setTimeout(() => {
-        openPath(tw, pending)
-          .then((r) => { const cur = targetOf(tw); if (SMOKE_DIFF && cur && r?.mode === 'doc') copyFileSync(SMOKE_DIFF, cur); })
-          .catch((err) => sendTo(hub.wc, 'toast', { type: 'error', message: err.message }));
-      }, 0);
+    // 첫 탭 창 홈 뷰가 준비되면 줄에 선 탐색기 파일(명령줄 파일 먼저)을 차례로 연다 (응답이 먼저 가도록 다음 틱에)
+    let opening = false;
+    if (!opensReady && hub?.tabId === 'home') {
+      opensReady = true;
+      opening = openQueue.length > 0;
+      setTimeout(flushOpens, 0);
     }
     return {
       version: app.getVersion(), packaged: app.isPackaged, platform: process.platform,
@@ -2256,7 +2273,7 @@ async function start() {
       doc: hub ? docInfo(hub) : targetInfo(targetOf(tw)),
       editor: editorInfo(),
       smoke: SMOKE ? { chat: SMOKE_CHAT, settings: SMOKE_SETTINGS, newdoc: SMOKE_NEWDOC, editor: SMOKE_EDITOR, diff: !!SMOKE_DIFF, tool: SMOKE_TOOL, batch: SMOKE_BATCH } : null,
-      opening: !!pending, view: viewRecs.get(wc)?.role ?? null,
+      opening, view: viewRecs.get(wc)?.role ?? null,
     };
   });
 
@@ -2669,24 +2686,45 @@ async function start() {
 
   // ── 시작 ─────────────────────────────────────────────
 
-  const argvFile = fileFromArgv(process.argv);
-  // 시작은 탭 창 하나. 명령줄 파일은 홈 뷰가 준비되면 그 파일 탭을 연다 (탐색기 시작·평소 시작 복원은 탭 열기·복원 작업에서)
-  let earlyFile = null; // 탭 창을 만들기 전에 받은 탐색기 파일
+  // 탐색기에서 연 파일의 줄 (Section 1 #6): 첫 탭 창의 홈 뷰가 준비(app:init)되기 전에 온 것은 줄에 섰다가 차례로 연다.
+  // 시작은 탭 창 하나. 명령줄에 파일이 있으면(D4 탐색기 시작) 홈 + 그 파일 탭 (지난 세션 복원은 하지 않는다)
+  const openQueue = [];
+  let opensReady = false;
+  let flushing = null;
+  /** 탐색기 파일 하나를 줄에 세운다 (준비됐으면 바로 연다) */
+  function queueOpen(p) {
+    if (!p) return;
+    openQueue.push(p);
+    flushOpens();
+  }
+  /** 줄에 선 파일을 차례로 연다 (하나씩 끝나기를 기다린다). 첫 파일은 부른 자리에서 바로 갈래를 정한다 */
+  function flushOpens() {
+    if (!opensReady || flushing) return;
+    flushing = (async () => {
+      while (openQueue.length) {
+        const p = openQueue.shift();
+        try {
+          const r = await openFromExplorer(p);
+          // 확인용 캡처: 문서 탭으로 연 문서를 바뀐 내용으로 바꿔 둔다
+          const cur = SMOKE_DIFF && r?.mode === 'doc' ? targetOf(recentWindow()) : null;
+          if (cur) copyFileSync(SMOKE_DIFF, cur);
+        } catch (err) { toastIn(recentWindow(), err?.message ?? String(err)); }
+      }
+    })().finally(() => {
+      flushing = null;
+      // 끝나는 사이에 들어온 것
+      if (openQueue.length) flushOpens();
+    });
+  }
+  queueOpen(fileFromArgv(process.argv));
 
   app.on('before-quit', () => { appQuitting = true; });
 
   app.on('second-instance', (_e, argv, cwd) => {
-    const f = fileFromArgv(argv, cwd);
+    // 탐색기에서 연 문서 → 최근 탭 창의 새 탭 (이미 열린 문서면 그 탭). 준비 전이면 줄에 선다
     const tw = recentWindow();
-    if (!tw) { if (f) earlyFile = f; return; }
-    focusShell(tw);
-    if (!f) return;
-    // 탐색기에서 연 문서 → 그 탭 창의 새 탭 (편집할 수 있으면 편집 탭, 이미 열린 문서면 그 탭)
-    if (wantsDocWindow(f) && !SMOKE && process.env.OFFICEKIT_DOC_WINDOW !== '0') {
-      openAsDocument(f, tw).catch((err) => toastIn(tw, err.message));
-      return;
-    }
-    openPath(tw, f).catch((err) => toastIn(tw, err.message));
+    if (tw) focusShell(tw);
+    queueOpen(fileFromArgv(argv, cwd));
   });
 
   app.on('window-all-closed', () => app.quit());
@@ -2722,7 +2760,5 @@ async function start() {
   try { rmSync(join(userData, COM_PIDS), { recursive: true, force: true }); } catch (err) { console.error('[ai] 남은 PID 기록 정리 실패:', err?.message ?? err); }
   buildMenu();
   const savedWin = SMOKE ? null : settings.get('window');
-  const firstTw = createTabWindowFor({ bounds: initialBounds(), maximized: !!savedWin?.maximized });
-  const firstHome = homeHubOf(firstTw);
-  if (firstHome) firstHome.pendingFile = argvFile ?? earlyFile;
+  createTabWindowFor({ bounds: initialBounds(), maximized: !!savedWin?.maximized });
 }

@@ -289,16 +289,33 @@ export const PREVIEW_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 export const PREVIEW_CACHE_VERSION = 2;
 
 /**
- * 미리보기 폴더(userData/preview) 정리. 문서 하나의 미리보기 PDF만 남기고 나머지는 지운다.
+ * 미리보기 폴더(userData/preview) 정리. 열려 있는 문서(여러 탭·창)마다 가장 새 미리보기 PDF 하나만 남기고 나머지는 지운다.
+ * 어느 PDF가 어느 문서 몫인지는 이번 실행에서 놓은 것만 안다 (주인 모를 파일 = 지난 실행의 남은 것 → 지운다)
  */
 export function createPreviewFiles(dir) {
-  /** keep 폴더(또는 파일)만 남김 */
+  const docKeyOf = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
+  // 놓은 PDF(폴더, 옮기지 못했으면 파일) 경로 → { doc: 문서 키, seq: 놓은 차례 }
+  const owners = new Map();
+
+  /** keep: 남길 문서 경로들 (그 문서마다 가장 새 PDF만 남김). null이면 모두 지운다 */
   function clean(keep) {
+    const want = new Set((keep ?? []).filter(Boolean).map(docKeyOf));
+    // 문서마다 가장 새 것
+    const newest = new Map();
+    for (const [full, o] of owners) {
+      if (!want.has(o.doc)) continue;
+      const cur = newest.get(o.doc);
+      if (!cur || owners.get(cur).seq < o.seq) newest.set(o.doc, full);
+    }
+    const keepFull = new Set(newest.values());
     try {
       for (const f of readdirSync(dir)) {
         const full = join(dir, f);
-        if (keep && samePath(full, keep)) continue;
-        try { rmSync(full, { recursive: true, force: true }); } catch {} // PDF 뷰어가 잡고 있으면 다음에 지운다
+        if ([...keepFull].some((k) => samePath(full, k))) continue;
+        try {
+          rmSync(full, { recursive: true, force: true });
+          owners.delete(full);
+        } catch {} // PDF 뷰어가 잡고 있으면 다음에 지운다
       }
     } catch {}
   }
@@ -306,26 +323,30 @@ export function createPreviewFiles(dir) {
   // PDF 뷰어 제목에 내부 이름(s.xlsx.123.pdf) 대신 문서 이름이 보이도록 폴더를 나눠 옮긴다
   let seq = 0;
   function tidy(file, docPath) {
+    const n = ++seq;
+    let pdf;
     try {
-      const sub = join(dir, `${Date.now()}-${++seq}`);
+      const sub = join(dir, `${Date.now()}-${n}`);
       mkdirSync(sub, { recursive: true });
       const out = join(sub, `${basename(docPath).replace(/\.[^.]+$/, '')}.pdf`);
       renameSync(file, out);
-      return { file: out, dir: sub };
-    } catch { return { file, dir: null }; }
+      pdf = { file: out, dir: sub };
+    } catch { pdf = { file, dir: null }; }
+    owners.set(pdf.dir ?? pdf.file, { doc: docKeyOf(docPath), seq: n });
+    return pdf;
   }
 
   /**
-   * 다 만든 미리보기 PDF를 둔다 → { file, dir }.
-   * 늦게 끝난 것(그 사이 다른 문서로 넘어감)은 이 PDF만 지우고 null (지금 문서의 미리보기는 그대로 둔다)
+   * 다 만든 미리보기 PDF를 둔다 → { file, dir }. keep: 지금 열린 다른 문서들 (그 문서들의 가장 새 PDF는 남긴다).
+   * 늦게 끝난 것(그 사이 그 탭이 다른 문서로 넘어감)은 이 PDF만 지우고 null (다른 미리보기는 그대로 둔다)
    */
-  function settle(file, docPath, { current = true } = {}) {
+  function settle(file, docPath, { current = true, keep = [] } = {}) {
     if (!current) {
       try { rmSync(file, { force: true }); } catch {}
       return null;
     }
     const pdf = tidy(file, docPath);
-    clean(pdf.dir ?? pdf.file);
+    clean([...(keep ?? []), docPath]);
     return pdf;
   }
 

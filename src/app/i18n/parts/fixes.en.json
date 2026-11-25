@@ -62,5 +62,7 @@
  "문서 편집 탭이 {0}개 열려 있습니다. 탭마다 메모리를 약 0.5GB 쓰므로, 쓰지 않는 탭은 닫아 주세요.": "{0} document editor tabs are open. Each uses about 0.5 GB of memory, so please close the ones you aren't using.",
  "편집 탭을 붙일 창이 없습니다": "No window to attach the editor tab to",
  "패널 너비 조절": "Resize panel",
- "이 문서는 열린 탭이 아니에요": "This document isn't open in a tab"
+ "이 문서는 열린 탭이 아니에요": "This document isn't open in a tab",
+ "인터넷에서 받은 파일이에요. 편집하려면 파일 속성에서 차단을 해제한 뒤 다시 여세요.": "This file came from the internet. To edit it, unblock it in the file's Properties and open it again.",
+ "Windows 프로그램으로 열기": "Open in Windows program"
 }

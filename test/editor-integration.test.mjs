@@ -7,6 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
 import {
   copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
@@ -217,6 +219,16 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.doesNotMatch(JSON.stringify(fake.menu.map((m) => m.label)), /ONLYOFFICE/i);
   });
 
+  const queuedPdf = join(docs, '줄 시험.pdf');
+  await t.test('second-instance: 준비 전 요청은 줄에 섰다가 차례로, 같은 문서·대소문자 다른 경로는 그 탭으로', async () => {
+    writeFileSync(queuedPdf, makePdf(1));
+    // 첫 탭 창 홈 뷰가 준비(app:init)되기 전에 탐색기에서 두 번 더 열었다: 다른 PDF, 시작 문서(대소문자만 다른 경로)
+    fake.app.emit('second-instance', {}, [process.execPath, queuedPdf], docs);
+    fake.app.emit('second-instance', {}, [process.execPath, process.platform === 'win32' ? docPath.toUpperCase() : docPath], docs);
+    await sleep(150);
+    assert.deepEqual(tabList().tabs.map((x) => x.type), ['home'], '준비 전에는 아무 탭도 열지 않는다');
+  });
+
   let init;
   await t.test('app:init: 종류별 편집기 묶음 상태를 알려 준다 (없으면 한국어 이유)', async () => {
     init = await call('app:init');
@@ -237,6 +249,14 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const opened = await until(() => lastSent('doc:opened', (d) => d?.path === docPath));
     assert.ok(opened, '인수로 받은 문서를 연다');
     assert.deepEqual(opened.editor, { open: false, dirty: false });
+    // D4: 탐색기로 시작 → 홈 + 그 파일 탭. 준비 전에 줄에 선 열기는 그 뒤에 차례로 (같은 문서는 새 탭 없이 그 탭으로)
+    assert.ok(await until(() => tabList().tabs.length >= 3 && tabList().active === tabOf(docPath)?.id), JSON.stringify(tabList()));
+    await sleep(100);
+    assert.deepEqual(tabList().tabs.map((x) => (x.type === 'home' ? '홈' : basename(x.path))), ['홈', '보고서.hwpx', '줄 시험.pdf']);
+    // 줄 시험 PDF 탭은 닫아 둔다 (아래 시험은 홈 + 시작 문서에서 시작)
+    assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(queuedPdf).id)).ok, true);
+    assert.deepEqual(tabList().tabs.map((x) => (x.type === 'home' ? '홈' : basename(x.path))), ['홈', '보고서.hwpx']);
+    assert.equal(tabList().active, tabOf(docPath).id);
   });
 
   await t.test('doc:edit: 편집 창 형식이 아니면(csv) 거절하고 프로그램에서 열기를 안내', async () => {
@@ -1382,6 +1402,16 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(d.ok, true, d.error);
     assert.equal(d.value.ext, 'xlsx');
     assert.equal(d.value.convertedFrom, '명단.csv');
+    // 원본 csv를 탐색기에서 다시 열면 바꿔 연 그 탭으로 (새 편집 뷰·탭 없이)
+    const nViews = editorViews().length;
+    const nTabs = tabList().tabs.length;
+    assert.equal((await callAs('tabstrip', 'tabs:home')).ok, true);
+    fake.app.emit('second-instance', {}, [process.execPath, csv], docs);
+    assert.ok(await until(() => tabList().active !== 'home'), '그 탭으로 가야 한다');
+    assert.equal(tabList().tabs.find((x) => x.id === tabList().active)?.title, '명단.csv');
+    await sleep(200);
+    assert.equal(editorViews().length, nViews);
+    assert.equal(tabList().tabs.length, nTabs);
     const temp = (await import('node:path')).dirname(join(ud, 'converted'));
     void temp;
     // 첫 저장: 원본 옆 '명단.xlsx'를 고르게 하고, 그 파일을 편집하는 창이 된다
@@ -1400,6 +1430,69 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(r2.ok, true, r2.error);
     assert.equal(r2.value.name, '명단.xlsx');
     assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(target).id)).ok, true);
+  });
+
+  await t.test('탐색기 인터넷 docx → 문서 탭(편집 뷰 없음), zone3Preview, doc:edit UNTRUSTED, openInApp은 연결 프로그램으로 — 의도한 변경', { skip: process.platform !== 'win32' && 'Zone.Identifier' }, async () => {
+    const net = join(docs, '인터넷 자료.docx');
+    const net2 = join(docs, '인터넷 자료 둘.docx');
+    for (const p of [net, net2]) {
+      copyFileSync(docxPath, p);
+      writeFileSync(`${p}:Zone.Identifier`, '[ZoneTransfer]\r\nZoneId=3\r\n');
+    }
+    // 설정 '문서를 열면: 편집' + 탐색기 문서 창 방식 → 예전에는 편집기로 바로 열렸다
+    assert.equal((await call('settings:set', { openAction: 'edit' })).ok, true);
+    const nViews = editorViews().length;
+    process.env.OFFICEKIT_DOC_WINDOW = '1';
+    try {
+      fake.app.emit('second-instance', {}, [process.execPath, net], docs);
+      assert.ok(await until(() => tabOf(net) && docWc(net)), '탭이 열려야 한다');
+    } finally { process.env.OFFICEKIT_DOC_WINDOW = '0'; }
+    await sleep(200);
+    assert.equal(tabOf(net).type, 'doc', '편집 탭이 아니라 문서 탭(미리보기)');
+    assert.equal(tabOf(net).zone3, true, '탭 줄에 인터넷 파일 표시');
+    assert.equal(editorViews().length, nViews, '편집 뷰를 만들지 않는다 (editor:* 채널이 열릴 길 없음)');
+    assert.equal(lastSent('doc:opened', (d) => d?.path === net)?.zone3Preview, true);
+    // '직접 편집'은 거절
+    const ed = await callAs(net, 'doc:edit');
+    assert.equal(ed.ok, false);
+    assert.equal(ed.code, 'UNTRUSTED');
+    assert.equal(editorViews().length, nViews);
+    assert.equal(tabOf(net).type, 'doc');
+    // 홈에서 연 인터넷 문서도 문서 탭, 같은 문서를 다시 열면 그 탭으로
+    const r2 = await callAs('home', 'doc:open', net2);
+    assert.equal(r2.ok, true, r2.error);
+    assert.equal(r2.value.mode, 'doc');
+    assert.equal(editorViews().length, nViews);
+    const again = await callAs('home', 'doc:open', net);
+    assert.equal(again.value.mode, 'reused');
+    assert.equal(again.value.tabId, tabOf(net).id);
+    // 평범한 문서는 zone3Preview 아님
+    assert.equal(lastSent('doc:opened', (d) => d?.path === docPath)?.zone3Preview, false);
+    // 'Windows 프로그램으로 열기' → 연결 프로그램으로 (자동화 COM 아님). 실제 프로그램은 띄우지 않는다
+    const req = createRequire(import.meta.url);
+    const cp = req('node:child_process');
+    const { syncBuiltinESMExports } = req('node:module');
+    const spawned = [];
+    const spawn0 = cp.spawn;
+    cp.spawn = (file, args) => {
+      spawned.push([file, ...(args ?? [])].join(' '));
+      const child = new EventEmitter();
+      child.unref = () => {};
+      setImmediate(() => child.emit('spawn'));
+      return child;
+    };
+    syncBuiltinESMExports();
+    try {
+      const o = await callAs(net, 'doc:openInApp');
+      assert.equal(o.ok, true, o.error);
+      assert.equal(o.value.via, 'shell');
+    } finally {
+      cp.spawn = spawn0;
+      syncBuiltinESMExports();
+    }
+    assert.equal(spawned.length, 1, spawned.join(' | '));
+    assert.ok(spawned[0].includes(net), spawned[0]);
+    for (const p of [net, net2]) assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(p).id)).ok, true);
   });
 
   // ── 여러 탭 창 (D1 · Section 1 #1): Ctrl+N, AI 이벤트는 대화를 시작한 창의 패널로, AI 대상은 창마다 ──
@@ -1534,6 +1627,40 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     // 시험 뒤 창2를 닫는다 (아래 탭 창 닫기 시험은 창1 기준)
     win3.win.close();
     assert.ok(await until(() => win3.win.isDestroyed()));
+    tw0.emit('focus');
+  });
+
+  await t.test('PDF 탭 둘(창 2개) + 셋째 미리보기: 앞 둘의 사본이 남는다 (Review Focus)', async () => {
+    const [pa, pb, pc] = ['미리 가.pdf', '미리 나.pdf', '미리 다.pdf'].map((n) => join(docs, n));
+    for (const p of [pa, pb, pc]) writeFileSync(p, makePdf(1));
+    const fileOf = (r) => fileURLToPath(r.value.url.split('#')[0]);
+    const show = async (p) => {
+      const r = await callAs(p, 'doc:preview');
+      assert.equal(r.ok, true, r.error);
+      assert.equal(r.value.kind, 'pdf');
+      return r;
+    };
+    assert.equal((await callAs('home', 'doc:open', pa)).ok, true);
+    const ra = await show(pa);
+    const w = await newTabWindow(homeWc);
+    assert.equal((await fake.invokeFrom(w.home, 'doc:open', pb)).ok, true);
+    const rb = await show(pb);
+    tw0.emit('focus');
+    assert.equal((await callAs('home', 'doc:open', pc)).ok, true);
+    const rc = await show(pc);
+    for (const r of [ra, rb, rc]) assert.equal(existsSync(fileOf(r)), true, fileOf(r));
+    // 다시 그린 미리보기는 그 문서의 옛 사본만 지운다
+    const ra2 = await show(pa);
+    assert.equal(existsSync(fileOf(ra)), false, '가의 옛 사본');
+    for (const r of [ra2, rb, rc]) assert.equal(existsSync(fileOf(r)), true, fileOf(r));
+    // 탭을 닫은 문서의 사본은 다음 미리보기 때 지운다
+    assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(pa).id)).ok, true);
+    const rc2 = await show(pc);
+    assert.equal(existsSync(fileOf(ra2)), false, '닫은 가의 사본');
+    for (const r of [rb, rc2]) assert.equal(existsSync(fileOf(r)), true, fileOf(r));
+    assert.equal((await callAs('tabstrip', 'tabs:close', tabOf(pc).id)).ok, true);
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
     tw0.emit('focus');
   });
 

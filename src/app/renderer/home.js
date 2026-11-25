@@ -26,7 +26,7 @@
     recent: $('#recent'), recentList: $('#recent-list'),
     docinfo: $('#docinfo'), docKind: $('#doc-kind'), docName: $('#doc-name'), docEngine: $('#doc-engine'),
     stEngine: $('#st-engine'), stPages: $('#st-pages'), stSaved: $('#st-saved'), stEditor: $('#st-editor'),
-    btnEdit: $('#btn-edit'),
+    btnEdit: $('#btn-edit'), zone3Bar: $('#zone3-bar'),
     overlay: $('#drop-overlay'),
     settings: $('#dlg-settings'), confirm: coreEl.confirm,
   };
@@ -134,6 +134,8 @@
   function renderTopbar() {
     const d = state.doc;
     el.docinfo.hidden = !d;
+    // 인터넷에서 받은 Office 문서: 보기 전용 띠 (D5)
+    el.zone3Bar.hidden = !d?.zone3Preview;
     for (const id of ['btn-refresh', 'btn-openapp', 'btn-pdf', 'btn-folder']) $(`#${id}`).disabled = !d;
     // PDF 문서는 이미 PDF다
     const isPdf = !!d && extOf(d.path) === 'pdf';
@@ -212,6 +214,8 @@
     const d = state.doc;
     const b = el.btnEdit;
     const ok = isEditable(d);
+    // 인터넷에서 받은 Office 문서는 앱 안에서 편집하지 않는다 (띠의 'Windows 프로그램으로 열기'로)
+    if (d?.zone3Preview) { b.hidden = true; b.disabled = true; return; }
     // PDF: 앱 안에서는 못 고치므로 Word로 열어 고치게 한다 (Word가 PDF를 편집 가능한 문서로 바꾼다)
     const pdf = !!d && extOf(d.path) === 'pdf';
     b.querySelector('.lbl').textContent = pdf ? 'Word로 고치기' : '직접 편집';
@@ -253,7 +257,7 @@
   }
 
   // 편집 창을 열기 전에 거른 문서 (암호·옛 형식): 프로그램에서 열기를 권한다
-  const OPEN_IN_APP_CODES = new Set(['UNSUPPORTED', 'ENCRYPTED', 'OLD_FORMAT']);
+  const OPEN_IN_APP_CODES = new Set(['UNSUPPORTED', 'ENCRYPTED', 'OLD_FORMAT', 'UNTRUSTED']);
 
   /** p: 열려던 문서 경로 */
   function editorError(err, p = state.doc?.path) {
@@ -1621,6 +1625,7 @@
     el.btnEdit.addEventListener('click', actEdit);
     el.stEditor.addEventListener('click', actEdit);
     $('#btn-openapp').addEventListener('click', actOpenInApp);
+    $('#zone3-openapp').addEventListener('click', actOpenInApp);
     $('#btn-pdf').addEventListener('click', actSavePdf);
     $('#btn-folder').addEventListener('click', actShowFolder);
     $('#btn-close-doc').addEventListener('click', actCloseDoc);

@@ -386,6 +386,17 @@ body[data-view="panel"] .chat { position: relative; }
   min-height: 0;
 }
 
+/* 인터넷에서 받은 Office 문서의 보기 전용 띠 (문서 탭 위) */
+.workspace:has(> .zone3-bar:not([hidden])) { grid-template-rows: auto minmax(0, 1fr); }
+.zone3-bar {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+  background: var(--warn-soft); color: var(--warn); font-size: 12.5px; line-height: 1.5;
+}
+.zone3-bar > svg.i { width: 16px; height: 16px; flex: none; }
+.zone3-bar .z3-text { flex: 1; min-width: 0; word-break: keep-all; overflow-wrap: anywhere; user-select: text; }
+.zone3-bar .btn { flex: none; }
+
 .viewer {
   position: relative;
   min-width: 0; min-height: 0;

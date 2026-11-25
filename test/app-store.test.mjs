@@ -368,3 +368,40 @@ test('미리보기 폴더: 늦게 끝난 미리보기는 지금 문서의 미리
   rmSync(dir, { recursive: true, force: true });
   rmSync(elsewhere, { recursive: true, force: true });
 });
+
+test('previewFiles: keep 목록 문서마다 가장 새 PDF를 남긴다 (여러 탭·창)', () => {
+  const dir = tmp();
+  const files = createPreviewFiles(dir);
+  const a = 'C:\\Users\\user\\문서\\가.docx';
+  const b = 'C:\\Users\\user\\문서\\나.pdf';
+  const c = 'C:\\Users\\user\\문서\\다.xlsx';
+  let n = 0;
+  const raw = (doc) => { const f = join(dir, `${doc.split('\\').at(-1)}.${++n}.pdf`); writeFileSync(f, `%PDF-${n}`); return f; };
+  // a 사본 2개, b 1개, c 1개 (각 탭·창의 미리보기)
+  const a1 = files.tidy(raw(a), a);
+  const a2 = files.tidy(raw(a), a);
+  const b1 = files.tidy(raw(b), b);
+  const c1 = files.tidy(raw(c), c);
+  const stray = join(dir, '지난 실행.pdf');
+  writeFileSync(stray, '%PDF-old');
+  files.clean([a, b]);
+  assert.equal(existsSync(a2.file), true, 'a의 가장 새 PDF는 남긴다');
+  assert.equal(existsSync(b1.file), true, 'b의 PDF는 남긴다');
+  assert.equal(existsSync(a1.file), false, 'a의 옛 PDF는 지운다');
+  assert.equal(existsSync(c1.file), false, '열려 있지 않은 c의 PDF는 지운다');
+  assert.equal(existsSync(stray), false, '주인 모를 파일은 지운다');
+  assert.equal(readdirSync(dir).length, 2);
+  // 새 미리보기를 놓을 때도 keep 문서들의 PDF는 남긴다 (자기 문서는 늘 남긴다)
+  const b2 = files.settle(raw(b), b, { keep: [a] });
+  assert.ok(b2 && existsSync(b2.file));
+  assert.equal(existsSync(a2.file), true, '다른 탭(a)의 미리보기는 그대로');
+  assert.equal(existsSync(b1.file), false, 'b의 옛 PDF는 지운다');
+  // 대소문자만 다른 경로도 같은 문서 (Windows)
+  if (process.platform === 'win32') {
+    files.clean([a.toUpperCase(), b]);
+    assert.equal(existsSync(a2.file), true);
+  }
+  files.clean(null);
+  assert.deepEqual(readdirSync(dir), [], 'null이면 모두 지운다');
+  rmSync(dir, { recursive: true, force: true });
+});
