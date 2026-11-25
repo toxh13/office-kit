@@ -301,7 +301,7 @@ describe('앱 AI: 형식별 도구 안내', () => {
   });
 
   test('화면: 편집 도구 뒤 미리보기 새로 고침, 문서 종류별 추천 문장', () => {
-    const src = readFileSync(join(ROOT, 'src', 'app', 'renderer', 'app.js'), 'utf8');
+    const src = readFileSync(join(ROOT, 'src', 'app', 'renderer', 'panel.js'), 'utf8');
     const edit = src.match(/const EDIT_TOOLS = new Set\(\[([\s\S]*?)\]\)/)?.[1] ?? '';
     for (const t of ['hwp_edit', 'word_edit', 'ppt_edit', 'excel_edit']) assert.ok(edit.includes(`'${t}'`), `${t}가 EDIT_TOOLS에 없음`);
     for (const s of ['발표자 노트 달아줘', '슬라이드 하나 추가해줘', '차트 만들어줘', '머리글 굵게 하고 틀 고정해줘', '제목 스타일 정리해줘', '목차 넣어줘', '머리말 넣어줘']) {

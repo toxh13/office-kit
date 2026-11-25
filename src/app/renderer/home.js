@@ -1,327 +1,35 @@
-// app.js — Office Kit 화면. 바닐라 JS, window.officeKit(preload)만 쓴다.
+// home.js — 주 창 화면: 빈 화면·최근 문서·문서 열기·편집 창·미리보기·문서 작업·바뀐 내용·옆 창·도구·버전·새 문서·설정·대화창 배치·끌어놓기·확인용 캡처.
+// AI 대화(panel.js)는 직접 부르지 않고 bridge.call('chat.…')으로만 부른다.
 'use strict';
 (() => {
-  const K = window.officeKit;
-  const MD = window.OKMarkdown;
+  const {
+    K, I18N, $, $$, h, icon, spinner, call, sleep, pathKey,
+    extOf, baseName, dirName, KIND_BY_EXT, kindStyle, ENGINE_LABEL, ENGINE_SHORT, whenText, relText, setBusy,
+    clearBusy, toast, friendlyError, showError, confirmDialog, state, el: coreEl, bridge, onInit,
+  } = OKCore;
 
-  // ── 화면 언어 ── 한국어 원문을 사전으로 바꾼다 (문서 내용·파일 이름·대화 글은 그대로)
-  const NO_I18N = [
-    '.paper > p', '.doc-table', '.sheet-scroll', '.s-title', '.s-line', '.bubble', '.md',
-    '.diff-text:not(:has(> .diff-empty-line))', '.diff-where', 'td.addr', '.pii-row td.val', '.pii-row td.masked', '.pii-row td.ctx',
-    '.recent-name', '.recent-dir', '.pdf-name', 'td.file', '.dir', '.path', '.tool-arg',
-  ].join(', ');
-  const I18N = (() => {
-    const d = K?.i18n; const lib = window.OfficeKitI18n;
-    if (!d || !lib || !['en', 'ja'].includes(d.lang)) return { t: (x) => x, lang: 'ko', setting: d?.setting ?? 'system' };
-    const tr = lib.compile(d.dict, d.lang);
-    document.documentElement.lang = d.lang;
-    lib.translateDom(document.documentElement, tr, { skip: NO_I18N });
-    return { ...tr, setting: d.setting ?? 'system' };
-  })();
-
-  // ── 작은 도우미 ──────────────────────────────────────
-
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-
-  /** 요소 만들기: h('div', { class: 'a', text: '글', onclick }, ...자식) */
-  function h(tag, props = {}, ...children) {
-    const el = document.createElement(tag);
-    for (const [k, v] of Object.entries(props ?? {})) {
-      if (v === undefined || v === null || v === false) continue;
-      if (k === 'class') el.className = v;
-      else if (k === 'text') el.textContent = v;
-      else if (k === 'html') el.innerHTML = v; // md.js가 이스케이프한 결과에만 쓴다
-      else if (k === 'dataset') Object.assign(el.dataset, v);
-      else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
-      else if (v === true) el.setAttribute(k, '');
-      else el.setAttribute(k, String(v));
-    }
-    for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c.nodeType ? c : String(c));
-    return el;
-  }
-
-  const SVGNS = 'http://www.w3.org/2000/svg';
-  function icon(name, cls = 'i') {
-    const svg = document.createElementNS(SVGNS, 'svg');
-    svg.setAttribute('class', cls);
-    svg.setAttribute('aria-hidden', 'true');
-    const use = document.createElementNS(SVGNS, 'use');
-    use.setAttribute('href', `#i-${name}`);
-    svg.append(use);
-    return svg;
-  }
-  const spinner = () => h('span', { class: 'spinner', 'aria-hidden': 'true' });
-
-  /** preload 응답 { ok, value } 풀기 */
-  async function call(promise) {
-    const r = await promise;
-    if (!r || r.ok !== true) {
-      const err = new Error(r?.error || '알 수 없는 오류가 났습니다');
-      err.code = r?.code ?? null;
-      err.detail = r?.detail ?? null;
-      throw err;
-    }
-    return r.value;
-  }
-
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const pathKey = (p) => String(p ?? '').toLowerCase();
-  const extOf = (p) => { const m = /\.([^.\\/]+)$/.exec(String(p ?? '')); return m ? m[1].toLowerCase() : ''; };
-  const baseName = (p) => String(p ?? '').split(/[\\/]/).pop();
-  const dirName = (p) => { const s = String(p ?? ''); const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/')); return i > 0 ? s.slice(0, i) : s; };
-
-  const KIND_BY_EXT = {
-    hwp: '한글', hwpx: '한글', hwt: '한글', docx: 'Word', doc: 'Word', rtf: 'Word', odt: 'Word',
-    pptx: 'PowerPoint', ppt: 'PowerPoint', odp: 'PowerPoint', xlsx: 'Excel', xls: 'Excel', xlsm: 'Excel', csv: 'Excel', ods: 'Excel',
-    pdf: 'PDF',
-  };
-  const KIND_STYLE = {
-    한글: { cls: 'k-hwp', letter: '한' }, Word: { cls: 'k-word', letter: 'W' },
-    PowerPoint: { cls: 'k-ppt', letter: 'P' }, Excel: { cls: 'k-xls', letter: 'X' },
-    PDF: { cls: 'k-pdf', letter: 'PDF' },
-  };
-  const kindStyle = (kind) => KIND_STYLE[kind] ?? { cls: 'k-etc', letter: '?' };
-
-  const ENGINE_LABEL = {
-    rhwp: '내장 엔진 (rhwp)', file: '내장 엔진', pdf: 'PDF 뷰어', word: 'Microsoft Word', excel: 'Microsoft Excel',
-    ppt: 'PowerPoint', powerpoint: 'PowerPoint', hwp: '한컴오피스', hancom: '한컴오피스',
-  };
-  const ENGINE_SHORT = { rhwp: '내장 엔진', file: '내장 엔진', word: 'Word 변환', excel: 'Excel 변환', ppt: 'PowerPoint 변환', powerpoint: 'PowerPoint 변환', hwp: '한컴 변환', hancom: '한컴 변환' };
-
-  // AI 도구 이름 → 화면에 보일 말
-  const TOOL_LABEL = {
-    office_status: ['상태 확인 중', '상태 확인'],
-    office_info: ['문서 정보 보는 중', '문서 정보 보기'],
-    office_read: ['문서 읽는 중', '문서 읽기'],
-    office_fields: ['채울 칸 찾는 중', '채울 칸 찾기'],
-    office_fill: ['칸 채우는 중', '칸 채우기'],
-    office_replace: ['바꾸는 중', '찾아 바꾸기'],
-    office_set_cells: ['셀 고치는 중', '셀 고치기'],
-    office_convert: ['변환 중', '형식 바꾸기'],
-    office_create: ['새 문서 만드는 중', '새 문서 만들기'],
-    office_page_image: ['결과 확인 중', '결과 확인'],
-    office_find_pii: ['개인정보 찾는 중', '개인정보 찾기'],
-    office_mask_pii: ['개인정보 가리는 중', '개인정보 가린 사본'],
-    office_hwpx_batch: ['HWPX로 바꾸는 중', 'HWPX 일괄 변환'],
-    hwp_edit: ['한글 편집 중', '한글 편집'],
-    word_edit: ['Word 편집 중', 'Word 편집'],
-    ppt_edit: ['슬라이드 편집 중', '슬라이드 편집'],
-    excel_edit: ['시트 편집 중', '시트 편집'],
-    hwp_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
-    word_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
-    ppt_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
-    excel_inspect: ['문서 구조 살피는 중', '문서 구조 살펴보기'],
-  };
-  const EDIT_TOOLS = new Set(['office_fill', 'office_replace', 'office_set_cells', 'hwp_edit', 'office_create', 'office_convert',
-    'word_edit', 'ppt_edit', 'excel_edit']);
-  // mcp__office-kit__office_read, office-kit.office_read 같은 이름도 받아 준다
-  const toolBase = (name) => String(name ?? '').split(/__|[./:]/).filter(Boolean).pop() ?? '';
-  /** part = { tool, name } (tool: office_read 같은 원래 이름, name: ai.mjs가 붙인 표시 이름) */
-  function toolLabel(part, done) {
-    const base = toolBase(part.tool || part.name);
-    const l = TOOL_LABEL[base];
-    if (l) return done ? l[1] : l[0];
-    const label = part.name && part.name !== base ? part.name : base || '도구';
-    return done ? label : `${label} 중`;
-  }
-
-  // 시간 표시
-  const two = (n) => String(n).padStart(2, '0');
-  const LOCALE = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' };
-  function timeText(ms) {
-    const d = new Date(ms);
-    if (I18N.lang !== 'ko') return d.toLocaleTimeString(LOCALE[I18N.lang] ?? 'en-US', { hour: 'numeric', minute: '2-digit' });
-    const hr = d.getHours();
-    return `${hr < 12 ? '오전' : '오후'} ${hr % 12 || 12}:${two(d.getMinutes())}`;
-  }
-  function dayDiff(ms) {
-    const a = new Date(ms); a.setHours(0, 0, 0, 0);
-    const b = new Date(); b.setHours(0, 0, 0, 0);
-    return Math.round((b - a) / 86_400_000);
-  }
-  function whenText(ms) {
-    if (!ms) return '';
-    const dd = dayDiff(ms);
-    const d = new Date(ms);
-    if (dd === 0) return `오늘 ${timeText(ms)}`;
-    if (dd === 1) return `어제 ${timeText(ms)}`;
-    if (d.getFullYear() === new Date().getFullYear()) return `${d.getMonth() + 1}월 ${d.getDate()}일 ${timeText(ms)}`;
-    return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}. ${timeText(ms)}`;
-  }
-  function relText(ms) {
-    if (!ms) return '';
-    const s = (Date.now() - ms) / 1000;
-    if (s < 60) return '방금';
-    if (s < 3600) return `${Math.floor(s / 60)}분 전`;
-    const dd = dayDiff(ms);
-    if (dd === 0) return `${Math.floor(s / 3600)}시간 전`;
-    if (dd === 1) return '어제';
-    if (dd < 7) return `${dd}일 전`;
-    const d = new Date(ms);
-    return d.getFullYear() === new Date().getFullYear() ? `${d.getMonth() + 1}월 ${d.getDate()}일` : `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
-  }
-
-  // ── 상태 ─────────────────────────────────────────────
-
-  const state = {
-    exts: [],
-    settings: {},
-    version: '',
-    doc: null,
+  // home 칸 (panel 칸은 읽지도 쓰지도 않는다)
+  Object.assign(state, {
     preview: null,
     previewSeq: 0,
     rendering: null,        // 렌더링 중인 문서 경로
     pendingRefresh: null,
     zoom: 'auto',
-    providers: null,        // { providers, selected } 또는 null
-    providerError: null,
-    providersReady: null,   // 처음 AI 확인이 끝나면 풀리는 Promise
-    chats: new Map(),       // 문서 경로 → { items, busy, chatId, materials, outDir }
-    targetInfo: null,       // 마지막 ai:materials 결과 { edit, open }
-    targetSeq: 0,
-    busy: new Map(),
-    smoke: null,
     smokeSent: false,
-    demo: false,
-    packaged: true,
-    // 편집기 묶음 (init에서 받음): 종류마다 { exts, available, reason }. hwp = 한글 편집, office = 문서·표·슬라이드 편집
-    editor: {
-      exts: ['hwp', 'hwpx', 'hwt', 'docx', 'xlsx', 'pptx'],
-      kinds: {
-        hwp: { exts: ['hwp', 'hwpx', 'hwt'], available: false, reason: null },
-        office: { exts: ['docx', 'xlsx', 'pptx'], available: false, reason: null },
-      },
-    },
-  };
+  });
 
   const el = {
-    app: $('#app'), workspace: $('#workspace'), viewer: $('#viewer'),
+    app: coreEl.app, workspace: $('#workspace'), viewer: $('#viewer'),
     empty: $('#empty'), preview: $('#preview'), zoombar: $('#zoombar'), refreshing: $('#refreshing'),
     recent: $('#recent'), recentList: $('#recent-list'),
     docinfo: $('#docinfo'), docKind: $('#doc-kind'), docName: $('#doc-name'), docEngine: $('#doc-engine'),
-    chat: $('#chat'), chatBody: $('#chat-body'), chatLog: $('#chat-log'), provider: $('#provider'),
-    composer: $('#composer'), targetChips: $('#target-chips'), prompt: $('#prompt'), send: $('#btn-send'), composerHint: $('#composer-hint'),
+    chat: $('#chat'),
     splitter: $('#splitter'), toggleChat: $('#btn-toggle-chat'),
     stEngine: $('#st-engine'), stPages: $('#st-pages'), stSaved: $('#st-saved'), stEditor: $('#st-editor'),
-    stBusy: $('#st-busy'), stBusyText: $('#st-busy-text'), stReady: $('#st-ready'),
     btnEdit: $('#btn-edit'), editorWarn: $('#editor-warn'),
-    overlay: $('#drop-overlay'), toasts: $('#toasts'),
-    settings: $('#dlg-settings'), confirm: $('#dlg-confirm'),
+    overlay: $('#drop-overlay'),
+    settings: $('#dlg-settings'), confirm: coreEl.confirm,
   };
-
-  // ── 바쁨 표시 · 알림 ─────────────────────────────────
-
-  function setBusy(key, text) { state.busy.delete(key); state.busy.set(key, text); renderBusy(); }
-  function clearBusy(key) { state.busy.delete(key); renderBusy(); }
-  function renderBusy() {
-    const last = [...state.busy.values()].pop();
-    el.stBusy.hidden = !last;
-    el.stReady.hidden = !!last;
-    el.stBusyText.textContent = last ?? '';
-  }
-
-  const TOAST_ICON = { success: 'check', error: 'alert', info: 'info', warn: 'alert' };
-  function toast(message, { type = 'info', action, timeout } = {}) {
-    const t = h('div', { class: `toast ${type}`, role: type === 'error' ? 'alert' : 'status' },
-      icon(TOAST_ICON[type] ?? 'info'), h('span', { class: 'toast-msg', text: message }));
-    const close = () => {
-      if (t.classList.contains('out')) return;
-      t.classList.add('out');
-      setTimeout(() => t.remove(), 180);
-    };
-    if (action) t.append(h('button', { class: 'toast-action', text: action.label, onclick: () => { close(); action.run(); } }));
-    t.append(h('button', { class: 'toast-close', 'aria-label': '닫기', onclick: close }, icon('x')));
-    el.toasts.append(t);
-    while (el.toasts.children.length > 4) el.toasts.firstElementChild.remove();
-    setTimeout(close, timeout ?? (type === 'error' ? 7000 : action ? 6000 : 3500));
-    return close;
-  }
-
-  /**
-   * 오류 → { text: 쉬운 한국어, detail: 원래 글(다르면), retry: 다시 해 볼 만한지 }
-   * 엔진 오류 코드(UNSUPPORTED_FILE_FORMAT 등)·전체 경로·Office의 영어 문장은 '자세히'로 미룬다
-   */
-  function friendlyError(err) {
-    const raw = String(err?.message ?? err ?? '').trim();
-    // 전체 경로 → 파일 이름 (폴더 부분만 지운다. 폴더·파일 이름에 띄어쓰기가 있어도)
-    let text = raw.replace(/(?:[A-Za-z]:|\\\\[^\\/\s]+)[\\/](?:[^\\/:*?"<>|\r\n]+[\\/])+/g, '');
-    let retry = true;
-    // 이미 쉬운 한국어(오류 코드·경로·영어 문장 없음)면 그 글을 그대로 쓴다
-    const plain = !/오류코드|[A-Z][A-Z0-9]*_[A-Z0-9_]{3,}|[A-Za-z]:[\\/]|[A-Za-z]{3,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(raw);
-    if (err?.code === 'ENCRYPTED' || /암호가 걸린|password|encrypted/i.test(raw)) {
-      if (!plain || !/프로그램에서/.test(raw)) text = '암호가 걸린 문서라 열 수 없어요. ‘프로그램에서 열기’로 열어 암호를 넣어 주세요.';
-      retry = false;
-    } else if (/UNSUPPORTED_FILE_FORMAT|오류코드|유효하지 않은 파일|손상|corrupt|damaged|not a valid|unreadable content|cannot open the file/i.test(raw) || err?.code === 'BAD_FORMAT') {
-      if (!plain || !/프로그램에서/.test(raw)) text = '문서가 손상됐거나 지원하지 않는 형식이라 열 수 없어요. ‘프로그램에서 열기’로 열어 보세요.';
-      retry = false;
-    } else {
-      // 괄호 안 영어 문장(Office가 낸 원문)은 자세히로
-      text = text.replace(/\s*\((?=[^()]*[A-Za-z]{3,}\s+[A-Za-z]{2,})[^()가-힣]*\)/g, '').trim();
-    }
-    text = text || raw;
-    // 자세히: 엔진이 낸 원래 글 (보여 준 글과 같으면 빼고)
-    const detail = [raw !== text ? raw : null, err?.detail].filter(Boolean).join('\n');
-    return { text, detail: detail || null, retry };
-  }
-  function showDetail(title, detail) {
-    confirmDialog({ title, body: h('pre', { class: 'err-detail', text: detail }), ok: '닫기', cancel: null });
-  }
-
-  function showError(err, prefix) {
-    const f = friendlyError(err);
-    const message = prefix ? `${prefix}: ${f.text}` : f.text;
-    if (err.code === 'HANCOM_SETUP') toast(message, { type: 'warn', action: { label: '설정 열기', run: () => openSettings('hancom') } });
-    else toast(message, { type: 'error', ...(f.detail ? { action: { label: '자세히', run: () => showDetail('오류 자세히', f.detail) } } : {}) });
-  }
-
-  // ── 확인 창 ──────────────────────────────────────────
-
-  /**
-   * body: 문자열 | 노드 배열. alt: 세 번째 단추 이름 (누르면 'alt'), cancel: null이면 취소 단추 없음
-   * → Promise<true | false | 'alt'>
-   */
-  // 확인 창은 하나뿐이라 대기열로 하나씩 띄운다 (앞 창이 닫힌 뒤 다음 창)
-  const dialogQueue = window.OKDialogQueue.createDialogQueue();
-  function confirmDialog(opts) { return dialogQueue.run(() => showConfirm(opts)); }
-
-  function showConfirm({ title, body, ok = '확인', cancel = '취소', alt = null, tone = 'info' }) {
-    const dlg = el.confirm;
-    $('#confirm-title').textContent = title;
-    const bodyEl = $('#confirm-body');
-    bodyEl.replaceChildren(...[].concat(body).filter(Boolean).map((b) => (typeof b === 'string' ? h('p', { text: b }) : b)));
-    const ic = $('#confirm-icon');
-    ic.className = `confirm-icon ${tone}`;
-    ic.replaceChildren(icon({ danger: 'restore', shield: 'shield', warn: 'alert' }[tone] ?? 'info'));
-    const okBtn = $('#confirm-ok');
-    const cancelBtn = $('#confirm-cancel');
-    const altBtn = $('#confirm-alt');
-    okBtn.textContent = ok;
-    okBtn.className = `btn ${tone === 'danger' ? 'danger' : 'primary'}`;
-    cancelBtn.textContent = cancel ?? '';
-    cancelBtn.hidden = cancel === null;
-    altBtn.textContent = alt ?? '';
-    altBtn.hidden = !alt;
-    return new Promise((resolve) => {
-      const done = (v) => {
-        okBtn.removeEventListener('click', yes);
-        cancelBtn.removeEventListener('click', no);
-        altBtn.removeEventListener('click', other);
-        dlg.removeEventListener('close', no);
-        if (dlg.open) dlg.close();
-        resolve(v);
-      };
-      const yes = () => done(true);
-      const no = () => done(false);
-      const other = () => done('alt');
-      okBtn.addEventListener('click', yes);
-      cancelBtn.addEventListener('click', no);
-      altBtn.addEventListener('click', other);
-      dlg.addEventListener('close', no);
-      dlg.showModal();
-      (cancel === null ? okBtn : cancelBtn).focus();
-    });
-  }
 
   // ── 빈 화면 · 최근 문서 ──────────────────────────────
 
@@ -402,8 +110,8 @@
     document.title = doc ? `${doc.name} - Office Kit` : 'Office Kit';
     renderTopbar();
     renderStatus();
-    renderChat();
-    refreshTargetInfo();
+    bridge.call('chat.render');
+    bridge.call('chat.refreshTargets');
     if (!doc) {
       el.preview.hidden = true;
       el.preview.replaceChildren();
@@ -616,7 +324,7 @@
     state.doc = { ...state.doc, editor: { open: !!ev.open, dirty: !!ev.dirty } };
     renderTopbar();
     renderStatus();
-    refreshTargetInfo();
+    bridge.call('chat.refreshTargets');
   }
 
   // ── 미리보기 ─────────────────────────────────────────
@@ -904,7 +612,7 @@
       if (!target) { toast('그 버전을 찾을 수 없어요. 버전 목록을 다시 열어 주세요.', { type: 'warn' }); return; }
     } catch (err) { showError(err); return; }
     // AI가 고치는 중이면 먼저 멈춘다 (main이 멈추고 끝날 때까지 기다린 뒤 되돌린다)
-    const aiBusy = !!chatFor(d.path).busy;
+    const aiBusy = !!bridge.call('chat.of', d.path).busy;
     const what = `${whenText(target.time)} · ${versionLabel(target)}`;
     const yes = await confirmDialog({
       title: typeof file === 'string' ? '이 버전으로 되돌릴까요?' : '마지막 변경 전으로 되돌릴까요?',
@@ -919,8 +627,8 @@
       ok: aiBusy ? '멈추고 되돌리기' : '되돌리기', tone: 'danger',
     });
     if (!yes || !state.doc || pathKey(state.doc.path) !== pathKey(d.path)) return;
-    const chat = chatFor(d.path);
-    if (chat.busy) markStopping(chat);
+    const chat = bridge.call('chat.of', d.path);
+    if (chat.busy) bridge.call('chat.markStopping', chat);
     state.restoring = true;
     renderTopbar();
     setBusy('restore', chat.busy ? 'AI 작업을 멈추고 되돌리는 중…' : '되돌리는 중…');
@@ -932,7 +640,7 @@
       // main이 이 문서의 AI 대화를 끝냈다 → 대화창에 알린다 (AI가 되돌리기 전 내용을 기억하지 않게)
       if (r.newChat && chat.items.length) {
         chat.items.push({ role: 'note', text: '문서를 되돌려서, 다음 메시지부터 새 대화로 시작해요.' });
-        if (chatCurrent() === chat) renderChat();
+        if (bridge.call('chat.current') === chat) bridge.call('chat.render');
       }
       if (state.doc && pathKey(state.doc.path) === pathKey(d.path)) await refreshPreview({ reason: 'manual' });
     } catch (err) { showError(err); } finally {
@@ -1029,7 +737,7 @@
     closeVersions();
     // 옆 창에서 나와 전체 창이 되면 미리 보지 못한 미리보기를 그린다
     if (!on && state.doc && !state.preview) refreshPreview({ reason: 'open' });
-    if (on) setTimeout(() => el.prompt?.focus(), 50);
+    if (on) setTimeout(() => bridge.call('chat.focusPrompt'), 50);
   }
 
   // ── 도구 메뉴 ────────────────────────────────────────
@@ -1385,531 +1093,6 @@
     try { await call(K.doc.close()); } catch (err) { showError(err); }
   }
 
-  // ── AI 대화 ──────────────────────────────────────────
-
-  function chatFor(path) {
-    const k = pathKey(path);
-    let c = state.chats.get(k);
-    if (!c) { c = { items: [], busy: false, chatId: null, materials: [], outDir: null }; state.chats.set(k, c); }
-    return c;
-  }
-
-  // ── AI 대상 칩 (고칠 문서 + 읽기 재료) ─────────────────
-
-  /** 열린 문서 목록을 새로 받아 칩을 다시 그린다. 받는 사이 문서가 바뀌었으면 버린다. */
-  async function refreshTargetInfo() {
-    const seq = ++state.targetSeq;
-    if (!state.doc) { state.targetInfo = null; renderTargetChips(); return; }
-    try {
-      const info = await call(K.ai.materials());
-      if (seq !== state.targetSeq) return;
-      state.targetInfo = info;
-    } catch { return; }
-    renderTargetChips();
-  }
-
-  function targetModel() {
-    const chat = chatCurrent();
-    if (!state.targetInfo || !chat) return null;
-    return OKTargetChips.model({ info: state.targetInfo, materials: chat.materials, outDir: chat.outDir });
-  }
-
-  function renderTargetChips() {
-    const root = el.targetChips;
-    const m = state.doc && !chatBlocker() ? targetModel() : null;
-    root.hidden = !m;
-    if (!m) { root.replaceChildren(); return; }
-    OKTargetChips.render(root, m, {
-      h, icon,
-      onRemove(path) {
-        const chat = chatCurrent();
-        const gone = chat.materials.find((x) => pathKey(x.path) === pathKey(path));
-        chat.materials = chat.materials.filter((x) => pathKey(x.path) !== pathKey(path));
-        // 인터넷 재료를 뺀 뒤에는 main이 다음 보내기에서 세션을 지운다
-        if (gone?.zone3 && chat.items.length) chat.items.push({ role: 'note', text: '자료가 바뀌어 다음 메시지부터 새 대화로 시작해요.' });
-        renderChat();
-      },
-      onAdd(path) {
-        const chat = chatCurrent();
-        const m2 = state.targetInfo?.open.find((x) => pathKey(x.path) === pathKey(path));
-        if (m2 && !chat.materials.some((x) => pathKey(x.path) === pathKey(path))) chat.materials = [...chat.materials, m2];
-        renderChat();
-      },
-      onOpenMenu() { refreshTargetInfo(); },
-      async onPickOutDir() {
-        const chat = chatCurrent();
-        const cur = targetModel();
-        let folder = null;
-        try { folder = await call(K.doc.pickFolder(cur?.outDir ?? undefined)); } catch (err) { showError(err); return; }
-        if (folder && chatCurrent() === chat) { chat.outDir = folder; renderTargetChips(); }
-      },
-    });
-  }
-
-  async function loadProviders(refresh = false) {
-    try {
-      state.providers = await call(K.ai.providers({ refresh }));
-      state.providerError = null;
-    } catch (err) {
-      state.providers = null;
-      state.providerError = err.message;
-    }
-    renderProviderSelect();
-    renderChat();
-    if (ne.dlg.open) renderNewDoc();
-  }
-
-  function renderProviderSelect() {
-    const sel = el.provider;
-    const p = state.providers;
-    sel.replaceChildren();
-    if (!p || !p.providers.length) {
-      sel.append(h('option', { value: '', text: state.providerError ? 'AI 없음' : '확인 중…' }));
-      sel.disabled = true;
-      return;
-    }
-    for (const it of p.providers) {
-      sel.append(h('option', { value: it.id, text: it.available ? it.short : `${it.short} (설치 안 됨)`, title: it.name, disabled: !it.available }));
-    }
-    sel.value = p.selected ?? '';
-    sel.disabled = !p.selected || chatCurrent()?.busy;
-  }
-
-  const chatCurrent = () => (state.doc ? chatFor(state.doc.path) : null);
-
-  /** 대화창을 쓸 수 없는 이유 카드 (없으면 null) */
-  function chatBlocker() {
-    if (state.demo) return null;
-    if (!state.doc) {
-      return h('div', { class: 'chat-card' },
-        h('div', { class: 'c-icon' }, icon('file')),
-        h('h3', { text: '문서를 먼저 열어 주세요' }),
-        h('p', { text: '문서를 열면 AI가 내용을 읽고 요약하거나, 글자를 바꾸고, 빈칸을 채워 드려요. 고친 결과는 왼쪽 미리보기에 바로 보여요.' }),
-        h('p', { text: '새 문서를 만들면서 AI에게 내용을 부탁할 수도 있어요.' }),
-        h('div', { class: 'btn-row' },
-          h('button', { class: 'btn sm', onclick: pickFile }, icon('file-open'), '파일 열기'),
-          h('button', { class: 'btn sm', id: 'chat-new-doc', onclick: () => openNewDoc({ start: 'ai' }) }, icon('file-new'), '새 문서')));
-    }
-    if (state.providerError) {
-      return h('div', { class: 'chat-card' },
-        h('div', { class: 'c-icon' }, icon('alert')),
-        h('h3', { text: 'AI 기능을 쓸 수 없어요' }),
-        h('p', { text: state.providerError }),
-        h('button', { class: 'btn sm', onclick: () => loadProviders(true) }, icon('refresh'), '다시 확인'));
-    }
-    if (!state.providers) return h('div', { class: 'loading-line' }, spinner(), 'AI 프로그램을 확인하는 중…');
-    if (!state.providers.selected) {
-      return h('div', { class: 'chat-card' },
-        h('div', { class: 'c-icon' }, icon('sparkle')),
-        h('h3', { text: 'AI 프로그램이 필요해요' }),
-        h('p', { text: 'Office Kit는 이 컴퓨터에 설치하고 로그인한 Claude Code 또는 Codex로 대화합니다. 아래 안내대로 하나를 설치한 뒤 다시 확인을 눌러 주세요.' }),
-        h('div', { class: 'hint-list' }, ...state.providers.providers.map((p) =>
-          h('div', { class: 'hint-item' }, h('b', { text: p.name }), h('span', { text: p.hint || '설치되어 있지 않아요.' })))),
-        h('button', { class: 'btn sm', onclick: () => loadProviders(true) }, icon('refresh'), '다시 확인'));
-    }
-    return null;
-  }
-
-  // 첫 화면 추천 문장: 열린 문서 종류에 맞춰 (형식별 전용 기능)
-  const SUGGESTS = {
-    한글: ['이 문서 요약해줘', '표 내용 정리해줘', '머리말 넣어줘', '맞춤법 고쳐줘'],
-    Word: ['이 문서 요약해줘', '제목 스타일 정리해줘', '목차 넣어줘', '맞춤법 고쳐줘'],
-    PowerPoint: ['발표자 노트 달아줘', '슬라이드 하나 추가해줘', '이 발표 요약해줘', 'PDF로 저장해줘'],
-    Excel: ['차트 만들어줘', '머리글 굵게 하고 틀 고정해줘', '이 표 요약해줘', 'PDF로 저장해줘'],
-    PDF: ['이 문서 요약해줘', '중요한 날짜·금액만 뽑아줘', '표 내용 정리해줘', '개인정보가 있는지 찾아줘'],
-  };
-  const SUGGESTS_DEFAULT = ['이 문서 요약해줘', '맞춤법 고쳐줘', '표 내용 정리해줘', 'PDF로 저장해줘'];
-  const suggestsFor = (doc) => SUGGESTS[doc?.kind] ?? SUGGESTS_DEFAULT;
-
-  /** 고른 AI가 로그인되지 않은 것 같으면 안내 (막지는 않음) */
-  function loginWarning() {
-    const p = state.providers?.providers.find((x) => x.id === state.providers.selected);
-    if (!p || p.loggedIn !== false || !p.hint) return null;
-    return h('div', { class: 'warn-note' }, icon('alert'), h('span', { text: p.hint }));
-  }
-
-  function renderChat() {
-    const blocker = chatBlocker();
-    const chat = chatCurrent();
-    const log = el.chatLog;
-    if (blocker) {
-      log.replaceChildren(blocker);
-    } else if (!chat.items.length) {
-      log.replaceChildren(h('div', { class: 'chat-welcome' },
-        h('div', { class: 'w-icon' }, icon('sparkle')),
-        h('h3', { text: '무엇을 도와드릴까요?' }),
-        h('p', { text: state.doc.kind === 'PDF'
-          ? `「${state.doc.name}」 문서를 읽고 요약·정리해 드려요. PDF는 내용을 바꿀 수는 없어요.`
-          : `「${state.doc.name}」 문서를 읽고 고쳐 드려요. 바꾼 내용은 왼쪽 미리보기에 바로 반영되고, 언제든 원래대로 되돌릴 수 있어요.` }),
-        loginWarning(),
-        h('div', { class: 'suggests' }, ...suggestsFor(state.doc).map((s) => h('button', { class: 'suggest', onclick: () => sendPrompt(s) }, icon('sparkle'), s)))));
-    } else {
-      log.replaceChildren(...chat.items.map(messageNode));
-    }
-    const off = !!blocker;
-    el.composer.classList.toggle('disabled', off);
-    el.prompt.disabled = off;
-    el.prompt.placeholder = off ? (state.doc ? 'AI 프로그램을 먼저 준비해 주세요' : '문서를 열면 대화할 수 있어요') : '문서에 대해 물어보거나 고칠 내용을 적어 주세요';
-    $('#btn-new-chat').disabled = off || !chat?.items.length || chat?.busy;
-    renderSendButton();
-    renderTargetChips();
-    scrollChat(true);
-  }
-
-  function renderSendButton() {
-    const chat = chatCurrent();
-    const busy = !!chat?.busy;
-    el.send.classList.toggle('stop', busy);
-    el.send.replaceChildren(icon(busy ? 'stop' : 'send'));
-    el.send.title = busy ? '멈추기' : '보내기 (Enter)';
-    el.send.setAttribute('aria-label', busy ? '멈추기' : '보내기');
-    el.send.disabled = !busy && (el.prompt.disabled || !el.prompt.value.trim());
-    el.composerHint.textContent = busy ? 'AI가 작업 중이에요 · 멈추려면 ■ 버튼' : 'Enter 보내기 · Shift+Enter 줄바꿈';
-    el.provider.disabled = busy || !state.providers?.selected;
-  }
-
-  function messageNode(item) {
-    if (item.role === 'user') {
-      return h('div', { class: 'msg user' }, h('div', { class: 'bubble', text: item.text }));
-    }
-    if (item.role === 'note') return h('div', { class: 'chat-divider', role: 'note', text: item.text });
-    const body = h('div', { class: 'msg-body' });
-    fillAssistant(body, item);
-    item.node = body;
-    return h('div', { class: 'msg assistant' }, h('div', { class: 'avatar', 'aria-hidden': 'true' }, icon('sparkle')), body);
-  }
-
-  function fillAssistant(body, item) {
-    const nodes = [];
-    let chips = null;
-    for (const part of item.parts) {
-      if (part.type === 'tool') {
-        if (!chips) { chips = h('div', { class: 'tools' }); nodes.push(chips); }
-        const st = part.state;
-        const chip = h('span', { class: `chip ${st}`, title: part.summary || toolBase(part.tool || part.name) },
-          st === 'run' ? spinner() : icon(st === 'ok' ? 'check' : st === 'fail' ? 'alert' : 'x'),
-          h('span', { class: 'chip-label', text: toolLabel(part, st !== 'run') + (st === 'fail' ? ' 실패' : st === 'stop' ? ' (멈춤)' : '') }));
-        chips.append(chip);
-      } else if (part.text.trim()) {
-        chips = null;
-        nodes.push(h('div', { class: 'md', html: MD.render(part.text) }));
-      }
-    }
-    // 마지막이 돌고 있는 도구면 칩이 이미 진행 중임을 보여 준다
-    const lastPart = item.parts.at(-1);
-    if (!item.done && !(lastPart?.type === 'tool' && lastPart.state === 'run' && !item.stopping)) {
-      nodes.push(h('div', { class: 'thinking' }, h('span', { class: 'dots' }, h('i'), h('i'), h('i')), item.status || '생각하는 중…'));
-    }
-    if (item.error) nodes.push(h('div', { class: 'msg-error', role: 'alert', title: item.errorDetail || null }, icon('alert'), h('span', { text: item.error })));
-    if (item.canceled && !item.error) nodes.push(h('div', { class: 'msg-note', text: '멈췄어요.' }));
-    else if (item.done && item.stopping && !item.error) nodes.push(h('div', { class: 'msg-note', text: '멈추기 전에 작업이 끝났어요.' }));
-    if (item.done && !item.error && !item.canceled && !item.parts.some((p) => p.type === 'text' && p.text.trim())) {
-      nodes.push(h('div', { class: 'msg-note', text: '작업을 마쳤어요.' }));
-    }
-    if (item.changed) {
-      const ch = item.changed;
-      const here = () => state.doc && pathKey(state.doc.path) === pathKey(ch.path);
-      nodes.push(h('div', { class: 'msg-change' },
-        h('span', { class: 'msg-change-text' }, icon('check'), '이 대화에서 문서를 고쳤어요'),
-        h('button', { class: 'btn sm', text: '바뀐 내용 보기', onclick: () => { if (here()) showDiff(ch.before, { label: 'AI 대화 전', ai: true }); } }),
-        h('button', { class: 'btn sm ghost', text: '이 대화 전으로 되돌리기', onclick: () => { if (here()) actRestore(ch.before); } })));
-    }
-    body.replaceChildren(...nodes);
-  }
-
-  let chatFrame = 0;
-  function updateAssistant(item) {
-    if (!item.node || !item.node.isConnected) return;
-    if (chatFrame) return;
-    // rAF는 창이 가려지면 멈추므로 타이머로 모아서 그린다
-    chatFrame = setTimeout(() => {
-      chatFrame = 0;
-      const nearBottom = isNearBottom();
-      const chat = chatCurrent();
-      if (chat) for (const it of chat.items) if (it.role === 'assistant' && it.dirty && it.node?.isConnected) { it.dirty = false; fillAssistant(it.node, it); }
-      if (nearBottom) scrollChat(true);
-    }, 33);
-  }
-
-  const isNearBottom = () => el.chatBody.scrollHeight - el.chatBody.scrollTop - el.chatBody.clientHeight < 80;
-  function scrollChat(force) {
-    if (force || isNearBottom()) el.chatBody.scrollTop = el.chatBody.scrollHeight;
-  }
-
-  /**
-   * 대화 한 번 준비: 사용자 말풍선과 답 자리를 넣고 '작업 중'으로 둔다 → { chat, msg }.
-   * 대화 번호를 받으면 chatStarted, 못 받으면 chatFailed (번호보다 먼저 온 이벤트는 chat.pending이 받는다)
-   */
-  function queueChat(path, text) {
-    const chat = chatFor(path);
-    const msg = { role: 'assistant', parts: [], done: false, status: '생각하는 중…', chatId: null };
-    chat.items.push({ role: 'user', text }, msg);
-    chat.busy = true;
-    chat.pending = msg;
-    chat.stopRequested = false;
-    chat.cancelSent = null;
-    setBusy(`ai:${pathKey(path)}`, 'AI가 작업 중…');
-    if (chatCurrent() === chat) renderChat();
-    return { chat, msg };
-  }
-
-  function chatStarted(chat, msg, chatId) {
-    msg.chatId = chatId;
-    if (chat.pending === msg) chat.pending = null;
-    // 이미 끝났으면('end'가 먼저 옴) 대화 번호를 남기지 않는다
-    if (!msg.done) chat.chatId = chatId;
-    // 보내는 동안 멈추기를 눌렀으면 지금 멈춘다
-    if (chat.stopRequested && !msg.done) cancelChatId(chat, chatId);
-  }
-
-  function chatFailed(chat, msg, path, err) {
-    if (chat.pending === msg) chat.pending = null;
-    msg.done = true;
-    msg.error = err?.message || 'AI 대화를 시작하지 못했어요';
-    chat.busy = false;
-    clearBusy(`ai:${pathKey(path)}`);
-    if (err?.code === 'NO_PROVIDER' || err?.code === 'MODULE_MISSING') loadProviders(true);
-    if (chatCurrent() === chat) renderChat();
-  }
-
-  /** 편집 창에 저장 안 한 내용이 있을 때 보내기 전에 묻는다 → 'send' | 'editor' | 'cancel' */
-  async function askEditorDirty() {
-    const r = await confirmDialog({
-      title: '편집 창에 저장하지 않은 내용이 있어요',
-      tone: 'warn',
-      body: [
-        'AI는 저장된 파일을 고칩니다. 지금 보내면 편집 창에서 고친 내용은 AI가 보지 못하고, 나중에 편집 창에서 저장하면 AI가 고친 내용을 덮어쓸 수 있어요.',
-        '편집 창에서 먼저 저장(Ctrl+S)한 뒤 보내 주세요.',
-      ],
-      ok: '편집 창 보기', alt: '그대로 보내기', cancel: '취소',
-    });
-    return r === true ? 'editor' : r === 'alt' ? 'send' : 'cancel';
-  }
-
-  async function sendPrompt(text, { editorOk = false, materialsOk = false, saveMaterials = false } = {}) {
-    text = String(text ?? '').trim();
-    if (!text || !state.doc || chatBlocker()) return;
-    const path = state.doc.path;
-    if (chatFor(path).busy) return;
-    // 편집 창에 저장 안 한 내용이 있으면 먼저 묻는다 (입력한 글은 그대로 둔다)
-    if (!editorOk && state.doc.editor?.dirty) {
-      const choice = await askEditorDirty();
-      if (choice === 'editor') { actEdit(); return; }
-      if (choice !== 'send' || !state.doc || pathKey(state.doc.path) !== pathKey(path) || chatFor(path).busy) return;
-      editorOk = true;
-    }
-    // 보내기 직전에 열린 문서 목록을 새로 받아 대상을 다시 만든다 (받지 못하면 마지막 값)
-    try { state.targetInfo = await call(K.ai.materials()); } catch {}
-    if (!state.doc || pathKey(state.doc.path) !== pathKey(path) || chatFor(path).busy) return;
-    const tm = targetModel();
-    if (!tm) { toast('대화 대상을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요', { type: 'warn' }); return; }
-    if (tm.busyMaterial) {
-      toast(`‘${tm.busyMaterial.name}’은(는) AI가 고치는 중이라 재료로 넘길 수 없어요`, { type: 'warn' });
-      renderTargetChips();
-      return;
-    }
-    el.prompt.value = '';
-    autoGrow();
-    const { chat, msg } = queueChat(path, text);
-    try {
-      const sent = await call(K.ai.send({
-        prompt: text, editorOk, target: OKTargetChips.targetOf(tm),
-        outDir: tm.materialOnly ? tm.outDir : undefined, materialsOk, saveMaterials,
-      }));
-      chatStarted(chat, msg, sent.chatId);
-    } catch (err) {
-      if (err.code === 'MATERIAL_DIRTY') {
-        // 저장 안 한 재료: 대화를 빼고 글을 되돌린 뒤 묻는다 (EDITOR_DIRTY와 같은 방식)
-        dropQueuedChat(path, { chat, msg });
-        renderChat();
-        if (!el.prompt.value.trim()) { el.prompt.value = text; autoGrow(); }
-        const r = await confirmDialog({
-          title: '저장 안 한 재료가 있어요', tone: 'warn', body: [err.message],
-          ok: '저장하고 보내기', alt: '그대로 보내기', cancel: '취소',
-        });
-        if (r === true) sendPrompt(text, { editorOk, saveMaterials: true });
-        else if (r === 'alt') sendPrompt(text, { editorOk, materialsOk: true });
-        return;
-      }
-      if (['MATERIAL_BUSY', 'MATERIAL_NOT_OPEN', 'TARGET_CHANGED', 'MATERIAL_SAVE_FAILED', 'BAD_OUT_DIR', 'AI_BUSY'].includes(err.code)) {
-        chatFailed(chat, msg, path, err);
-        refreshTargetInfo();
-        return;
-      }
-      if (err.code !== 'EDITOR_DIRTY') { chatFailed(chat, msg, path, err); return; }
-      // 화면이 편집 창 상태를 아직 몰랐던 경우: 대화를 빼고 글을 되돌린 뒤 묻는다
-      dropQueuedChat(path, { chat, msg });
-      renderChat();
-      if (!el.prompt.value.trim()) { el.prompt.value = text; autoGrow(); }
-      if (state.doc && pathKey(state.doc.path) === pathKey(path)) onDocEditor({ path, open: true, dirty: true });
-      const choice = await askEditorDirty();
-      if (choice === 'editor') actEdit();
-      else if (choice === 'send') sendPrompt(text, { editorOk: true });
-    }
-  }
-
-  function findMessage(chat, chatId) {
-    for (let i = chat.items.length - 1; i >= 0; i--) {
-      const it = chat.items[i];
-      if (it.role === 'assistant' && it.chatId === chatId) return it;
-    }
-    // 응답보다 이벤트가 먼저 온 경우 (그 사이 멈추기를 눌렀으면 바로 멈춘다)
-    if (chat.pending) {
-      const m = chat.pending;
-      m.chatId = chatId;
-      chat.pending = null;
-      if (chat.stopRequested) cancelChatId(chat, chatId);
-      return m;
-    }
-    return null;
-  }
-
-  function onAiEvent(ev) {
-    if (!ev || !ev.path) return;
-    const chat = chatFor(ev.path);
-    const msg = findMessage(chat, ev.chatId);
-    const isCurrent = state.doc && pathKey(state.doc.path) === pathKey(ev.path);
-    if (!msg) return;
-    switch (ev.type) {
-      case 'text': {
-        const last = msg.parts.at(-1);
-        const text = String(ev.text ?? '');
-        if (ev.delta === false) {
-          if (last?.type === 'text' && text.startsWith(last.text)) last.text = text;
-          else msg.parts.push({ type: 'text', text });
-        } else if (last?.type === 'text') last.text += text;
-        else msg.parts.push({ type: 'text', text });
-        msg.status = '답하는 중…';
-        break;
-      }
-      case 'text_reset': {
-        // 스트림이 끊겨 AI가 다시 쓰는 경우: 이미 보인 글 끝에서 drop 글자만큼 지운다
-        let drop = Math.max(0, Number(ev.drop) || 0);
-        for (let i = msg.parts.length - 1; i >= 0 && drop > 0; i--) {
-          const p = msg.parts[i];
-          if (p.type !== 'text') continue;
-          const cut = Math.min(drop, p.text.length);
-          p.text = p.text.slice(0, p.text.length - cut);
-          drop -= cut;
-          if (!p.text) msg.parts.splice(i, 1);
-        }
-        break;
-      }
-      case 'tool': {
-        const part = { type: 'tool', id: ev.id, tool: String(ev.tool ?? ''), name: String(ev.name ?? ''), state: 'run', summary: '' };
-        msg.parts.push(part);
-        msg.status = `${toolLabel(part, false)}…`;
-        break;
-      }
-      case 'tool_result': {
-        const part = msg.parts.find((p) => p.type === 'tool' && p.id === ev.id && p.state === 'run')
-          ?? msg.parts.find((p) => p.type === 'tool' && p.id === ev.id);
-        if (part) {
-          part.state = ev.ok === false ? 'fail' : 'ok';
-          part.summary = String(ev.summary ?? '');
-          if (part.state === 'ok' && EDIT_TOOLS.has(toolBase(part.tool || part.name)) && isCurrent) refreshPreview({ ifChanged: true, reason: 'ai' });
-        }
-        msg.status = '생각하는 중…';
-        break;
-      }
-      case 'status':
-        if (ev.message) msg.status = String(ev.message);
-        break;
-      case 'done':
-        msg.done = true;
-        if (ev.cancelled) msg.canceled = true;
-        if (ev.text && !msg.parts.some((p) => p.type === 'text' && p.text.trim())) msg.parts.push({ type: 'text', text: String(ev.text) });
-        break;
-      case 'error':
-        msg.error = String(ev.message ?? '오류가 났습니다');
-        msg.errorDetail = ev.detail ? String(ev.detail).slice(-600) : '';
-        msg.done = true;
-        break;
-      case 'end':
-        msg.done = true;
-        // AI가 이 대화에서 문서를 고쳤다 → 바뀐 내용 보기 · 이 대화 전으로 되돌리기
-        if (ev.changed && typeof ev.before === 'string') msg.changed = { before: ev.before, path: ev.path };
-        for (const p of msg.parts) if (p.type === 'tool' && p.state === 'run') p.state = msg.canceled ? 'stop' : 'ok';
-        if (chat.chatId === ev.chatId) chat.chatId = null;
-        chat.busy = false;
-        clearBusy(`ai:${pathKey(ev.path)}`);
-        refreshTargetInfo();
-        if (isCurrent) {
-          refreshPreview({ ifChanged: true, reason: 'ai' });
-          renderChat();
-          return;
-        }
-        break;
-      default:
-        return;
-    }
-    // 멈추기를 누른 뒤에는 다른 상태 글로 덮지 않는다
-    if (msg.stopping && !msg.done) msg.status = '멈추는 중…';
-    msg.dirty = true;
-    if (isCurrent) updateAssistant(msg);
-  }
-
-  /** 멈추기 요청만 표시한다. '멈췄어요'는 AI가 실제로 멈췄다고 알려 올 때(done.cancelled) 붙인다 */
-  function markStopping(chat) {
-    chat.stopRequested = true;
-    const msg = chat.items.findLast((i) => i.role === 'assistant');
-    if (msg && !msg.done) { msg.stopping = true; msg.status = '멈추는 중…'; msg.dirty = true; updateAssistant(msg); }
-  }
-
-  /** 대화 하나에 멈추기를 한 번만 보낸다 */
-  async function cancelChatId(chat, chatId) {
-    if (!chatId || chat.cancelSent === chatId) return;
-    chat.cancelSent = chatId;
-    try { await call(K.ai.cancel(chatId)); } catch (err) { showError(err); }
-  }
-
-  async function stopChat() {
-    const chat = chatCurrent();
-    if (!chat?.busy) return;
-    markStopping(chat);
-    // 아직 대화 번호를 못 받았으면 받는 즉시 sendPrompt가 멈춘다
-    if (chat.chatId) await cancelChatId(chat, chat.chatId);
-  }
-
-  async function newChat() {
-    const chat = chatCurrent();
-    if (!chat || chat.busy) return;
-    try { await call(K.ai.reset()); } catch {}
-    chat.items = [];
-    renderChat();
-    el.prompt.focus();
-  }
-
-  function autoGrow() {
-    const t = el.prompt;
-    t.style.height = 'auto';
-    t.style.height = `${Math.min(t.scrollHeight, 180)}px`;
-    renderSendButton();
-  }
-
-  // 확인용: 가짜 대화 내용
-  function injectDemoChat() {
-    if (!state.doc) return;
-    state.demo = true;
-    const chat = chatFor(state.doc.path);
-    chat.items = [
-      { role: 'user', text: '담당자 칸에 김민지 넣고, 표 숫자 단위도 맞춰줘' },
-      { role: 'assistant', done: true, parts: [
-        { type: 'tool', id: '1', tool: 'office_read', name: '문서 읽기', state: 'ok' },
-        { type: 'tool', id: '2', tool: 'office_fill', name: '칸 채우기', state: 'ok' },
-        { type: 'tool', id: '3', tool: 'office_replace', name: '찾아 바꾸기', state: 'ok' },
-        { type: 'text', text: '**담당자** 칸에 `김민지`를 넣었어요.\n\n- 표의 금액을 모두 **만 원** 단위로 맞췄어요 (2곳)\n- 나머지 서식은 그대로 두었어요\n\n왼쪽 미리보기에서 바뀐 부분을 확인해 보세요.' },
-      ], changed: { before: '', path: state.doc.path } },
-      { role: 'user', text: '결과 한번 확인해 줘' },
-      { role: 'assistant', done: false, status: '결과 확인 중…', parts: [
-        { type: 'tool', id: '4', tool: 'office_page_image', name: '쪽 이미지로 확인', state: 'run' },
-      ] },
-    ];
-    chat.busy = true;
-    renderChat();
-    renderProviderSelect();
-  }
-
   // ── 새 문서 ──────────────────────────────────────────
   // 창은 index.html #dlg-new. main 쪽: doc:newInfo(기본 폴더·이름) · doc:newCheck(이름 확인) · doc:pickFolder · doc:new(만들고 열기 + AI 시작)
 
@@ -2113,10 +1296,9 @@
     renderNewDoc();
     setBusy('newdoc', '새 문서 만드는 중…');
     // 같은 경로의 문서를 지웠다가 다시 만드는 경우 예전 대화를 잇지 않는다 (main도 AI 대화·원래대로 기준을 새로 시작)
-    const old = state.chats.get(pathKey(check.path));
-    if (old && !old.busy) state.chats.delete(pathKey(check.path));
+    bridge.call('chat.forgetIdle', check.path);
     // AI로 시작하면 대화를 미리 준비해 둔다 (main이 문서를 열자마자 대화를 시작하므로 먼저 오는 이벤트도 받게)
-    const queued = ai && !chatFor(check.path).busy ? queueChat(check.path, request) : null;
+    const queued = ai && !bridge.call('chat.of', check.path).busy ? bridge.call('chat.queue', check.path, request) : null;
     try {
       const edit = newDocEditable(nd.format) && nd.edit;
       const res = await call(K.doc.create({ format: nd.format, folder: nd.folder, name: ne.name.value, start: nd.start, request: ai ? request : undefined, template: nd.start === 'template' ? nd.template : undefined, edit }));
@@ -2124,9 +1306,9 @@
       ne.dlg.close();
       const path = res.doc?.path ?? check.path;
       if (queued) {
-        if (pathKey(path) !== pathKey(check.path)) moveChat(check.path, path);
-        if (res.chat?.chatId) chatStarted(queued.chat, queued.msg, res.chat.chatId);
-        else chatFailed(queued.chat, queued.msg, path, res.chatError);
+        if (pathKey(path) !== pathKey(check.path)) bridge.call('chat.move', check.path, path);
+        if (res.chat?.chatId) bridge.call('chat.started', queued.chat, queued.msg, res.chat.chatId);
+        else bridge.call('chat.failed', queued.chat, queued.msg, path, res.chatError);
         if (state.settings.chatCollapsed) toggleChat(false);
       }
       if (ai && !res.chat?.chatId) toast(`${baseName(path)}을(를) 만들었지만 AI를 시작하지 못했어요`, { type: 'warn' });
@@ -2135,7 +1317,7 @@
       if (res.editorError) editorError(res.editorError, path);
       else if (res.editor?.notice) toast(res.editor.notice, { type: 'warn', timeout: 8000 });
     } catch (err) {
-      if (queued) dropQueuedChat(check.path, queued);
+      if (queued) bridge.call('chat.dropQueued', check.path, queued);
       nd.busy = false;
       renderNewDoc();
       if (NAME_CODES.has(err.code)) {
@@ -2147,27 +1329,6 @@
         ne.request.focus();
       } else setNewError(err.message);
     } finally { clearBusy('newdoc'); }
-  }
-
-  /** 문서를 만들지 못했을 때 미리 넣은 대화를 뺀다 */
-  function dropQueuedChat(path, { chat, msg }) {
-    const i = chat.items.indexOf(msg);
-    if (i > 0) chat.items.splice(i - 1, 2);
-    if (chat.pending === msg) chat.pending = null;
-    chat.busy = false;
-    clearBusy(`ai:${pathKey(path)}`);
-    if (!chat.items.length) state.chats.delete(pathKey(path));
-    if (chatCurrent() === chat) renderChat();
-  }
-
-  /** 미리 짐작한 경로와 실제 경로가 다를 때 대화를 옮긴다 */
-  function moveChat(from, to) {
-    const c = state.chats.get(pathKey(from));
-    if (!c) return;
-    state.chats.delete(pathKey(from));
-    state.chats.set(pathKey(to), c);
-    if (state.busy.has(`ai:${pathKey(from)}`)) { clearBusy(`ai:${pathKey(from)}`); setBusy(`ai:${pathKey(to)}`, 'AI가 작업 중…'); }
-    if (chatCurrent() === c) renderChat();
   }
 
   function bindNewDoc() {
@@ -2251,7 +1412,7 @@
     const box = $('#provider-choices');
     if (reload || !state.providers) {
       if (!state.providers) box.replaceChildren(h('div', { class: 'loading-line' }, spinner(), '확인하는 중…'));
-      await loadProviders(!!reload && !!state.providers);
+      await bridge.call('chat.loadProviders', !!reload && !!state.providers);
     }
     if (state.providerError) { box.replaceChildren(h('div', { class: 'inline-error', text: state.providerError })); return; }
     const p = state.providers;
@@ -2260,7 +1421,7 @@
       const input = h('input', { type: 'radio', name: 'provider', value: it.id, disabled: !it.available });
       input.checked = it.id === p.selected;
       input.addEventListener('change', async () => {
-        if (await saveSettings({ provider: it.id })) { await loadProviders(false); renderProviderChoices(false); }
+        if (await saveSettings({ provider: it.id })) { await bridge.call('chat.loadProviders', false); renderProviderChoices(false); }
       });
       return h('label', { class: `choice${it.available ? '' : ' disabled'}` }, input,
         h('span', { class: 'choice-body' },
@@ -2540,7 +1701,7 @@
     state.settings.chatCollapsed = collapsed;
     applyChatLayout();
     saveSettings({ chatCollapsed: collapsed });
-    if (!collapsed) setTimeout(() => el.prompt.focus(), 0);
+    if (!collapsed) setTimeout(() => bridge.call('chat.focusPrompt'), 0);
   }
 
   // ── 끌어놓기 ─────────────────────────────────────────
@@ -2615,7 +1776,7 @@
   async function smokeSignal(info) {
     if (!state.smoke || state.smokeSent) return;
     state.smokeSent = true;
-    if (state.smoke.chat) injectDemoChat();
+    if (state.smoke.chat) bridge.call('chat.injectDemo');
     if (state.smoke.newdoc) {
       // AI 선택지가 제 모양으로 보이게 AI 확인을 기다린다
       await Promise.race([state.providersReady, sleep(8000)]);
@@ -2692,7 +1853,6 @@
     $('#btn-settings').addEventListener('click', () => openSettings('ai'));
     $('#btn-toggle-chat').addEventListener('click', () => toggleChat());
     $('#btn-collapse-chat').addEventListener('click', () => toggleChat(true));
-    $('#btn-new-chat').addEventListener('click', newChat);
     $('#btn-recent-clear').addEventListener('click', async () => {
       const yes = await confirmDialog({ title: '최근 문서 목록을 비울까요?', body: '목록만 지우고 파일은 그대로 둡니다.', ok: '비우기' });
       if (yes) { try { renderRecent(await call(K.recent.clear())); } catch (err) { showError(err); } }
@@ -2709,26 +1869,6 @@
       stepZoom(e.deltaY < 0 ? 1 : -1);
     }, { passive: false });
     new ResizeObserver(() => { if (state.preview?.kind === 'svg' && typeof state.zoom === 'string') applyZoom(); }).observe(el.viewer);
-
-    // 대화 입력
-    el.prompt.addEventListener('input', autoGrow);
-    el.prompt.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
-        e.preventDefault();
-        if (!chatCurrent()?.busy) sendPrompt(el.prompt.value);
-      }
-    });
-    el.send.addEventListener('click', () => (chatCurrent()?.busy ? stopChat() : sendPrompt(el.prompt.value)));
-    el.provider.addEventListener('change', async () => {
-      if (await saveSettings({ provider: el.provider.value || null })) loadProviders(false);
-    });
-    // 답변 속 링크는 기본 브라우저로
-    el.chatLog.addEventListener('click', (e) => {
-      const a = e.target.closest('a.ext');
-      if (!a) return;
-      e.preventDefault();
-      call(K.shell.openExternal(a.dataset.href)).catch(showError);
-    });
 
     // 설정 창
     $$('.nav-item', el.settings).forEach((b) => b.addEventListener('click', () => selectTab(b.dataset.tab)));
@@ -2820,10 +1960,9 @@
       }
       updateDoc({ path: ev.path, missing: false, mtime: ev.mtime, size: ev.size });
       // 편집 창이 저장했거나 AI가 고치는 중이면 (거기서 이미 알리므로) 알림 없이 새로 고친다
-      refreshPreview({ ifChanged: true, reason: ev.by === 'editor' ? 'editor' : chatCurrent()?.busy ? 'ai' : 'watch' });
+      refreshPreview({ ifChanged: true, reason: ev.by === 'editor' ? 'editor' : bridge.call('chat.current')?.busy ? 'ai' : 'watch' });
     });
     K.on.docEditor(onDocEditor);
-    K.on.aiEvent(onAiEvent);
     K.on.menu((cmd) => {
       if (cmd === 'open') pickFile();
       else if (cmd === 'new') openNewDoc();
@@ -2844,28 +1983,28 @@
     });
   }
 
-  async function start() {
-    bindUi();
-    bindEvents();
-    let init;
-    try { init = await call(K.init()); } catch (err) {
-      toast(`시작하지 못했어요: ${err.message}`, { type: 'error' });
-      return;
-    }
-    state.exts = init.exts ?? [];
-    state.settings = init.settings ?? {};
-    state.version = init.version ?? '';
-    state.smoke = init.smoke;
-    state.packaged = init.packaged !== false;
-    if (init.editor) state.editor = { ...state.editor, ...init.editor };
+  // panel.js가 부르는 이름 (M3에서 IPC로 바뀐다)
+  bridge.provide('home.pickFile', pickFile);
+  bridge.provide('home.openNewDoc', openNewDoc);
+  // 새 문서 창이 열려 있을 때만 다시 그린다 (AI 확인이 끝났을 때 AI 선택지를 고치려고)
+  bridge.provide('home.renderNewDoc', () => { if (ne.dlg.open) renderNewDoc(); });
+  bridge.provide('home.showDiff', showDiff);
+  bridge.provide('home.restore', actRestore);
+  bridge.provide('home.edit', actEdit);
+  bridge.provide('home.refreshPreview', refreshPreview);
+  bridge.provide('home.docEditor', onDocEditor);
+  bridge.provide('home.saveSettings', saveSettings);
+  bridge.provide('home.openSettings', openSettings);
+
+  onInit((init) => {
     applyChatLayout();
     renderRecent(init.recent);
     if (init.doc) onDocOpened(init.doc);
-    else { renderTopbar(); renderStatus(); renderChat(); }
-    state.providersReady = loadProviders(false);
+    else { renderTopbar(); renderStatus(); }
     // 열 파일 없이 시작한 확인용 캡처는 빈 화면을 찍는다
     if (state.smoke && !init.doc && !init.opening) setTimeout(() => smokeSignal({ ok: true, kind: 'empty' }), 600);
-  }
+  });
 
-  start();
+  bindUi();
+  bindEvents();
 })();

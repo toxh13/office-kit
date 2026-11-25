@@ -77,6 +77,7 @@ async function start() {
   // 주 창은 숨겨 두고, 편집 창의 'AI · 도구'를 누르면 그 옆에 좁은 '옆 창'으로 보인다. 마지막 편집 창을 닫으면 끝난다.
   // hubPrimary: 사용자가 Office Kit 자체를 실행했다 (주 창이 처음부터 보임) → 주 창을 닫으면 앱이 끝난다 (예전처럼)
   let hubPrimary = true;
+  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
   let panelOf = null;       // 옆 창이 붙어 있는 편집 창 (BrowserWindow)
   let hubBounds = null;     // 옆 창이 되기 전 주 창 크기 (전체 창으로 돌아갈 때)
   let appQuitting = false;
@@ -909,6 +910,7 @@ async function start() {
       onSaved: (p) => editorSaved(p),
       onDownloaded: (p) => editorDownloaded(p),
       onDirtyChange: () => pushEditorState(),
+      // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
       onPanel: (p, ew) => { showPanel(p, ew).catch((err) => console.error('[panel]', err)); },
       // 한글 편집 창의 인쇄·PDF로 저장: 편집 중인 hwp 바이트 → PDF (한컴+자동화 연결이 있으면 한컴, 없으면 내장 엔진)
       toPdf: (bytes) => hwpBytesToPdf(bytes),
@@ -1195,6 +1197,7 @@ async function start() {
   /** 주 창을 (옆 창이 아닌) 보통 창으로 보인다 */
   function showHub() {
     if (!win) return;
+    // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
     leavePanel();
     if (win.isMinimized()) win.restore();
     win.show(); win.focus();
@@ -1317,6 +1320,7 @@ async function start() {
     pushEditorState();
     if (!win || win.isDestroyed() || appQuitting) return;
     const left = editors?.list().length ?? 0;
+    // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
     if (panelOf && (panelOf.isDestroyed() || left === 0)) {
       panelOf = null;
       if (!hubPrimary) { win.hide(); leavePanel(); }
@@ -1324,6 +1328,7 @@ async function start() {
     if (left === 0 && !hubPrimary && !win.isVisible()) app.quit();
   }
 
+  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
   const PANEL_W = 420;
 
   /** 편집 창 옆에 옆 창(AI 대화·버전·도구)을 붙인다 */
@@ -1364,6 +1369,7 @@ async function start() {
     }
   }
 
+  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
   /** 옆 창 모드 끝 (주 창 크기를 되돌린다) */
   function leavePanel() {
     if (!win || win.isDestroyed()) return;
@@ -1820,6 +1826,7 @@ async function start() {
   handle('pdftools:run', (args) => pdfRun(args && typeof args === 'object' ? args : {}));
   handle('doc:openInApp', () => openInProgram());
   handle('doc:openInWord', () => openPdfInWord());
+  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
   handle('panel:full', () => { showHub(); return null; });
   handle('panel:close', () => {
     // 옆 창 닫기: Office Kit를 직접 실행해 쓰던 주 창이면 보통 주 창으로 돌아온다.
@@ -2133,9 +2140,11 @@ async function start() {
       if (!hubPrimary && !appQuitting && editors?.list().length) {
         e.preventDefault();
         win.hide();
+        // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
         leavePanel();
         return;
       }
+      // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
       if (panelOf) leavePanel();
       if (!editorsClosed && editors?.list().length) {
         e.preventDefault();
@@ -2199,6 +2208,7 @@ async function start() {
       openAsDocument(f).catch((err) => { showHub(); send('toast', { type: 'error', message: err.message }); });
       return;
     }
+    // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
     if (win) { if (win.isMinimized()) win.restore(); leavePanel(); win.show(); win.focus(); }
     if (!f) return;
     if (rendererReady) openDocument(f, { autoEdit: true }).catch((err) => send('toast', { type: 'error', message: err.message }));

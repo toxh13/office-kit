@@ -99,6 +99,7 @@ contextBridge.exposeInMainWorld('officeKit', {
   },
 
   // 옆 창 (편집 창 옆의 AI·도구 창): 전체 창으로 · 닫기
+  // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
   panel: {
     full: invoke('panel:full'),
     close: invoke('panel:close'),
@@ -137,6 +138,7 @@ contextBridge.exposeInMainWorld('officeKit', {
     menu: subscribe('menu'),
     toast: subscribe('toast'),
     batchProgress: subscribe('batch:progress'),
+    // M3에서 지움: 탭 창 AI 패널 뷰로 바뀜
     /** 옆 창 모드 { on } */
     panel: subscribe('panel'),
   },
