@@ -1,7 +1,7 @@
 // store.mjs — 앱 설정(JSON), 최근 파일, 원본 백업. Electron 없이도 동작하도록 폴더를 주입받는다.
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { copyFileAtomic } from '../core/atomic.mjs';
@@ -285,6 +285,50 @@ export const PREVIEW_CACHE_KEEP = 40;
 export const PREVIEW_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 // 만드는 방법이 바뀌면 올린다 → 옛 PDF는 쓰지 않는다 (2: Excel 시트마다 한 쪽 너비)
 export const PREVIEW_CACHE_VERSION = 2;
+
+/**
+ * 미리보기 폴더(userData/preview) 정리. 문서 하나의 미리보기 PDF만 남기고 나머지는 지운다.
+ */
+export function createPreviewFiles(dir) {
+  /** keep 폴더(또는 파일)만 남김 */
+  function clean(keep) {
+    try {
+      for (const f of readdirSync(dir)) {
+        const full = join(dir, f);
+        if (keep && samePath(full, keep)) continue;
+        try { rmSync(full, { recursive: true, force: true }); } catch {} // PDF 뷰어가 잡고 있으면 다음에 지운다
+      }
+    } catch {}
+  }
+
+  // PDF 뷰어 제목에 내부 이름(s.xlsx.123.pdf) 대신 문서 이름이 보이도록 폴더를 나눠 옮긴다
+  let seq = 0;
+  function tidy(file, docPath) {
+    try {
+      const sub = join(dir, `${Date.now()}-${++seq}`);
+      mkdirSync(sub, { recursive: true });
+      const out = join(sub, `${basename(docPath).replace(/\.[^.]+$/, '')}.pdf`);
+      renameSync(file, out);
+      return { file: out, dir: sub };
+    } catch { return { file, dir: null }; }
+  }
+
+  /**
+   * 다 만든 미리보기 PDF를 둔다 → { file, dir }.
+   * 늦게 끝난 것(그 사이 다른 문서로 넘어감)은 이 PDF만 지우고 null (지금 문서의 미리보기는 그대로 둔다)
+   */
+  function settle(file, docPath, { current = true } = {}) {
+    if (!current) {
+      try { rmSync(file, { force: true }); } catch {}
+      return null;
+    }
+    const pdf = tidy(file, docPath);
+    clean(pdf.dir ?? pdf.file);
+    return pdf;
+  }
+
+  return { dir, clean, tidy, settle };
+}
 
 /**
  * 프로그램(Word·Excel·PowerPoint·한컴)으로 만든 미리보기 PDF를 기억한다. dir = userData/preview-cache

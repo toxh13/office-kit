@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSettings, createBackups, createPreviewCache, writeJsonAtomic, stamp, DEFAULT_SETTINGS, guessModelProvider } from '../src/app/store.mjs';
+import { createSettings, createBackups, createPreviewCache, createPreviewFiles, writeJsonAtomic, stamp, DEFAULT_SETTINGS, guessModelProvider } from '../src/app/store.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'okstore-'));
 
@@ -341,5 +341,25 @@ test('restore는 백업을 원자적으로 복사한다 (내용 = 백업, 임시
   b.restore(doc, e1);
   assert.equal(readFileSync(doc, 'utf8'), 'v1');
   assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('미리보기 폴더: 늦게 끝난 미리보기는 지금 문서의 미리보기 폴더를 지우지 않는다', () => {
+  const dir = tmp();
+  const files = createPreviewFiles(dir);
+  // A 미리보기를 시작했는데 오래 걸리는 사이 B를 열어 B 미리보기가 먼저 끝났다
+  const rawA = join(dir, '가.docx.1.pdf');
+  const rawB = join(dir, '나.docx.2.pdf');
+  writeFileSync(rawA, '%PDF-A');
+  writeFileSync(rawB, '%PDF-B');
+  const b = files.settle(rawB, 'C:\\Users\\user\\문서\\나.docx', { current: true });
+  assert.ok(b && existsSync(b.file), 'B 미리보기 PDF가 놓인다');
+  assert.equal(readFileSync(b.file, 'utf8'), '%PDF-B');
+  // 이제 A가 끝났다 (지금 문서는 B)
+  const a = files.settle(rawA, 'C:\\Users\\user\\문서\\가.docx', { current: false });
+  assert.equal(a, null, '늦은 결과는 둘 곳이 없다');
+  assert.ok(existsSync(b.file), 'B의 PDF는 남아 있어야 한다');
+  assert.equal(existsSync(rawA), false, '늦은 A의 PDF는 지운다');
+  assert.equal(readdirSync(dir).length, 1, 'B 폴더 하나만 남는다');
   rmSync(dir, { recursive: true, force: true });
 });

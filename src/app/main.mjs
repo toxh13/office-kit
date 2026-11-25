@@ -1,12 +1,12 @@
 // main.mjs — Office Kit 창, 단일 인스턴스, IPC, 원본 백업, 파일 감시, AI 대화 중계.
 import { app, BrowserWindow, Menu, dialog as electronDialog, ipcMain, nativeTheme, screen, session, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
-import { createBackups, createPreviewCache, createSettings, hashFile, samePath } from './store.mjs';
+import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(here, '../..');
@@ -293,28 +293,9 @@ async function start() {
     } catch { return null; }
   }
 
-  /** 미리보기 폴더 정리 (keep 폴더만 남김) */
-  function cleanPreviews(keep) {
-    try {
-      for (const f of readdirSync(previewDir)) {
-        const full = join(previewDir, f);
-        if (keep && samePath(full, keep)) continue;
-        try { rmSync(full, { recursive: true, force: true }); } catch {} // PDF 뷰어가 잡고 있으면 다음에 지운다
-      }
-    } catch {}
-  }
-
-  // PDF 뷰어 제목에 내부 이름(s.xlsx.123.pdf) 대신 문서 이름이 보이도록 폴더를 나눠 옮긴다
-  let pdfSeq = 0;
-  function tidyPdf(file, docPath) {
-    try {
-      const dir = join(previewDir, `${Date.now()}-${++pdfSeq}`);
-      mkdirSync(dir, { recursive: true });
-      const out = join(dir, `${basename(docPath).replace(/\.[^.]+$/, '')}.pdf`);
-      renameSync(file, out);
-      return { file: out, dir };
-    } catch { return { file, dir: null }; }
-  }
+  // 미리보기 폴더 정리 (문서 하나의 PDF만 남긴다)
+  const previewFiles = createPreviewFiles(previewDir);
+  const cleanPreviews = (keep) => previewFiles.clean(keep);
 
   const clip = (rows, maxRows = 500, maxCols = 60) => (rows ?? []).slice(0, maxRows).map((r) => (r ?? []).slice(0, maxCols).map((v) => String(v ?? '')));
 
@@ -359,8 +340,9 @@ async function start() {
     if (current === doc) { doc.renderedStat = st; doc.stat = st; }
     const base = { mode: m, ms: Date.now() - started, doc: current === doc ? docInfo() : null };
     if (res.kind === 'pdf') {
-      const pdf = tidyPdf(res.file, doc.path);
-      cleanPreviews(pdf.dir ?? pdf.file);
+      const pdf = previewFiles.settle(res.file, doc.path, { current: current === doc });
+      // 늦게 끝난 미리보기: 지금 문서의 PDF를 지우지 않고, 화면도 이 결과를 버린다
+      if (!pdf) return { ...base, kind: 'stale' };
       return { ...base, kind: 'pdf', engine: res.engine, cached: !!res.cached, url: `${pathToFileURL(pdf.file).href}#view=FitH&navpanes=0`, pages: res.pages };
     }
     if (res.kind === 'svg') {

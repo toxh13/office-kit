@@ -643,6 +643,7 @@
     try {
       const res = await call(K.doc.preview({ ifChanged }));
       if (seq !== state.previewSeq || !state.doc || pathKey(state.doc.path) !== pathKey(path)) return;
+      if (res.kind === 'stale') return; // 늦게 끝난 다른 문서의 미리보기
       if (res.doc) updateDoc(res.doc);
       if (res.unchanged) { result = { ok: true, kind: state.preview?.kind }; return; }
       state.preview = res;
