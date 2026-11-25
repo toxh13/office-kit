@@ -426,3 +426,41 @@ describe('프로그램 엔진 (Word) — OFFICEKIT_COM_TESTS=1 일 때만', { sk
     assert.equal(readFileSync(tmp.path('com.pdf')).subarray(0, 4).toString(), '%PDF');
   });
 });
+
+describe('HWPX 일괄 변환도 읽기 제한·네트워크 경로 차단을 지킨다', () => {
+  const sample = join(ROOT, 'examples', '신청서.hwp');
+  async function restrictedRun(root, args) {
+    const { client: c } = await connect([SERVER], { OFFICEKIT_WRITE_ROOTS: root, OFFICEKIT_READ_ROOTS: root });
+    try { return await c.callTool({ name: 'office_hwpx_batch', arguments: args }, undefined, { timeout: 120_000 }); } finally { await c.close(); }
+  }
+
+  test('hwpx_batch는 제한 모드에서 UNC 입력을 거절한다', async () => {
+    const root = tmp.path('batch-unc');
+    mkdirSync(root, { recursive: true });
+    const r = await restrictedRun(root, { paths: ['\\\\host\\share'] });
+    assert.equal(r.isError, true);
+    assert.match(textOf(r), /네트워크 경로/);
+  });
+
+  test('hwpx_batch는 읽기 허용 폴더 밖 입력을 거절한다', async () => {
+    const root = tmp.path('batch-in');
+    const outside = tmp.path('batch-out');
+    mkdirSync(root, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    copyFileSync(sample, join(outside, 'x.hwp'));
+    const r = await restrictedRun(root, { paths: [join(outside, 'x.hwp')] });
+    assert.equal(r.isError, true);
+    assert.match(textOf(r), /폴더 안의 파일만 읽을 수 있습니다/);
+    assert.ok(!existsSync(join(outside, 'x.hwpx')));
+  });
+
+  test('hwpx_batch 보고서 csv는 overwrite=false면 기존 파일을 덮지 않는다', async () => {
+    const dir = tmp.path('batch-report');
+    mkdirSync(dir, { recursive: true });
+    copyFileSync(sample, join(dir, 'a.hwp'));
+    const csv = join(dir, '결과.csv');
+    writeFileSync(csv, '원래 내용', 'utf8');
+    await fails('office_hwpx_batch', { paths: [dir], report: csv }, /이미 있는 파일/);
+    assert.equal(readFileSync(csv, 'utf8'), '원래 내용');
+  });
+});

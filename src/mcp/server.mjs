@@ -523,18 +523,26 @@ export function createServer() {
     },
     annotations: { destructiveHint: false },
   }, tool(async ({ paths, outDir, overwrite = false, report }) => {
-    const { items, truncated } = collectHwpFiles(paths.map(abs));
+    // 입력마다 네트워크 경로·읽기 허용 폴더 검사 (없는 경로는 아래에서 '찾지 못함'으로 처리)
+    const inputs = paths.map(abs);
+    for (const full of inputs) { guardUnc(full); if (existsSync(full)) mustExist(full); }
+    const { items: found, truncated } = collectHwpFiles(inputs);
+    // 폴더 안의 링크·정션을 따라간 결과가 읽기 허용 폴더 밖이면 뺀다
+    const readRoots = rootsOf('OFFICEKIT_READ_ROOTS');
+    const items = readRoots.length ? found.filter((it) => readRoots.some((r) => inside(realOf(it.src), r))) : found;
     if (!items.length) throw new Error('바꿀 한글(.hwp) 파일을 찾지 못했어요');
     const dir = outDir ? abs(outDir) : undefined;
     // 저장할 곳이 모두 허락된 폴더 안인지 먼저 확인 (하나라도 밖이면 시작하지 않는다)
     for (const it of items) outPath(outputFor(it, dir), { allow: new Set(['hwpx']), overwrite: true });
-    const reportPath = report ? outPath(report, { allow: new Set(['csv']), overwrite: true }) : null;
+    const reportPath = report ? outPath(report, { allow: new Set(['csv']), overwrite }) : null;
     const r = await convertHwpBatch(items, { outDir: dir, overwrite });
-    if (reportPath) writeBatchReport(reportPath, r.results);
+    let reportError = '';
+    if (reportPath) { try { writeBatchReport(reportPath, r.results); } catch (e) { reportError = e?.message ?? String(e); } }
     const s = r.summary;
     const lines = r.results.map((x) => `- [${BATCH_STATUS_KO[x.status]}] ${x.src} → ${x.out}${x.notes?.length ? ` (${x.notes.join(', ')})` : ''}`);
     return text(`한글 → HWPX ${s.total}개: 같음 ${s.ok}, 확인 필요 ${s.check}, 건너뜀 ${s.skipped}, 실패 ${s.fail}${truncated ? ' (파일이 많아 앞부분만)' : ''}`
-      + `${reportPath ? `\n보고서: ${reportPath}` : ''}\n${lines.join('\n')}`);
+      + `${reportPath && !reportError ? `\n보고서: ${reportPath}` : ''}\n${lines.join('\n')}`
+      + (reportError ? `\n보고서를 쓰지 못했습니다: ${reportError}` : ''));
   }));
 
   server.registerTool('office_pdf_tools', {
