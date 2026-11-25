@@ -299,13 +299,13 @@
       if (!editorKindInfo(p)?.available) { setEditorAvailable(p, true); renderEditButton(); }
     } catch (err) { error = err; } finally { clearBusy('edit'); }
     if (error) { await editorError(error, p); return; }
-    // Office 편집 창이 많이 열림 → 메모리 안내
-    if (r?.notice) toast(r.notice, { type: 'warn', timeout: 8000 });
+    // Office 편집 탭이 많이 열렸을 때의 메모리 안내(r.notice)는 main이 탭 창에 대화상자로 보인다 (이 문서 탭은 편집 탭으로 바뀐다)
   }
 
   function onDocEditor(ev) {
     if (!ev || !state.doc || pathKey(ev.path) !== pathKey(state.doc.path)) return;
-    state.doc = { ...state.doc, editor: { open: !!ev.open, dirty: !!ev.dirty } };
+    // aiBusy: main이 AI 대화 시작·끝에 보낸다 (패널이 중계한 편집 상태에는 없으므로 있을 때만 바꾼다)
+    state.doc = { ...state.doc, editor: { open: !!ev.open, dirty: !!ev.dirty }, ...(typeof ev.aiBusy === 'boolean' ? { aiBusy: ev.aiBusy } : {}) };
     renderTopbar();
     renderStatus();
   }
@@ -1131,8 +1131,8 @@
       if (ai && !res.chat?.chatId) toast(`${baseName(path)}을(를) 만들었지만 AI를 시작하지 못했어요`, { type: 'warn' });
       else toast(ai ? `${baseName(path)}을(를) 만들고 AI에게 부탁했어요` : `새 문서를 만들었어요: ${baseName(path)}`, { type: 'success' });
       // 편집 창은 main이 열었다 (못 열었으면 이유만 알린다. 문서는 만들어졌음)
+      // (메모리 안내는 main이 탭 창에 대화상자로 보인다)
       if (res.editorError) editorError(res.editorError, path);
-      else if (res.editor?.notice) toast(res.editor.notice, { type: 'warn', timeout: 8000 });
     } catch (err) {
       nd.busy = false;
       renderNewDoc();

@@ -980,6 +980,11 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(notices[0], null, '4개까지는 안내 없음');
     assert.match(notices[1], /5개 열려 있습니다/);
     assert.match(notices[1], /메모리/);
+    // 메모리 안내는 main이 그 탭 창을 부모로 한 정보 대화상자로 보인다 (D12 — 바뀌어 닫히는 문서 탭에 맡기지 않는다)
+    const shown = fake.dialogs.filter((d) => d.type === 'info' && /5개 열려 있습니다/.test(d.message ?? ''));
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].parent, tw0);
+    assert.deepEqual(shown[0].buttons, ['확인']);
   });
 
   await t.test('Office: 암호 문서·옛 형식은 창을 열기 전에 한국어로 거절', async () => {
@@ -1126,6 +1131,23 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(homeWc.sent.some((s) => s.channel === 'doc:changed' && s.data.path === pdf), false, '홈 뷰는 문서를 품지 않는다');
   });
 
+  await t.test('AI 작업 중인 문서 탭: doc:editor로 aiBusy가 오고, 끝나면 false', async () => {
+    const pdf = join(docs, '탭 시험.pdf');
+    assert.equal((await call('doc:open', pdf)).ok, true);
+    const wc = docWc(pdf);
+    const busyOf = () => wc.sent.filter((s) => s.channel === 'doc:editor' && s.data?.path === pdf).at(-1)?.data?.aiBusy;
+    const held = await call('ai:send', { prompt: '[hold] 요약해줘' });
+    assert.equal(held.ok, true, held.error);
+    try {
+      assert.equal(busyOf(), true, '대화 시작 → 그 문서 탭에 aiBusy (미리보기 새로 고침 이유가 ai가 되게)');
+      assert.equal(lastTarget()?.aiBusy, true);
+    } finally {
+      globalThis.__okRelease();
+    }
+    assert.ok(await until(() => lastSent('ai:event', (d) => d.type === 'end' && d.chatId === held.value.chatId)));
+    assert.ok(await until(() => busyOf() === false), '끝나면 aiBusy false');
+  });
+
   await t.test('view:call 중계: 표에 없는 이름·같은 종류로 보내기는 버림, chat.loadProviders는 모든 창 패널로', async () => {
     const pdf = join(docs, '탭 시험.pdf');
     const pdfWc = docWc(pdf);
@@ -1199,6 +1221,31 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.equal(docView.isDestroyed(), true, '문서 탭 뷰는 닫힌다');
     assert.ok(editorOf(/자리 시험\.docx - 문서 편집/));
     assert.equal(lastTarget()?.path, p);
+  });
+
+  await t.test('겹친 편집 탭 열기: 두 문서 탭의 직접 편집을 동시에 → 각자 제자리 편집 탭, 중복 없음', async () => {
+    const a = join(docs, '동시 가.docx');
+    const b = join(docs, '동시 나.docx');
+    await createBlankDocument(a);
+    await createBlankDocument(b);
+    const ta = (await call('doc:open', a)).value.tabId;
+    const tb = (await call('doc:open', b)).value.tabId;
+    const before = tabList();
+    const ia = before.tabs.findIndex((x) => x.id === ta);
+    const ib = before.tabs.findIndex((x) => x.id === tb);
+    const [ra, rb] = await Promise.all([callAs(a, 'doc:edit'), callAs(b, 'doc:edit')]);
+    assert.equal(ra.ok, true, ra.error);
+    assert.equal(rb.ok, true, rb.error);
+    const after = tabList();
+    assert.equal(after.tabs.length, before.tabs.length, '탭 수 그대로');
+    assert.deepEqual([after.tabs[ia].type, after.tabs[ia].path], ['editor', a]);
+    assert.deepEqual([after.tabs[ib].type, after.tabs[ib].path], ['editor', b]);
+    for (const p of [a, b]) {
+      assert.equal(after.tabs.filter((x) => x.path === p).length, 1, p);
+      assert.equal(docWc(p), null, '문서 탭 뷰는 닫힌다');
+    }
+    assert.ok(editorOf(/동시 가\.docx - 문서 편집/) && editorOf(/동시 나\.docx - 문서 편집/));
+    cur = b;
   });
 
   await t.test('새 문서 AI 시작 → 패널에 ai:event start가 다른 ai:event보다 먼저', async () => {

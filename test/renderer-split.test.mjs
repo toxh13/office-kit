@@ -176,6 +176,12 @@ test('home.js·panel.js·core.js는 서로의 이름을 직접 쓰지 않는다 
   assert.deepEqual([...tops].filter((n) => ALLOWED.has(n)), []);
 });
 
+test('home.js: doc:editor의 aiBusy를 문서 탭 state.doc에 합친다 (AI가 고친 것을 바깥 변경으로 알리지 않게)', () => {
+  const home = read('home.js');
+  assert.match(home, /typeof ev\.aiBusy === 'boolean'/);
+  assert.match(home, /state\.doc\.aiBusy \? 'ai' : 'watch'/);
+});
+
 test('state 칸 주인: home.js는 panel 칸을, panel.js는 home 칸을 쓰지 않는다', () => {
   assert.doesNotMatch(read('home.js'), /state\.(chats|targetInfo|targetSeq|demo)\b/);
   assert.doesNotMatch(read('panel.js'), /state\.(preview|previewSeq|rendering|pendingRefresh|zoom|panel|smokeSent)\b/);

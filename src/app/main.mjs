@@ -9,7 +9,7 @@ import { allows, channelSpec, VIEW_ROUTES } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
 import { createTabWindow } from './tab-window.mjs';
-import { createTabList } from './tabs.mjs';
+import { createTabList, docKey } from './tabs.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(here, '../..');
@@ -1031,11 +1031,19 @@ async function start() {
   // 편집 탭이 열리고 닫히고 고쳐질 때 화면에 알린다: 문서가 열린 허브(문서 탭 상태 막대)마다 doc:editor, 탭 창마다 AI 패널에 ai:target.
   // 탭이 닫힌 뒤 정리·'다른 이름으로 저장' 뒤 경로 바뀜이 끝난 다음에 보도록 조금 늦춘다
   let editorPushTimer = 0;
+  /** AI 대화가 시작·끝날 때: AI 패널(ai:target)·탭 줄(busy)·그 문서를 보는 문서 탭(doc:editor의 aiBusy)에 알린다 */
+  function pushAiState() {
+    for (const hub of allHubs()) {
+      if (hub.current) sendTo(hub.wc, 'doc:editor', { path: hub.current.path, ...editorState(hub.current.path), aiBusy: aiBusyFor(hub.current.path) });
+    }
+    for (const tw of tabWindows.values()) { pushTarget(tw); sendTabs(tw); }
+  }
+
   function pushEditorState() {
     clearTimeout(editorPushTimer);
     editorPushTimer = setTimeout(() => {
       for (const hub of allHubs()) {
-        if (hub.current) sendTo(hub.wc, 'doc:editor', { path: hub.current.path, ...editorState(hub.current.path) });
+        if (hub.current) sendTo(hub.wc, 'doc:editor', { path: hub.current.path, ...editorState(hub.current.path), aiBusy: aiBusyFor(hub.current.path) });
       }
       for (const tw of tabWindows.values()) pushTarget(tw);
     }, 40);
@@ -1586,14 +1594,15 @@ async function start() {
     return { tabId: t.id, mode: 'doc', path: p, reused: false, editor: editorState(p), notice: null };
   }
 
-  // 편집 탭을 어디에 붙일지 (openEditorTab이 정하고 hostFor가 쓴다): { tw, path, replaceId }
-  let placing = null;
-  // hostFor가 막 만든 편집 탭 (첫 onTabChange가 뷰를 잇는다): { tw, tabId, path }
-  let pendingTab = null;
+  // 편집 탭을 어디에 붙일지 (openEditorTab이 정하고 hostFor가 쓴다): docKey(path) → { tw, path, replaceId }
+  // openEditor는 서버·세션을 기다리므로 여러 열기가 겹칠 수 있다 → 문서마다 따로 둔다
+  const placings = new Map();
+  // hostFor가 막 만든 편집 탭 (첫 onTabChange가 뷰를 잇는다): docKey(path) → { tw, tabId, path }
+  const pendingTabs = new Map();
 
   /** editor-window의 hostFor: 편집 뷰를 붙일 탭 창 껍데기. 탭을 더하거나 문서 탭을 같은 자리에서 바꾼다 (판정 7) */
   function editorHostFor(info) {
-    const pl = placing && samePath(placing.path, info.path) ? placing : null;
+    const pl = placings.get(docKey(info.path)) ?? null;
     const tw = (pl && tabWindows.has(pl.tw.shell.id) ? pl.tw : null) ?? lastTw() ?? createTabWindowFor({ bounds: initialBounds() });
     const convertedFrom = info.convertedFrom ?? null;
     const tab = { type: 'editor', path: info.path, convertedFrom, title: basename(convertedFrom ?? info.path) };
@@ -1608,7 +1617,7 @@ async function start() {
     } else {
       t = tw.tabs.add(tab);
     }
-    pendingTab = { tw, tabId: t.id, path: info.path };
+    pendingTabs.set(docKey(info.path), { tw, tabId: t.id, path: info.path });
     return tw.shell;
   }
 
@@ -1621,7 +1630,8 @@ async function start() {
       const tab = tw.tabs.tabs.find((x) => x.type === 'editor' && samePath(x.path, p));
       if (tab) return { tw, tab };
     }
-    if (pendingTab && samePath(pendingTab.path, p) && pendingTab.tw.tabs.get(pendingTab.tabId)) return { tw: pendingTab.tw, tab: pendingTab.tw.tabs.get(pendingTab.tabId) };
+    const pend = pendingTabs.get(docKey(p));
+    if (pend && pend.tw.tabs.get(pend.tabId)) return { tw: pend.tw, tab: pend.tw.tabs.get(pend.tabId) };
     return null;
   }
 
@@ -1661,24 +1671,35 @@ async function start() {
   async function openEditorTab(tw, p, { replaceId = null, noted = false, convertedFrom = null } = {}) {
     if (!editors) throw fail(`편집 창 기능을 불러오지 못했습니다: ${editorLoadError}`, 'EDITOR_MISSING');
     if (!noted) noteOpened(p);
-    placing = { tw, path: p, replaceId };
-    pendingTab = null;
+    const k = docKey(p);
+    const mine = { tw, path: p, replaceId };
+    placings.set(k, mine);
+    pendingTabs.delete(k);
     let r;
     try {
       r = await editors.openEditor(p, convertedFrom ? { convertedFrom } : undefined);
     } catch (err) {
-      // 뷰를 붙이기 전에 실패했으면 막 만든 탭을 뺀다
-      if (pendingTab && !editors.isOpen(pendingTab.path)) removeTab(pendingTab.tw, pendingTab.tabId);
+      // 뷰를 붙이기 전에 실패했으면 이 열기가 막 만든 탭을 뺀다
+      const pend = pendingTabs.get(k);
+      if (pend && !editors.isOpen(pend.path)) removeTab(pend.tw, pend.tabId);
       throw err;
     } finally {
-      placing = null;
+      if (placings.get(k) === mine) placings.delete(k);
+      pendingTabs.delete(k);
     }
-    pendingTab = null;
     const hit = findEditorTab(r.path);
     if (hit) { activateTab(hit.tw, hit.tab.id); if (hit.tw !== tw) focusShell(hit.tw); }
     // 다른 길로 이미 열려 있던 편집 탭으로 갔으면 바꾸려던 문서 탭은 닫는다 (같은 문서 탭 둘을 두지 않는다)
     if (r.reused && replaceId && tw.tabs.get(replaceId)?.type === 'doc') closeDocTab(tw, replaceId);
     pushEditorState();
+    // 메모리 안내(D12): 그 탭 창을 부모로 한 정보 대화상자 (기다리지 않는다 — 열기를 막지 않게)
+    const notice = typeof r.notice === 'string' && r.notice ? r.notice : null;
+    if (notice) {
+      const owner = hit?.tw ?? tw;
+      void Promise.resolve(dialog.showMessageBox(owner.shell.dialogParent(), {
+        type: 'info', title: 'Office Kit', message: notice, buttons: ['확인'], defaultId: 0, noLink: true,
+      })).catch(() => {});
+    }
     return {
       tabId: hit?.tab.id ?? null, mode: r.reused ? 'reused' : 'editor', path: r.path, kind: r.kind, reused: !!r.reused,
       notice: typeof r.notice === 'string' && r.notice ? r.notice : null, editor: editorState(r.path),
@@ -1954,7 +1975,7 @@ async function start() {
     }
     sessionZone3.set(k, zone3Keys);
     chats.set(chatId, { handle, path, edit, read, pidDir, ownerWc });
-    for (const tw of tabWindows.values()) { pushTarget(tw); sendTabs(tw); }
+    pushAiState();
     Promise.resolve(handle.done)
       .then((r) => { if (r?.sessionId) sessions.set(k, { provider: selected, sessionId: String(r.sessionId) }); })
       .catch((err) => { if (!errored) sendTo(ownerWc, 'ai:event', { type: 'error', message: err?.message ?? String(err), chatId, path }); })
@@ -1965,7 +1986,7 @@ async function start() {
         let changed = false;
         try { changed = !!before?.hash && existsSync(edit) && currentHash(edit) !== before.hash; } catch {}
         sendTo(ownerWc, 'ai:event', { type: 'end', chatId, path, ...(changed ? { changed: true, before: before.file } : {}) });
-        for (const tw of tabWindows.values()) { pushTarget(tw); sendTabs(tw); }
+        pushAiState();
       });
     return { chatId, provider: list.find((p) => p.id === selected)?.name ?? selected, newChat };
   }
