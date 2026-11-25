@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { createBlankDocument } from '../src/core/create.mjs';
 import {
-  ALL_EDITABLE_EXTS, checkOoxmlBytes, createEditorManager, draftPathFor, EDITABLE_EXTS, EDITOR_KINDS, editorKindOf,
+  ALL_EDITABLE_EXTS, checkOoxmlBytes, cleanConvertedCopies, createEditorManager, draftPathFor, EDITABLE_EXTS, EDITOR_KINDS, editorKindOf,
   officeOpenProblem, OFFICE_DRAFTS_DIR, OFFICE_EXTS,
 } from '../src/app/editor-window.mjs';
 
@@ -938,4 +938,61 @@ test('바꿔 연 문서: 다른 이름으로 저장 뒤 사용자 폴더를 지�
     assert.equal(sent(), s0 + 1);
     assert.equal(existsSync(myDir), true);
   });
+
+  // v0.1.13 버그 9: 바꿀 때마다 임시 경로가 달라 자동 저장 사본을 다시 찾지 못했다
+  await t.test('바꿔 연 문서의 자동 저장 사본은 원본 경로로 찾는다', async () => {
+    const first = await openConverted();
+    const draftBytes = await withPart(first.bytes, 'draft.txt', '자동 저장');
+    const r = await call(first.w, 'editor:save', draftBytes, { reason: 'auto' });
+    assert.equal(r.ok, true, r.error);
+    // 앱이 죽은 뒤 같은 옛 문서를 다시 바꿔 연 것처럼 (임시 경로가 다르다)
+    first.w.destroy();
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(original, old, old);
+    const again = await openConverted();
+    assert.notEqual(again.temp, first.temp);
+    const g = await call(again.w, 'editor:get-document');
+    assert.equal(g.ok, true, g.error);
+    assert.equal(g.value.draft?.size, draftBytes.length, '첫 번째 사본의 복구 안내');
+    const rd = await call(again.w, 'editor:draft', 'read');
+    assert.equal(rd.ok, true, rd.error);
+    assert.equal(sha(rd.value.bytes), sha(draftBytes));
+    // 사본 이름: 원본 경로의 sha1 + 지금 편집하는 형식의 확장자 (시작 정리의 이름 규칙에 맞게)
+    const file = draftPathFor(ud, original, 'docx');
+    assert.equal(file, join(ud, OFFICE_DRAFTS_DIR, `${sha(process.platform === 'win32' ? original.toLowerCase() : original)}.docx`));
+    assert.equal(existsSync(file), true);
+    assert.equal(mgr.draftPath(again.temp), file, '열린 바꿔 연 문서의 사본 경로도 원본 기준');
+    // 복구한 뒤 새 형식으로 저장 → 원본 기준 사본은 지운다
+    const target = join(userDir, '복구됨.docx');
+    fake.saveDialogAnswers.push({ canceled: false, filePath: target });
+    const s = await call(again.w, 'editor:save', draftBytes, { reason: 'user' });
+    assert.equal(s.ok, true, s.error);
+    assert.equal(existsSync(target), true);
+    assert.equal(existsSync(file), false, '저장했으니 원본 기준 사본은 지운다');
+    assert.equal(existsSync(again.tempDir), false);
+    again.w.close();
+    assert.ok(await until(() => again.w.isDestroyed()));
+    assert.equal(existsSync(original), true);
+  });
+});
+
+test('시작 정리가 converted 폴더를 비운다', () => {
+  const base = mkdtempSync(join(tmpdir(), 'ok-office-conv-clean-'));
+  try {
+    const ud = join(base, 'ud');
+    const root = join(ud, 'converted');
+    put(join(root, '1-aaaa', '옛 문서.docx'), 'x');
+    put(join(root, '2-bbbb', '표.xlsx'), 'x');
+    put(join(root, '남은 파일.tmp'), 'x');
+    const keep = join(ud, OFFICE_DRAFTS_DIR, 'a.docx');
+    put(keep, 'x');
+    assert.equal(cleanConvertedCopies(ud), 3);
+    assert.equal(existsSync(root), true, '폴더 자체는 남겨도 된다');
+    assert.deepEqual(readdirSync(root), []);
+    assert.equal(existsSync(keep), true, 'converted 밖은 건드리지 않는다');
+    assert.equal(cleanConvertedCopies(join(base, '없는 폴더')), 0, '폴더가 없으면 0');
+    assert.equal(cleanConvertedCopies(null), 0);
+  } finally {
+    rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });

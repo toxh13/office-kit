@@ -210,9 +210,28 @@ export function officeOpenProblem(path, { maxBytes = MAX_BYTES } = {}) {
   }
 }
 
-/** 자동 저장 복구 사본 경로: userData/office-drafts/<문서 경로 sha1>.<확장자> (경로는 Windows면 소문자로 맞춘다) */
-export function draftPathFor(userData, docPath) {
-  return join(userData, OFFICE_DRAFTS_DIR, `${createHash('sha1').update(keyOf(docPath)).digest('hex')}.${extOf(docPath)}`);
+/**
+ * 자동 저장 복구 사본 경로: userData/office-drafts/<문서 경로 sha1>.<확장자> (경로는 Windows면 소문자로 맞춘다).
+ * ext: 사본 확장자 (기본은 그 경로의 확장자). 바꿔 연 문서는 원본 옛 형식 경로(a.xls)로 찾고 확장자는 지금 형식(xlsx)
+ */
+export function draftPathFor(userData, docPath, ext = extOf(docPath)) {
+  return join(userData, OFFICE_DRAFTS_DIR, `${createHash('sha1').update(keyOf(docPath)).digest('hex')}.${ext}`);
+}
+
+/**
+ * 시작할 때 바꿔 연 임시 사본(userData/converted/…)을 모두 지운다 → 지운 개수.
+ * 그때는 편집 창이 하나도 없어 쓰는 사본이 없다 (강제 종료·충돌로 남은 것 정리)
+ */
+export function cleanConvertedCopies(userData) {
+  if (!userData) return 0;
+  const root = join(userData, 'converted');
+  let names;
+  try { names = readdirSync(root); } catch { return 0; }
+  let removed = 0;
+  for (const n of names) {
+    try { rmSync(join(root, n), { recursive: true, force: true }); removed++; } catch {}
+  }
+  return removed;
 }
 
 function hashOf(buf) { return createHash('sha1').update(buf).digest('hex'); }
@@ -600,7 +619,7 @@ export function createEditorManager({
 
   // 자동 저장 복구 사본 (op: 'read' → { bytes, size, mtimeMs } | 'discard' → { discarded: true })
   handle('editor:draft', async (entry, op) => {
-    if (op === 'discard') { entry.draftPending = false; removeDraft(entry.path); return { discarded: true }; }
+    if (op === 'discard') { entry.draftPending = false; removeDraft(entry); return { discarded: true }; }
     if (op !== 'read') throw fail('알 수 없는 요청입니다', 'BAD_OP');
     const d = readDraft(entry);
     if (!d) throw fail('복구할 자동 저장 사본이 없습니다', 'NO_DRAFT');
@@ -644,10 +663,11 @@ export function createEditorManager({
     const other = entries.get(keyOf(target));
     if (other && other !== entry) throw fail('그 문서는 다른 편집 창에서 열려 있습니다. 다른 이름을 고르세요.', 'IN_USE');
     const temp = entry.path;
+    const oldDraft = draftFileOf(entry); // 원본(옛 형식) 경로 기준 사본
     const res = await saveTo(entry, target, bytes, ext);
     entry.convertedFrom = null; // 제목을 새 파일 이름으로 (rekey가 제목을 고친다)
     rekey(entry, target);
-    if (!entry.draftPending) removeDraft(temp);
+    if (!entry.draftPending) removeDraftFile(oldDraft);
     dropConvertedTemp(entry, temp);
     return res;
   }
@@ -671,6 +691,7 @@ export function createEditorManager({
     const other = entries.get(keyOf(target));
     if (other && other !== entry) throw fail('그 문서는 다른 편집 창에서 열려 있습니다. 그 창을 닫고 다시 저장하세요.', 'IN_USE');
     const oldPath = entry.path;
+    const oldDraft = draftFileOf(entry); // 바꿔 연 문서면 원본(옛 형식) 경로 기준
     const res = await saveTo(entry, target, bytes, ext);
     if (keyOf(target) !== entry.key) {
       // 옛 형식에서 바꿔 연 문서: 이제 사용자가 고른 새 파일을 편집한다. convertedFrom을 남겨 두면
@@ -679,7 +700,7 @@ export function createEditorManager({
       if (temp) entry.convertedFrom = null;
       rekey(entry, target);
       // 편집 내용은 새 파일에 저장됐다. 단 '복구 / 버리기'에 답하지 않은 사본은 옛 파일 몫으로 남긴다
-      if (office && !entry.draftPending) removeDraft(oldPath);
+      if (office && !entry.draftPending) removeDraftFile(oldDraft);
       entry.draftPending = false;
       if (temp) dropConvertedTemp(entry, temp);
     }
@@ -909,7 +930,7 @@ export function createEditorManager({
       const st = statOf(target);
       if (keyOf(target) === entry.key) entry.known = { mtimeMs: st?.mtimeMs ?? 0, size: buf.length, hash: hashOf(buf), missing: false };
       // 정상 저장 → 복구 사본은 필요 없다 (복구 / 버리기를 아직 고르지 않았으면 남긴다)
-      if (keyOf(target) === entry.key && !entry.draftPending) removeDraft(target);
+      if (keyOf(target) === entry.key && !entry.draftPending) removeDraft(entry);
       log(`저장: ${target} (${buf.length}바이트)`);
       try { onSaved?.(target); } catch (err) { log('onSaved 오류:', err); }
       const res = { name, ext: extOf(target), size: buf.length, mtimeMs: st?.mtimeMs ?? null, backup };
@@ -950,7 +971,7 @@ export function createEditorManager({
     if (entry.drafting) throw fail('자동 저장하는 중입니다.', 'BUSY');
     entry.drafting = true;
     try {
-      const file = draftPathFor(userData, entry.path);
+      const file = draftFileOf(entry);
       mkdirSync(dirname(file), { recursive: true });
       const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       try { await atomicWrite(file, buf); } catch (err) { throw saveError(err, basename(file)); }
@@ -962,23 +983,35 @@ export function createEditorManager({
     }
   }
 
-  function removeDraft(docPath) {
-    if (!userData) return;
-    try { rmSync(draftPathFor(userData, docPath), { force: true }); } catch (err) { log('복구 사본을 지우지 못했습니다:', err?.message ?? err); }
+  /**
+   * 그 창의 복구 사본 경로 (userData가 없으면 null). 바꿔 연 문서는 열 때마다 임시 경로가 달라지므로
+   * 원본 옛 형식 파일 경로로 찾는다 (v0.1.13 버그 9). 저장해서 convertedFrom이 비면 새 경로 기준
+   */
+  function draftFileOf(entry) {
+    if (!userData) return null;
+    return draftPathFor(userData, entry.convertedFrom ?? entry.path, extOf(entry.path));
+  }
+
+  function removeDraft(entry) { removeDraftFile(draftFileOf(entry)); }
+  function removeDraftFile(file) {
+    if (!file) return;
+    try { rmSync(file, { force: true }); } catch (err) { log('복구 사본을 지우지 못했습니다:', err?.message ?? err); }
   }
 
   /** 복구 사본이 파일보다 새로우면 → { size, mtimeMs } (host가 '복구 / 버리기' 띠를 띄운다) */
   function draftOffer(entry, st) {
     if (!userData) return null;
-    const d = statOf(draftPathFor(userData, entry.path));
-    if (!d || d.size === 0 || d.size > maxBytes || d.mtimeMs <= st.mtimeMs) return null;
+    const d = statOf(draftFileOf(entry));
+    // 바꿔 연 문서의 임시 사본은 열 때마다 새로 만들어지므로 원본 옛 형식 파일과 비교한다
+    const doc = (entry.convertedFrom && statOf(entry.convertedFrom)) || st;
+    if (!d || d.size === 0 || d.size > maxBytes || d.mtimeMs <= doc.mtimeMs) return null;
     return { size: d.size, mtimeMs: d.mtimeMs };
   }
 
   /** 복구 사본 읽기 → { bytes, size, mtimeMs } | null (형식이 맞지 않으면 null) */
   function readDraft(entry) {
     if (!userData) return null;
-    const file = draftPathFor(userData, entry.path);
+    const file = draftFileOf(entry);
     const d = statOf(file);
     if (!d || d.size === 0 || d.size > maxBytes) return null;
     try {
@@ -1329,7 +1362,7 @@ export function createEditorManager({
       if (entries.get(entry.key) === entry) entries.delete(entry.key);
       for (const [id, p] of pending) if (p.entry === entry) { clearTimeout(p.timer); pending.delete(id); p.resolve(null); }
       // 정상 닫기 → 복구 사본을 지운다. 단 '복구 / 버리기'에 아직 답하지 않았으면 남긴다 (다음에 열 때 다시 묻는다)
-      if (entry.cleanClose && !entry.draftPending) removeDraft(entry.path);
+      if (entry.cleanClose && !entry.draftPending) removeDraft(entry);
       // 옛 형식에서 바꿔 연 임시 사본은 저장하지 않고 닫으면 지운다 (원본은 그대로)
       if (entry.convertedFrom) dropConvertedTemp(entry, entry.path);
       entry.win = null;
@@ -1429,7 +1462,11 @@ export function createEditorManager({
     /** 파일 경로 → 'hwp' | 'office' | null */
     kindOf: editorKindOf,
     /** 그 문서의 자동 저장 복구 사본 경로 (userData가 없으면 null) */
-    draftPath: (path) => (userData && typeof path === 'string' ? draftPathFor(userData, path) : null),
+    draftPath: (path) => {
+      if (!userData || typeof path !== 'string') return null;
+      const e = entries.get(keyOf(path));
+      return e ? draftFileOf(e) : draftPathFor(userData, path);
+    },
     /**
      * 모든 편집 창 닫기 → 다 닫혔으면 true (사용자가 '취소'하면 false)
      * force: 묻지 않고 닫는다 (저장 안 한 변경은 사라짐 — Office 복구 사본은 남긴다)

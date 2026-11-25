@@ -855,6 +855,8 @@ async function start() {
   // 창 이름 ('ONLYOFFICE'는 쓰지 않는다 — 설계 8장)
   const EDITOR_LABELS = { hwp: '한글 편집', docx: '문서 편집', xlsx: '표 편집', pptx: '슬라이드 편집' };
   let OFFICE_DRAFTS = 'office-drafts';
+  /** 시작할 때 바꿔 연 임시 사본 정리 (editor-window.mjs) */
+  let cleanConvertedCopies = null;
   /** 파일 경로 → 'hwp' | 'office' | null */
   const editorKind = (p) => Object.keys(EDITOR_KINDS).find((k) => EDITOR_KINDS[k].includes(extOf(p))) ?? null;
   /** 파일 경로 → '한글 편집' | '문서 편집' | '표 편집' | '슬라이드 편집' */
@@ -866,6 +868,7 @@ async function start() {
       EDITOR_KINDS = Object.fromEntries(Object.entries(m.EDITOR_KINDS).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, [...v]]));
     } else if (Array.isArray(m.EDITABLE_EXTS)) EDITOR_KINDS = { ...EDITOR_KINDS, hwp: [...m.EDITABLE_EXTS] };
     if (typeof m.OFFICE_DRAFTS_DIR === 'string') OFFICE_DRAFTS = m.OFFICE_DRAFTS_DIR;
+    if (typeof m.cleanConvertedCopies === 'function') cleanConvertedCopies = m.cleanConvertedCopies;
     // 개발 중 시험용: 편집기 묶음 폴더 바꾸기(없는 폴더 = 묶음 없음), 편집 창 시험 고리(window.__editorTest·__officeTest),
     // 글꼴 모듈 바꾸기 (설치본에서는 모두 무시)
     const dev = !app.isPackaged;
@@ -1274,7 +1277,13 @@ async function start() {
       const busy = busyWindow(`‘${basename(p)}’를 고칠 수 있게 바꾸는 중…`);
       let tmp;
       try { tmp = await convertForEditing(p, to); } finally { busy.close(); }
-      await editors.openEditor(tmp, { convertedFrom: p });
+      try {
+        await editors.openEditor(tmp, { convertedFrom: p });
+      } catch (err) {
+        // 편집 창을 못 열었으면 방금 만든 임시 사본 폴더(userData/converted/<…>)를 지운다 (창이 열려 있으면 창이 닫힐 때 지운다)
+        if (!editors.isOpen(tmp)) { try { rmSync(dirname(tmp), { recursive: true, force: true }); } catch {} }
+        throw err;
+      }
       return { path: p, mode: 'converted' };
     } catch (err) {
       // 편집 창으로 못 열면 주 창에서 미리보기로 (이유를 알린다)
@@ -2085,6 +2094,8 @@ async function start() {
   cleanPrintCopies();
   // 오래 안 연 문서의 자동 저장 사본(Office)·쓰다 남은 임시 파일 정리
   try { cleanOfficeDrafts(); } catch (err) { console.error('[editor] 자동 저장 사본 정리 실패:', err?.message ?? err); }
+  // 강제 종료·충돌로 남은 바꿔 연 임시 사본 (아직 편집 창이 없으므로 모두 지운다)
+  try { cleanConvertedCopies?.(userData); } catch (err) { console.error('[editor] 바꿔 연 임시 사본 정리 실패:', err?.message ?? err); }
   buildMenu();
   createWindow({ hidden: docWindowStart });
   if (launchDoc) openAsDocument(launchDoc).catch((err) => { showHub(); send('toast', { type: 'error', message: err.message }); });
