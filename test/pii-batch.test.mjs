@@ -91,6 +91,27 @@ test('maskDocument: hwpx·docx·xlsx 가린 사본, 원본은 그대로', async 
   } finally { clean(dir); }
 });
 
+test('일괄 변환: 같은 이름 결과는 덮어쓰지 않고 (2), (3)을 붙인다', async () => {
+  const dir = tmp();
+  try {
+    for (const f of ['A', 'B', 'C']) mkdirSync(join(dir, f));
+    copyFileSync(join(EXAMPLES, '신청서.hwp'), join(dir, 'A', '보고서.hwp'));
+    copyFileSync(join(EXAMPLES, '신청서.hwp'), join(dir, 'B', '보고서.hwp'));
+    copyFileSync(join(EXAMPLES, '신청서.hwp'), join(dir, 'C', '보고서.hwp'));
+    const { items } = collectHwpFiles([join(dir, 'A', '보고서.hwp'), join(dir, 'B', '보고서.hwp'), join(dir, 'C', '보고서.hwp')]);
+    const out = join(dir, '모음');
+    const r = await convertHwpBatch(items, { outDir: out, overwrite: true });
+    assert.deepEqual(r.results.map((x) => x.status), ['ok', 'ok', 'ok'], JSON.stringify(r.results));
+    assert.equal(new Set(r.results.map((x) => x.out.toLowerCase())).size, 3);
+    assert.ok(existsSync(join(out, '보고서.hwpx')));
+    assert.ok(existsSync(join(out, '보고서 (2).hwpx')));
+    assert.ok(existsSync(join(out, '보고서 (3).hwpx')));
+    assert.ok(r.results[1].notes.includes('이름이 겹쳐 ‘보고서 (2).hwpx’로 저장'));
+    assert.ok(r.results[2].notes.includes('이름이 겹쳐 ‘보고서 (3).hwpx’로 저장'));
+    assert.ok(!r.results[0].notes.some((n) => n.includes('이름이 겹쳐')));
+  } finally { clean(dir); }
+});
+
 test('일괄 변환: 폴더(하위 포함)의 hwp → hwpx, 확인 결과·건너뛰기·보고서', async () => {
   const dir = tmp();
   try {

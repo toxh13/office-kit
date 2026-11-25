@@ -839,6 +839,7 @@
  "이 PC의 글꼴 목록을 만들지 못해 일부 글자가 다른 글꼴이나 □로 보일 수 있습니다.": "Couldn't build this PC's font list, so some text may appear in a different font or as □.",
  "이력서": "Resume",
  "이름·소속·연락처·이메일": "Name, organization, contact, email",
+ "이름이 겹쳐 ‘{0}’로 저장": "Name clash, saved as ‘{0}’",
  "이메일": "Email",
  "이미 되돌리는 중입니다": "Already reverting",
  "이미 변환하는 중이에요": "Already converting",

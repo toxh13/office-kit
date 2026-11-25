@@ -91,10 +91,23 @@ export function verifyConversion(src, out) {
 export async function convertHwpBatch(items, { outDir, overwrite = false, onProgress, isCancelled, convert = convertDocument } = {}) {
   const results = [];
   let cancelled = false;
+  // 이번 일괄 변환에서 이미 쓴 결과 경로 (Windows는 대소문자 무시)
+  const used = new Set();
   for (let i = 0; i < items.length; i++) {
     if (isCancelled?.()) { cancelled = true; break; }
     const { src } = items[i];
-    const out = outputFor(items[i], outDir);
+    let out = outputFor(items[i], outDir);
+    let renamedNote = null;
+    if (used.has(out.toLowerCase())) {
+      // 같은 이름이 겹치면 뒤에 오는 쪽에 (2), (3)을 붙여 앞의 결과를 덮어쓰지 않는다
+      const ext = extname(out);
+      const stem = out.slice(0, out.length - ext.length);
+      let n = 2;
+      while (used.has(`${stem} (${n})${ext}`.toLowerCase())) n++;
+      out = `${stem} (${n})${ext}`;
+      renamedNote = `이름이 겹쳐 ‘${basename(out)}’로 저장`;
+    }
+    used.add(out.toLowerCase());
     let r;
     if (existsSync(out) && !overwrite) {
       r = { src, out, status: 'skipped', notes: ['같은 이름의 HWPX 파일이 이미 있어 건너뛰었어요'] };
@@ -118,6 +131,7 @@ export async function convertHwpBatch(items, { outDir, overwrite = false, onProg
         r = { src, out, status: 'fail', notes: [note], error: msg };
       }
     }
+    if (renamedNote) r.notes = [...(r.notes ?? []), renamedNote];
     results.push(r);
     try { onProgress?.({ index: i, total: items.length, result: r }); } catch {}
   }
