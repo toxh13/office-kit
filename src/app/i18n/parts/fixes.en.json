@@ -72,5 +72,8 @@
  "지난 탭 다시 열기": "Reopen last tabs",
  "지난번에 연 탭 {0}개": "{0} tabs from last time",
  "찾을 수 없어 열지 못한 문서: {0}": "Couldn't find these documents, so they weren't opened: {0}",
- "‘{0}’ 파일을 찾을 수 없어 탭을 닫았어요": "Couldn't find ‘{0}’, so its tab was closed"
+ "‘{0}’ 파일을 찾을 수 없어 탭을 닫았어요": "Couldn't find ‘{0}’, so its tab was closed",
+ "편집 탭이 뜨지 않았습니다": "The edit tab didn't open",
+ "{0}: 탭 뷰 없음": "{0}: no tab view",
+ "탭 창 없음": "No tab window"
 }

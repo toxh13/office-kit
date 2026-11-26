@@ -9,7 +9,7 @@ import { allows, channelSpec, VIEW_ROUTES } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
 import { createSessionKeeper, promoteCrashed, restorePlan } from './tab-session.mjs';
-import { createTabWindow } from './tab-window.mjs';
+import { createTabWindow, TABSTRIP_H } from './tab-window.mjs';
 import { createTabList, docKey, tabCommandOf } from './tabs.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -22,6 +22,8 @@ const SMOKE_SETTINGS = ['ai', 'view', 'open', 'connect', 'hancom'].includes(proc
 const SMOKE_NEWDOC = ['1', 'ai', 'template'].includes(process.env.OFFICEKIT_SMOKE_NEWDOC) ? process.env.OFFICEKIT_SMOKE_NEWDOC : null;
 // 편집 창(한글·문서·표·슬라이드)도 열어 두 창을 함께 찍기 (편집 창은 <png>-editor.png)
 const SMOKE_EDITOR = process.env.OFFICEKIT_SMOKE_EDITOR === '1';
+// 탭 창 스모크: 탭 창 하나에 OFFICEKIT_SMOKE_TABS_FILES(;로 나눔)를 탭으로 열고 전환·탭 닫기·창 닫기 (결과는 [smoke] 줄의 tabs)
+const SMOKE_TABS = !!SMOKE && process.env.OFFICEKIT_SMOKE_TABS === '1';
 // 'PDF로 저장'도 눌러 보기: 저장 대화상자 대신 이 경로에 만든다 (OFFICEKIT_SMOKE와 함께일 때만). 결과는 [smoke] 줄의 pdf
 const SMOKE_PDF = SMOKE && process.env.OFFICEKIT_SMOKE_PDF ? resolve(process.env.OFFICEKIT_SMOKE_PDF) : '';
 // '바뀐 내용' 창 찍기: 문서를 연 뒤(처음 연 상태 버전이 생긴 뒤) 이 파일로 덮어쓰고, 처음 연 상태 → 지금을 비교해 보인다
@@ -2677,18 +2679,64 @@ async function start() {
 
   // ── 확인용 캡처 (OFFICEKIT_SMOKE) ─────────────────────
 
+  // 탭 창 스모크가 마지막 창을 닫을 때: 결과를 적기 전에 앱이 끝나지 않게 (window-all-closed)
+  let smokeHoldQuit = false;
   if (SMOKE) {
     const bail = setTimeout(() => { console.error('[smoke] 시간 초과'); app.exit(1); }, 240_000);
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    async function capture(w) {
+    /** 뷰 webContents를 찍는다 (탭 창은 BaseWindow라 창 전체가 아니라 뷰 하나씩) */
+    async function capture(wc) {
       let img;
       for (let i = 0; i < 8 && !img; i++) {
-        try { img = await w.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); } catch (err) {
+        try { img = await wc.capturePage(undefined, { stayHidden: true, stayAwake: true }); } catch (err) {
           if (i === 7) throw err;
           await sleep(700);
         }
       }
       return img;
+    }
+    /** fn()이 참인 값을 낼 때까지 (ms까지) → 마지막 값 */
+    async function until(fn, ms, step = 200) {
+      let v = null;
+      for (const end = Date.now() + ms; Date.now() < end;) {
+        v = await fn();
+        if (v) return v;
+        await sleep(step);
+      }
+      return v;
+    }
+    /** 그 뷰 wc의 탭을 보인다 (홈 종류 뷰는 허브의 탭, 편집 뷰는 그 편집 탭) */
+    function showTabOf(wc) {
+      const hub = hubOf(wc);
+      if (hub?.tw && tabWindows.has(hub.tw.shell.id) && hub.tw.tabs.get(hub.tabId)) { activateTab(hub.tw, hub.tabId); return hub.tw; }
+      return null;
+    }
+
+    /**
+     * 편집 뷰가 다 뜨기를(또는 실패 카드) 기다린다 → { state, reason, phase, about, ask, inFrame }
+     * Office: host가 '저장됨'이 된 뒤에도 틀 안 편집기가 문서를 그리는 중일 수 있다 → filex 앱 단계(data-fx-phase)가 ready가 될 때까지
+     */
+    async function waitEditorView(wc, kind) {
+      const ask = (code) => wc.executeJavaScript(code).catch(() => null);
+      let state = null;
+      for (const end = Date.now() + 90_000; Date.now() < end;) {
+        state = await ask("document.getElementById('doc-state')?.dataset.state ?? null");
+        if (state === 'saved' || state === 'error') break;
+        await sleep(250);
+      }
+      const reason = state === 'error' ? await ask("document.getElementById('failure-reason')?.textContent ?? ''") : '';
+      const frameOf = (re) => { try { return wc.mainFrame.framesInSubtree.find((f) => re.test(f.url)) ?? null; } catch { return null; } };
+      const inFrame = async (re, code) => { const f = frameOf(re); try { return f ? await f.executeJavaScript(code, true) : null; } catch { return null; } };
+      let phase = null; let about = null;
+      if (kind === 'office') {
+        about = await ask("document.getElementById('btn-about')?.textContent?.trim() ?? null");
+        for (const end = Date.now() + 90_000; state === 'saved' && Date.now() < end;) {
+          phase = await inFrame(/\/office\/[^/]+\/index\.html/, 'document.documentElement.dataset.fxPhase || ""');
+          if (phase === 'ready' || phase === 'failed') break;
+          await sleep(300);
+        }
+      }
+      return { state, reason: reason || null, phase, about, ask, inFrame };
     }
 
     /** 화면의 'PDF로 저장' 단추를 눌러(저장 대화상자 대신 SMOKE_PDF) PDF가 생기고 알림이 뜨는지 → { ok, toast, file, bytes, ms } */
@@ -2706,50 +2754,35 @@ async function start() {
       return { ok: bytes > 0 && /PDF로 저장했어요/.test(toast ?? ''), toast, file: SMOKE_PDF, bytes, ms: Date.now() - started };
     }
 
-    /** 열린 문서를 편집 창으로 열고, 다 뜨면(또는 실패 카드가 뜨면) 그 창을 <png>-editor.png로 찍는다 */
+    /** 열린 문서를 편집 탭으로 열고, 다 뜨면(또는 실패 카드가 뜨면) 그 편집 뷰를 <png>-editor.png로 찍는다 */
     async function smokeEditor(hub) {
       const png = `${SMOKE.replace(/\.png$/i, '')}-editor.png`;
       if (!editors) return { ok: false, error: `편집 창 기능 없음: ${editorLoadError}` };
       if (!hub?.current) return { ok: false, error: '열린 문서가 없습니다' };
-      const before = new Set(BrowserWindow.getAllWindows());
-      // 묶음이 없어도 창을 연다 (편집 창의 실패 안내를 찍으려고)
-      try { await editors.openEditor(hub.current.path); } catch (err) { return { ok: false, error: err.message }; }
+      const p = hub.current.path;
+      // 묶음이 없어도 탭을 연다 (편집 뷰의 실패 안내를 찍으려고). 편집 뷰는 hostFor가 정한 탭 창(최근 탭 창)에 붙는다
+      try { await editors.openEditor(p); } catch (err) { return { ok: false, error: err.message }; }
       pushEditorState();
-      let ew = null;
-      for (let i = 0; i < 100 && !ew; i++) {
-        ew = BrowserWindow.getAllWindows().find((w) => !before.has(w) && !w.isDestroyed()) ?? null;
-        if (!ew) await sleep(100);
-      }
-      if (!ew) return { ok: false, error: '편집 창이 뜨지 않았습니다' };
-      const kind = editorKind(hub.current.path);
-      const ask = (code) => ew.webContents.executeJavaScript(code).catch(() => null);
-      let state = null;
-      for (const end = Date.now() + 90_000; Date.now() < end;) {
-        state = await ask("document.getElementById('doc-state')?.dataset.state ?? null");
-        if (state === 'saved' || state === 'error') break;
-        await sleep(250);
-      }
-      const reason = state === 'error' ? await ask("document.getElementById('failure-reason')?.textContent ?? ''") : '';
-      // Office: host가 '저장됨'이 된 뒤에도 틀 안 편집기가 문서를 그리는 중일 수 있다 → filex 앱 단계(data-fx-phase)가 ready가 될 때까지
-      let phase = null; let fonts = null; let about = null;
+      const view = await until(() => editors.viewOf(p), 10_000, 100);
+      if (!view) return { ok: false, error: '편집 탭이 뜨지 않았습니다' };
+      const hit = findEditorTab(p, view);
+      const tw = hit?.tw ?? null;
+      const wc = view.webContents;
+      const kind = editorKind(p);
+      const { state, reason, phase, about, ask, inFrame } = await waitEditorView(wc, kind);
+      // 편집 탭을 보인다 (창 제목 = 그 탭 제목, onTabChange가 준 글)
+      if (hit) activateTab(tw, hit.tab.id);
+      let fonts = null;
       if (kind === 'office') {
-        about = await ask("document.getElementById('btn-about')?.textContent?.trim() ?? null");
-        const frameOf = (re) => { try { return ew.webContents.mainFrame.framesInSubtree.find((f) => re.test(f.url)) ?? null; } catch { return null; } };
-        const inFrame = async (re, code) => { const f = frameOf(re); try { return f ? await f.executeJavaScript(code, true) : null; } catch { return null; } };
-        for (const end = Date.now() + 90_000; state === 'saved' && Date.now() < end;) {
-          phase = await inFrame(/\/office\/[^/]+\/index\.html/, 'document.documentElement.dataset.fxPhase || ""');
-          if (phase === 'ready' || phase === 'failed') break;
-          await sleep(300);
-        }
         if (phase === 'ready') {
           await sleep(3000); // 글꼴을 받아 쪽을 다 그리게
           // 편집기 틀이 새 화면을 실제로 그릴 때까지 (가려지거나 바쁜 창은 예전 화면이 찍힌다)
-          try { ew.moveTop(); } catch {}
+          try { tw?.shell.win.moveTop(); } catch {}
           await Promise.race([
             inFrame(/\/web-apps\/apps\/\w+\/main\/index\.html/, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))'),
             sleep(8000),
           ]);
-          try { ew.webContents.invalidate(); } catch {}
+          try { wc.invalidate(); } catch {}
           await sleep(400);
           // 글꼴 목록 (이 PC 글꼴로 만든 AllFonts.js인지 — 편집기가 읽은 뒤 AscFonts.g_font_infos에 둔다)
           fonts = await inFrame(/\/web-apps\/apps\/\w+\/main\/index\.html/,
@@ -2758,13 +2791,13 @@ async function start() {
       } else {
         await sleep(1500); // 쪽이 다 그려지게
       }
-      const img = await capture(ew);
+      const img = await capture(wc);
       mkdirSync(dirname(png), { recursive: true });
       writeFileSync(png, img.toPNG());
       // Office: '정보 · 라이선스' 대화상자도 찍는다 (<png>-editor-about.png = 정보, -about-texts.png = 수정 고지 원문)
       let aboutInfo = null;
       if (kind === 'office' && phase === 'ready') {
-        const shot = async (suffix) => { const i = await capture(ew); const f = png.replace(/\.png$/i, `-${suffix}.png`); writeFileSync(f, i.toPNG()); return f; };
+        const shot = async (suffix) => { const i = await capture(wc); const f = png.replace(/\.png$/i, `-${suffix}.png`); writeFileSync(f, i.toPNG()); return f; };
         await ask("document.getElementById('btn-about')?.click()");
         let titles = null;
         for (const end = Date.now() + 8000; Date.now() < end && !titles?.length;) {
@@ -2781,26 +2814,132 @@ async function start() {
         await ask("document.getElementById('about')?.close()");
         aboutInfo = { titles, legal: Array.isArray(titles) && titles.includes('수정된 판일 수 있습니다'), text: textShown, png: infoPng, textsPng };
       }
-      // 탭 창을 앞으로
+      const title = tw && !tw.shell.win.isDestroyed() ? tw.shell.win.getTitle() : null;
+      // 첫 탭 창을 앞으로
       const front = recentWindow()?.shell.win;
       if (front && !front.isDestroyed()) { front.moveTop(); front.focus(); }
       const ok = state === 'saved' && (kind !== 'office' || phase === 'ready');
-      return { ok, kind, state, phase, fonts, about, aboutInfo, reason: reason || null, title: ew.getTitle(), png, size: img.getSize() };
+      return { ok, kind, state, phase, fonts, about, aboutInfo, reason, title, png, size: img.getSize() };
     }
 
+    /**
+     * 탭 창 스모크 (OFFICEKIT_SMOKE_TABS=1, D16): 탭 창 하나에 OFFICEKIT_SMOKE_TABS_FILES(;로 나눔)를 탭으로 열고
+     * 탭마다 차례로 보여(보임·초점·content 자리) → 탭 하나 닫기(wc 'destroyed') → 창 닫기(깨끗하면 묻지 않고 닫힘)
+     */
+    async function smokeTabs(tw) {
+      const base = SMOKE.replace(/\.png$/i, '');
+      const files = String(process.env.OFFICEKIT_SMOKE_TABS_FILES ?? '').split(';').map((f) => f.trim()).filter(Boolean).map((f) => resolve(f));
+      const out = {
+        ok: false, opened: 0, switches: [], hwp: null, docx: null, pdf: null, afterCloseTab: null, closedDestroyed: null, windowClosed: null,
+        errors: [], png: `${base}-tabs.png`, stripPng: `${base}-tabs-strip.png`,
+      };
+      // 편집할 수 있는 문서는 편집 탭(묶음이 없으면 편집 뷰의 실패 안내), 나머지는 문서 탭
+      const opened = [];
+      for (const p of files) {
+        const kind = editorKind(p);
+        try {
+          const r = kind && editors ? await openEditorTab(tw, p) : openDocTab(tw, p);
+          opened.push({ id: r.tabId, path: p, kind: (kind && editors) ? kind : 'doc', ext: extOf(p) });
+        } catch (err) {
+          out.errors.push(`${basename(p)}: ${err?.message ?? err}`);
+          const r = openDocTab(tw, p);
+          opened.push({ id: r.tabId, path: p, kind: 'doc', ext: extOf(p) });
+        }
+      }
+      out.opened = tw.tabs.tabs.length;
+      // 탭마다 다 뜨기를 기다린다: 편집 탭은 '저장됨'(Office는 fxPhase ready까지), PDF 문서 탭은 내장 PDF 뷰어 틀
+      for (const o of opened) {
+        const t = tw.tabs.get(o.id);
+        const wc = viewOfTab(tw, t)?.webContents;
+        if (!wc) { out.errors.push(`${basename(o.path)}: 탭 뷰 없음`); continue; }
+        if (o.kind !== 'doc') {
+          const w = await waitEditorView(wc, o.kind);
+          activateTab(tw, o.id);
+          out[o.kind === 'hwp' ? 'hwp' : o.ext] = { state: w.state, phase: w.phase, reason: w.reason, title: tw.shell.win.getTitle() };
+        } else if (o.ext === 'pdf') {
+          const viewer = await until(() => { try { return wc.mainFrame.framesInSubtree.some((f) => f.url.startsWith('chrome-extension://')); } catch { return false; } }, 30_000, 300);
+          out.pdf = { viewer: !!viewer };
+        }
+      }
+      // 탭 전환: 탭마다 그 뷰만 보이고, 초점을 받고, 탭 줄 아래 · 패널 왼쪽(content 자리)에 놓인다
+      focusShell(tw);
+      await until(() => tw.shell.win.isFocused(), 3000, 100);
+      for (const t of [...tw.tabs.tabs]) {
+        activateTab(tw, t.id);
+        const view = viewOfTab(tw, t);
+        const focused = !!(await until(() => !!view?.webContents?.isFocused?.(), 2000, 100));
+        await sleep(300);
+        const { width: W, height: H } = tw.shell.win.getContentBounds();
+        const panel = tw.shell.setPanel();
+        const P = panel.collapsed ? 0 : Math.min(panel.width, W);
+        const b = view?.getBounds?.() ?? null;
+        const others = tw.tabs.tabs.filter((x) => x.id !== t.id).map((x) => viewOfTab(tw, x)).filter(Boolean);
+        out.switches.push({
+          id: t.id, type: t.type, visible: !!view?.getVisible?.(), focused,
+          contentBounds: !!b && b.x === 0 && b.y === TABSTRIP_H && b.width === W - P && b.height === H - TABSTRIP_H,
+          othersHidden: others.every((v) => !v.getVisible()), bounds: b, title: tw.shell.win.getTitle(),
+        });
+      }
+      // 찍기: 마지막으로 보인 탭 뷰 + 탭 줄
+      await sleep(800);
+      const active = viewOfTab(tw, tw.tabs.active);
+      if (active) writeFileSync(out.png, (await capture(active.webContents)).toPNG());
+      writeFileSync(out.stripPng, (await capture(tw.shell.tabstrip.webContents)).toPNG());
+      // 탭 하나 닫기 (마지막 탭): 그 뷰 wc에 'destroyed'가 오는지 (허브·편집 항목 정리는 거기서 한다)
+      const last = tw.tabs.tabs.at(-1);
+      const lastWc = last && last.type !== 'home' ? viewOfTab(tw, last)?.webContents : null;
+      if (lastWc) {
+        const gone = new Promise((r) => { if (lastWc.isDestroyed()) r(true); else lastWc.once('destroyed', () => r(true)); });
+        const closed = await closeTab(tw, last.id);
+        out.closedDestroyed = closed && (await Promise.race([gone, sleep(10_000).then(() => false)]));
+        out.afterCloseTab = tw.tabs.tabs.length;
+      }
+      // 창 닫기: 저장할 것이 없으면 묻지 않고 닫힌다 → 탭 창이 목록에서 빠지고 남은 뷰 wc가 모두 닫힌다
+      const wcs = [tw.home, tw.panel, ...tw.tabs.tabs.map((t) => viewOfTab(tw, t))].filter(Boolean).map((v) => v.webContents);
+      const id = tw.shell.id;
+      const ok = await Promise.race([closeWindow(tw), sleep(30_000).then(() => false)]);
+      const allGone = await until(() => !tabWindows.has(id) && wcs.every((w) => w.isDestroyed()), 10_000, 100);
+      out.windowClosed = !!ok && !!allGone;
+      out.ok = out.opened === files.length + 1 && out.errors.length === 0
+        && out.switches.length === out.opened && out.switches.every((s) => s.visible && s.focused && s.contentBounds && s.othersHidden)
+        && (!out.hwp || out.hwp.state === 'saved') && (!out.docx || out.docx.phase === 'ready') && (!out.pdf || out.pdf.viewer)
+        && out.afterCloseTab === out.opened - 1 && out.closedDestroyed === true && out.windowClosed;
+      return out;
+    }
+
+    let smokeStarted = false;
     onIpc('smoke:ready', async (e, { hub }, info = {}) => {
+      // 탭 창 스모크: 첫 신호(빈 홈)에서 한 번만. 그 뒤 문서 탭이 보내는 신호는 무시한다
+      if (SMOKE_TABS) {
+        if (smokeStarted) return;
+        smokeStarted = true;
+        try {
+          mkdirSync(dirname(SMOKE), { recursive: true });
+          writeFileSync(SMOKE, (await capture(e.sender)).toPNG());
+          smokeHoldQuit = true; // 마지막 창을 닫아도 결과를 적을 때까지 끝내지 않는다
+          const tabs = hub?.tw ? await smokeTabs(hub.tw) : { ok: false, error: '탭 창 없음' };
+          console.log('[smoke]', JSON.stringify({ ...info, tabs, png: SMOKE }));
+          clearTimeout(bail);
+          app.exit(tabs.ok ? 0 : 1);
+        } catch (err) {
+          console.error('[smoke] 탭 창 스모크 실패:', err);
+          app.exit(1);
+        }
+        return;
+      }
       try {
-        // 열면 바로 편집 창 (OFFICEKIT_SMOKE_AUTOEDIT=1): 화면이 편집 창을 띄웠는지 (30초까지 기다림)
+        // 열면 바로 편집 탭 (OFFICEKIT_SMOKE_AUTOEDIT=1): 화면이 편집 탭을 띄웠는지 (30초까지 기다림) → 열린 편집 뷰 수
         let autoEditor = null;
         if (process.env.OFFICEKIT_SMOKE_AUTOEDIT === '1' && hub?.current) {
           for (const end = Date.now() + 30_000; Date.now() < end && !editors?.isOpen(hub.current.path);) await sleep(200);
-          autoEditor = { open: !!editors?.isOpen(hub.current.path), windows: BrowserWindow.getAllWindows().length };
+          autoEditor = { open: !!editors?.isOpen(hub.current.path), windows: editors?.list().length ?? 0 };
         }
         const editor = SMOKE_EDITOR && info.ok !== false ? await smokeEditor(hub) : null;
         const pdf = SMOKE_PDF && info.ok !== false ? await smokePdf(e.sender) : null;
+        // 신호를 보낸 홈 종류 뷰(홈·문서 탭)를 보이고 찍는다
+        showTabOf(e.sender);
         await sleep(info.kind === 'pdf' ? 3000 : 900);
-        // 신호를 보낸 홈 종류 뷰(홈·문서 탭)를 찍는다 (탭 창 전체 찍기는 스모크 작업에서)
-        const img = await capture({ webContents: e.sender });
+        const img = await capture(e.sender);
         mkdirSync(dirname(SMOKE), { recursive: true });
         writeFileSync(SMOKE, img.toPNG());
         console.log('[smoke]', JSON.stringify({ ...info, ...(autoEditor ? { autoEditor } : {}), ...(editor ? { editor } : {}), ...(pdf ? { pdf } : {}), png: SMOKE, size: img.getSize() }));
@@ -3024,7 +3163,7 @@ async function start() {
     queueOpen(fileFromArgv(argv, cwd));
   });
 
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => { if (!smokeHoldQuit) app.quit(); });
   // 편집 탭이 열려 있으면 '끝내기'가 취소될 수 있으므로(저장 확인 → 취소) 정리는 정말 끝날 때(will-quit) 한다
   app.on('will-quit', () => {
     // 세션은 이미 확정했다 (끝내기 차례·마지막 창 닫기). 미뤄 둔 쓰기가 끝난 뒤에 돌지 않게 멈춘다

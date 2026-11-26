@@ -2327,3 +2327,80 @@ test('실제 앱: OFFICEKIT_SMOKE_EDITOR로 주 창 + 문서·표·슬라이드 
     });
   }
 });
+
+// 탭 창(Plan 2b): 스모크는 편집 창(BrowserWindow)이 아니라 탭 창 · 뷰를 찾는다. 탭 창 실제 스모크는 CI(main push·출시)에서 묶음을 만든 뒤 돈다
+test('스모크 코드: 편집 창을 BrowserWindow 목록으로 찾지 않고, 탭 창 스모크 갈래와 CI 단계가 있다 (D16)', () => {
+  const main = readFileSync(join(ROOT, 'src', 'app', 'main.mjs'), 'utf8');
+  const start = main.indexOf('// ── 확인용 캡처 (OFFICEKIT_SMOKE)');
+  const end = main.indexOf('// ── 웹 링크', start);
+  assert.ok(start > 0 && end > start, '스모크 절');
+  const smoke = main.slice(start, end);
+  assert.doesNotMatch(smoke, /BrowserWindow\.getAllWindows/, '편집 창은 탭 창의 뷰다');
+  assert.doesNotMatch(smoke, /\bew\.(moveTop|getTitle|webContents)/, '편집 창 대신 탭 창·편집 뷰');
+  assert.match(main, /OFFICEKIT_SMOKE_TABS === '1'/);
+  assert.match(main, /OFFICEKIT_SMOKE_TABS_FILES/);
+  const yml = readFileSync(join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+  const steps = yml.split(/\r?\n(?=      - )/).filter((s) => /name: 탭 창 실제 스모크/.test(s));
+  assert.equal(steps.length, 2, 'test 잡(main push)과 release 잡에 하나씩');
+  for (const s of steps) {
+    assert.match(s, /shell: bash/);
+    assert.match(s, /OFFICEKIT_EDITOR_SMOKE: '1'/);
+    assert.match(s, /run: node --test test\/editor-integration\.test\.mjs/);
+  }
+  // test 잡의 단계는 묶음을 만드는 main push에서만 (같은 if), 'Office 편집기 묶음 빌드 (main)' 뒤에
+  const testJob = yml.slice(yml.indexOf('\n  test:'), yml.indexOf('\n  release:'));
+  assert.ok(testJob.indexOf('name: 탭 창 실제 스모크') > testJob.indexOf('name: Office 편집기 묶음 빌드 (main)'));
+  assert.match(steps[0], /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
+  const relJob = yml.slice(yml.indexOf('\n  release:'));
+  assert.ok(relJob.indexOf('name: 탭 창 실제 스모크') > relJob.indexOf('name: 한글→PDF 변환 프로그램 (rhwp v0.8.7 → vendor/rhwp-cli)'));
+});
+
+/** 실제 앱을 OFFICEKIT_SMOKE_TABS=1로 띄워 탭 창 하나에 files를 탭으로 연다 → [smoke] 줄의 정보 */
+function runTabsSmoke(base, files) {
+  const png = join(base, 'tabs.png');
+  const ud = join(base, 'ud-tabs');
+  put(join(ud, 'settings.json'), JSON.stringify({ previewMode: 'text' }));
+  const env = { ...process.env, OFFICEKIT_SMOKE: png, OFFICEKIT_SMOKE_TABS: '1', OFFICEKIT_SMOKE_TABS_FILES: files.join(';'), OFFICEKIT_USER_DATA: ud };
+  delete env.ELECTRON_RUN_AS_NODE;
+  for (const k of ['OFFICEKIT_SMOKE_EDITOR', 'OFFICEKIT_EDITOR_VENDOR', 'OFFICEKIT_OFFICE_FONTS_MODULE', 'OFFICEKIT_AI_MODULE']) delete env[k];
+  const r = spawnSync(electronExe, ['.'], { cwd: ROOT, env, encoding: 'utf8', timeout: 230_000 });
+  const line = (r.stdout ?? '').split(/\r?\n/).find((l) => l.startsWith('[smoke] '));
+  assert.ok(line, `${r.stdout}\n${r.stderr}`);
+  const info = JSON.parse(line.slice('[smoke] '.length));
+  const out = process.env.OFFICEKIT_SMOKE_OUT;
+  if (out) {
+    mkdirSync(out, { recursive: true });
+    for (const f of [info.tabs?.png, info.tabs?.stripPng]) if (f && existsSync(f)) copyFileSync(f, join(out, basename(f)));
+    writeFileSync(join(out, 'tabs.json'), JSON.stringify(info, null, 2));
+  }
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  return info;
+}
+
+test('실제 앱: 탭 창 스모크 — HWP·DOCX·PDF 탭 열기 → 전환 → 탭 닫기 → 창 닫기 (D16)', { skip: !(smokeReady && officeSmokeReady) && 'OFFICEKIT_EDITOR_SMOKE=1 과 vendor/ 묶음이 있을 때만 (창이 잠깐 뜬다)' }, async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'ok-tabs-smoke-'));
+  t.after(() => rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  const hwpx = join(base, '탭 시험.hwpx');
+  await createBlankDocument(hwpx, { title: '탭 시험 문서' });
+  const docx = join(base, OFFICE_SMOKE_DOCS.docx.name);
+  await createDocument(docx, OFFICE_SMOKE_DOCS.docx.md);
+  const pdf = join(base, '탭 시험.pdf');
+  writeFileSync(pdf, makePdf(2));
+  const info = runTabsSmoke(base, [hwpx, docx, pdf]);
+  const tabs = info.tabs;
+  assert.ok(tabs, JSON.stringify(info));
+  assert.equal(tabs.ok, true, JSON.stringify(tabs));
+  assert.equal(tabs.opened, 4, '홈 + 세 문서 탭');
+  assert.equal(tabs.switches.length, 4);
+  for (const s of tabs.switches) {
+    assert.deepEqual({ visible: s.visible, focused: s.focused, contentBounds: s.contentBounds }, { visible: true, focused: true, contentBounds: true }, JSON.stringify(s));
+  }
+  assert.equal(tabs.hwp.state, 'saved', JSON.stringify(tabs.hwp));
+  assert.equal(tabs.hwp.title, '탭 시험.hwpx - 한글 편집 (Office Kit)');
+  assert.equal(tabs.docx.phase, 'ready', JSON.stringify(tabs.docx));
+  assert.equal(tabs.pdf.viewer, true, '내장 PDF 뷰어 틀');
+  assert.equal(tabs.afterCloseTab, 3);
+  assert.equal(tabs.closedDestroyed, true, "닫은 탭 뷰 wc에 'destroyed'가 온다");
+  assert.equal(tabs.windowClosed, true);
+  assert.ok(statSync(tabs.png).size > 10_000);
+});
