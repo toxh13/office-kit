@@ -722,7 +722,10 @@
   bridge.provide('chat.loadProviders', (refresh) => loadProviders(!!refresh));
 
   onInit((init) => {
-    panelWidth = Number(init.settings?.chatWidth) || 400;
+    // main이 탭 창에 실제로 쓴 너비(범위로 자른 값)와 범위를 받는다 (저장된 값 그대로 쓰지 않는다)
+    panelWidth = Number(init.panel?.width) || Number(init.settings?.chatWidth) || 400;
+    if (Number.isFinite(init.panel?.min)) el.resizer.setAttribute('aria-valuemin', String(init.panel.min));
+    if (Number.isFinite(init.panel?.max)) el.resizer.setAttribute('aria-valuemax', String(init.panel.max));
     el.resizer.setAttribute('aria-valuenow', String(panelWidth));
     state.providersReady = loadProviders(false);
     setTarget(init.doc ?? null);

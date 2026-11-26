@@ -75,5 +75,7 @@
  "‘{0}’ 파일을 찾을 수 없어 탭을 닫았어요": "Couldn't find ‘{0}’, so its tab was closed",
  "편집 탭이 뜨지 않았습니다": "The edit tab didn't open",
  "{0}: 탭 뷰 없음": "{0}: no tab view",
- "탭 창 없음": "No tab window"
+ "탭 창 없음": "No tab window",
+ "탭 창을 닫는 중이라 열지 않았어요": "The tab window is closing, so it wasn't opened",
+ "추가할 열린 문서": "Open documents to add"
 }

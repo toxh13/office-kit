@@ -9,7 +9,7 @@ import { allows, channelSpec, VIEW_ROUTES } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
 import { createSessionKeeper, promoteCrashed, restorePlan } from './tab-session.mjs';
-import { createTabWindow, TABSTRIP_H } from './tab-window.mjs';
+import { createTabWindow, PANEL_MAX, PANEL_MIN, TABSTRIP_H } from './tab-window.mjs';
 import { createTabList, docKey, tabCommandOf } from './tabs.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1502,9 +1502,17 @@ async function start() {
         item.setSaveDialogOptions(localizeDialogOptions({ title: 'PDF로 저장', defaultPath: join(cur ? dirname(cur.path) : app.getPath('documents'), name), filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] }, i18n.t));
       });
     }
-    wc.on('render-process-gone', (_e, d) => console.error('[renderer] 종료:', d.reason));
+    const viewUrl = `${pathToFileURL(INDEX_HTML).href}?view=${role}`;
+    // 화면 프로세스가 죽으면(메모리 부족 등) 다시 싣는다: 홈·문서 탭·패널은 app:init으로 상태를 다시 받는다 (그 사이 알림은 준비되면 보낸다)
+    wc.on('render-process-gone', (_e, d) => {
+      console.error('[renderer] 종료:', d?.reason);
+      if (d?.reason === 'clean-exit' || wc.isDestroyed()) return;
+      const hub = hubOf(wc);
+      if (hub) hub.rendererReady = false;
+      void Promise.resolve(wc.loadURL(viewUrl)).catch(() => {});
+    });
     if (SMOKE) wc.on('console-message', (e) => { if (e.level === 'error' || e.level === 'warning') console.log('[renderer]', e.message); });
-    void Promise.resolve(wc.loadURL(`${pathToFileURL(INDEX_HTML).href}?view=${role}`)).catch(() => {});
+    void Promise.resolve(wc.loadURL(viewUrl)).catch(() => {});
     return view;
   }
 
@@ -2390,7 +2398,8 @@ async function start() {
         clean.lang = v;
       } else if (k === 'chatWidth') {
         if (!Number.isFinite(v)) throw fail('잘못된 너비입니다');
-        clean.chatWidth = Math.round(Math.min(800, Math.max(280, v)));
+        // 탭 창이 쓰는 범위와 같게 (tab-window.mjs PANEL_MIN..PANEL_MAX)
+        clean.chatWidth = Math.round(Math.min(PANEL_MAX, Math.max(PANEL_MIN, v)));
       } else if (k === 'chatCollapsed') {
         clean.chatCollapsed = !!v;
       } else throw fail(`알 수 없는 설정: ${k}`);
@@ -2564,6 +2573,8 @@ async function start() {
     return {
       version: app.getVersion(), packaged: app.isPackaged, platform: process.platform,
       exts: OPENABLE_EXTS, settings: publicSettings(), recent: settings.recent(),
+      // AI 패널 너비: 탭 창이 실제로 쓰는 값(범위로 자른 값)과 범위 — 패널의 너비 조절(role=separator)이 같은 값을 쓴다
+      panel: { width: tw?.shell?.setPanel?.().width ?? null, min: PANEL_MIN, max: PANEL_MAX },
       // 문서 탭 뷰 = 그 문서, 홈 = 없음, AI 패널 = 그 탭 창의 AI 대상
       doc: hub ? docInfo(hub) : targetInfo(targetOf(tw)),
       editor: editorInfo(),

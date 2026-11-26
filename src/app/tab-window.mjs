@@ -51,7 +51,14 @@ export function createTabWindow({
   wc.on('will-navigate', (e) => e.preventDefault());
   wc.on('will-frame-navigate', (e) => e.preventDefault());
   wc.on('will-attach-webview', (e) => e.preventDefault());
-  void Promise.resolve(wc.loadFile(join(here, 'renderer', 'tabstrip.html'))).catch(() => {});
+  const loadStrip = () => { void Promise.resolve(wc.loadFile(join(here, 'renderer', 'tabstrip.html'))).catch(() => {}); };
+  loadStrip();
+  // 탭 줄 화면이 죽으면(메모리 부족 등) 다시 싣는다 — 다시 뜨면 tabs:ready로 탭 목록을 다시 받는다
+  wc.on('render-process-gone', (_e, d) => {
+    console.error('[tabstrip] 화면 종료:', d?.reason);
+    if (closed || wc.isDestroyed() || d?.reason === 'clean-exit') return;
+    loadStrip();
+  });
 
   const views = new Map(); // 붙인 뷰 → 'content' | 'panel'
   let active = null; // 보이는 content 뷰

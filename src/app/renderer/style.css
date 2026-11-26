@@ -488,7 +488,7 @@ body[data-view="panel"] .chat { position: relative; }
   box-shadow: var(--page-shadow);
 }
 body.resizing iframe, body.dragging iframe { pointer-events: none; }
-/* 다른 창에서 끌어 온 파일을 PDF 미리보기 위에 바로 놓아도 받게 (app.js setupDragDrop) */
+/* 다른 창에서 끌어 온 파일을 PDF 미리보기 위에 바로 놓아도 받게 (home.js setupDragDrop) */
 body.drop-ready iframe.pdf-frame { pointer-events: none; }
 
 .pages { display: flex; flex-direction: column; align-items: center; gap: 28px; padding: 32px 32px 72px; min-width: min-content; }
@@ -828,7 +828,8 @@ body.resizing { cursor: col-resize; }
 .tc-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .tc-role { color: var(--muted); font-size: 11px; }
 .tc-badge { padding: 0 6px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: 11px; }
-.tc-x { display: inline-flex; padding: 2px; border-radius: var(--radius-sm); color: var(--muted); }
+/* 누르는 자리는 24×24px 이상 (WCAG 2.5.8) */
+.tc-x { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; padding: 2px; border-radius: var(--radius-sm); color: var(--muted); }
 .tc-x:hover { background: var(--hover); color: var(--text); }
 .tc-x svg.i { width: 12px; height: 12px; }
 .tc-add {

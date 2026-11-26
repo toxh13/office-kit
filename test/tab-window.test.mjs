@@ -196,3 +196,22 @@ test('탭 줄 preload: window.okTabs만 노출하고 채널은 표 블록으로 
   for (const k of ['activate', 'close', 'home', 'togglePanel', 'ready', 'onList', 'i18n']) assert.match(src, new RegExp('\\b' + k + ':'), k);
   assert.match(src, /const need = \(call, channel\)/);
 });
+
+test('탭 줄 화면이 죽으면 다시 싣는다, 정상 종료·닫힌 창은 그대로 (F10)', () => {
+  const { f, s } = make();
+  const wc = s.tabstrip.webContents;
+  const loads = [];
+  const orig = wc.loadFile.bind(wc);
+  wc.loadFile = (file) => { loads.push(file); return orig(file); };
+  const err0 = console.error;
+  console.error = () => {};
+  try {
+    f.crash(wc, 'crashed');
+    assert.equal(loads.length, 1);
+    assert.match(loads[0], /tabstrip\.html$/);
+    f.crash(wc, 'clean-exit');
+    assert.equal(loads.length, 1, '정상 종료는 다시 싣지 않는다');
+  } finally {
+    console.error = err0;
+  }
+});

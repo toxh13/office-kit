@@ -34,11 +34,14 @@ if (typeof document !== 'undefined') {
     const aiToggle = document.getElementById('ai-toggle');
 
     // 화면 언어: 한국어 원문을 사전으로 바꾼다 (탭 이름 = 파일 이름은 그대로)
-    (() => {
+    // tr: 탭 이름 칸(번역하지 않는 곳)에 붙이는 상태 글을 직접 옮길 때 쓴다
+    const tr = (() => {
       const d = K?.i18n; const lib = window.OfficeKitI18n;
-      if (!d || !lib || !['en', 'ja'].includes(d.lang)) return;
+      if (!d || !lib || !['en', 'ja'].includes(d.lang)) return (s) => s;
       document.documentElement.lang = d.lang;
-      lib.translateDom(document.documentElement, lib.compile(d.dict, d.lang), { skip: '.tab-name' });
+      const c = lib.compile(d.dict, d.lang);
+      lib.translateDom(document.documentElement, c, { skip: '.tab-name' });
+      return c.t;
     })();
 
     let state = { tabs: [], active: null, panelCollapsed: false };
@@ -90,6 +93,10 @@ if (typeof document !== 'undefined') {
       const name = isHome(tab) ? '홈' : String(tab.title ?? '');
       const cls = ['tab', selected && 'active', tab.dirty && 'dirty', tab.loaded === false && 'lazy', tab.zone3 && 'zone3', tab.busy && 'busy']
         .filter(Boolean).join(' ');
+      // 마우스를 올리면 이름과 상태(저장 안 한 변경·인터넷 파일)를 함께 보인다 (점·표시만으로는 뜻을 모르므로).
+      // 탭 이름 칸은 번역하지 않으므로 상태 글은 여기서 옮긴다
+      const states = [tab.dirty && '저장 안 한 변경 있음', tab.zone3 && '인터넷 파일'].filter(Boolean).map(tr);
+      const tip = states.length ? `${name} (${states.join(', ')})` : name;
       const button = h('button', {
         type: 'button', role: 'tab', id: 'tab-' + tab.id, class: cls,
         'aria-selected': selected ? 'true' : 'false', tabindex: index === tabStop ? '0' : '-1',
@@ -102,7 +109,7 @@ if (typeof document !== 'undefined') {
         onauxclick: (e) => { if (e.button === 1) { e.preventDefault(); close(tab); } },
       },
       tab.dirty ? h('span', { class: 'dirty-dot', 'aria-hidden': 'true', text: '●' }) : null,
-      isHome(tab) ? h('span', { class: 'tab-home', text: name }) : h('span', { class: 'tab-name', 'data-no-i18n': true, title: name, text: name }),
+      isHome(tab) ? h('span', { class: 'tab-home', text: name }) : h('span', { class: 'tab-name', 'data-no-i18n': true, title: tip, text: name }),
       tab.dirty ? srOnly('저장 안 한 변경 있음') : null,
       tab.loaded === false ? srOnly('아직 불러오지 않음') : null,
       tab.zone3 ? srOnly('인터넷 파일') : null);
@@ -128,6 +135,8 @@ if (typeof document !== 'undefined') {
         again?.focus();
       }
       aiToggle.setAttribute('aria-pressed', state.panelCollapsed ? 'false' : 'true');
+      // 탭이 많아 줄이 넘치면 활성 탭이 보이게 (가로로만, 가까운 쪽으로)
+      tabButtons().find((b) => b.getAttribute('aria-selected') === 'true')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     }
 
     aiToggle.addEventListener('click', () => { if (K) void K.togglePanel(); });

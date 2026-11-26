@@ -2066,6 +2066,50 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     tw0.emit('focus');
   });
 
+  await t.test('홈·패널 화면이 죽으면 다시 싣는다, 정상 종료는 그대로 (F10)', async () => {
+    const w = await newTabWindow(homeWc);
+    for (const [wc, re] of [[w.home, /\?view=home$/], [w.panel, /\?view=panel$/]]) {
+      const loads = [];
+      const orig = wc.loadURL.bind(wc);
+      wc.loadURL = (u) => { loads.push(u); return orig(u); };
+      const err0 = console.error;
+      console.error = () => {};
+      try {
+        fake.crash(wc, 'crashed');
+        fake.crash(wc, 'clean-exit');
+      } finally {
+        console.error = err0;
+      }
+      assert.equal(loads.length, 1, '죽으면 한 번 다시 싣고, 정상 종료는 그대로');
+      assert.match(loads[0], re);
+    }
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('패널 너비: app:init이 탭 창에 쓴 너비와 범위를 주고, 설정 저장도 같은 범위로 자른다 (M2)', async () => {
+    const w = await newTabWindow(homeWc);
+    const init = await fake.invokeFrom(w.panel, 'app:init');
+    assert.equal(init.ok, true, init.error);
+    assert.deepEqual([init.value.panel.min, init.value.panel.max], [320, 640]);
+    assert.ok(init.value.panel.width >= 320 && init.value.panel.width <= 640, String(init.value.panel.width));
+    const keep = (await fake.invokeFrom(w.home, 'settings:get')).value.chatWidth;
+    try {
+      assert.equal((await fake.invokeFrom(w.home, 'settings:set', { chatWidth: 900 })).ok, true);
+      assert.equal((await fake.invokeFrom(w.home, 'settings:get')).value.chatWidth, 640);
+      assert.equal((await fake.invokeFrom(w.home, 'settings:set', { chatWidth: 200 })).ok, true);
+      assert.equal((await fake.invokeFrom(w.home, 'settings:get')).value.chatWidth, 320);
+    } finally {
+      if (Number.isFinite(keep)) await fake.invokeFrom(w.home, 'settings:set', { chatWidth: keep });
+    }
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
   await t.test('끝내기: 창마다 차례로 묻고, 취소하면 남은 것은 그대로, 그 뒤 탭 하나 닫기는 끝내지 않음 (Review Focus)', async () => {
     const w2 = await newTabWindow(homeWc);
     const w1 = await newTabWindow(w2.home);
