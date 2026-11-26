@@ -1596,7 +1596,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.ok(await endOf(held.value.chatId));
   });
 
-  await t.test('AI 답이 오는 중 그 탭 창을 닫으면 이벤트는 버리고, 대화 정리는 끝까지 (Review Focus)', async () => {
+  await t.test('AI 답이 오는 중 그 탭 창을 닫으면 (재료만 읽는 대화도) 한 번 묻고 멈춘 뒤 닫는다, 이벤트는 다른 창으로 새지 않고 대화 정리는 끝까지 — 의도한 변경 (Review Focus, RT4)', async () => {
     const r = await fake.invokeFrom(win2.panel, 'ai:send', { prompt: '[hold] 요약해줘' });
     assert.equal(r.ok, true, r.error);
     const chatId = r.value.chatId;
@@ -1606,16 +1606,20 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     const warn0 = console.warn;
     console.warn = (...a) => { warns.push(a); };
     try {
+      const n = fake.dialogs.length;
+      fake.dialogAnswers.push(0); // 멈추고 닫기: 창 패널의 대화는 창과 함께 멈춘다
       win2.win.close();
       assert.ok(await until(() => win2.win.isDestroyed()), '창2가 닫혀야 한다');
+      assert.equal(fake.dialogs.length, n + 1, '한 번만 묻는다');
+      assert.equal(fake.dialogs[n].message, 'AI 작업 중인 문서가 있습니다.', '재료만 읽는 대화도 묻는다');
       assert.equal(win2.panel.isDestroyed(), true);
-      globalThis.__okRelease();
       assert.ok(await until(() => !existsSync(pidDir)), 'PID 폴더 정리');
       await sleep(100);
     } finally {
       console.warn = warn0;
+      globalThis.__okRelease?.();
     }
-    assert.equal(warns.filter((a) => a[0] === '[ai] 패널이 닫혀 이벤트를 버렸습니다' && a[1] === chatId).length, 1, '대화마다 한 번만 알린다');
+    assert.ok(warns.filter((a) => a[0] === '[ai] 패널이 닫혀 이벤트를 버렸습니다' && a[1] === chatId).length <= 1, '대화마다 많아야 한 번만 알린다');
     assert.equal(chatIdsOf(panelWc).has(chatId), false, '다른 창 패널로 새지 않는다');
     // 대화가 정리됐다: 창1에서 문서 B를 열면 AI가 쓰는 중이 아니다
     assert.equal((await callAs('home', 'doc:open', pdfB)).ok, true);
@@ -1903,6 +1907,152 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
       globalThis.__okRelease?.();
     }
     assert.ok(await endOf(held.value.chatId));
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('편집 탭 안 Ctrl+W·편집 화면의 닫기도 AI가 고치는 중이면 묻는다 (D17, RT1)', async () => {
+    const w = await newTabWindow(homeWc);
+    const a = await openEditorIn(w, 'AI 마.hwpx');
+    const held = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '[hold] 고쳐줘', editorOk: true });
+    assert.equal(held.ok, true, held.error);
+    try {
+      let n = asked();
+      fake.dialogAnswers.push(1); // 취소
+      assert.equal(pressCtrl(a.wc, 'KeyW'), true, 'Ctrl+W는 가로챈다');
+      assert.ok(await until(() => asked() >= n + 1), 'AI 작업 중 확인');
+      assert.equal(fake.dialogs[n].message, AI_TAB_MSG);
+      assert.equal(fake.dialogs[n].parent, w.win);
+      await sleep(150);
+      assert.equal(a.wc.isDestroyed(), false, '취소 → 탭 그대로');
+      assert.ok(tabIn(w, a.path));
+      // 편집 화면의 닫기(editor:close)도 같은 확인
+      n = asked();
+      fake.dialogAnswers.push(1);
+      fake.emit('editor:close', a.wc);
+      assert.ok(await until(() => asked() >= n + 1));
+      assert.equal(fake.dialogs[n].message, AI_TAB_MSG);
+      await sleep(150);
+      assert.equal(a.wc.isDestroyed(), false);
+      assert.ok(tabIn(w, a.path));
+    } finally {
+      globalThis.__okRelease?.();
+    }
+    assert.ok(await endOf(held.value.chatId));
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('재료만 읽는 AI 대화도 창 닫기·끝내기에서 묻고, 멈추고 닫기면 대화를 멈춘다 (D17, RT4)', async () => {
+    const w = await newTabWindow(homeWc);
+    const m = join(docs, '재료만 읽기.pdf');
+    writeFileSync(m, makePdf(1));
+    assert.equal((await fake.invokeFrom(w.home, 'doc:open', m)).ok, true);
+    const held = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '[hold] 요약해줘' });
+    assert.equal(held.ok, true, held.error);
+    const chatId = held.value.chatId;
+    const pidDir = join(ud, 'com-pids', chatId);
+    try {
+      assert.equal(globalThis.__okTargets.at(-1).edit, null, '재료만 읽는 대화');
+      // 끝내기 → 한 번 묻고 취소: 끝내지 않고 대화 그대로
+      w.win.emit('focus');
+      const quits = fake.app.quitCalls;
+      let n = asked();
+      fake.dialogAnswers.push(1);
+      const ev = quitEvent();
+      fake.app.emit('before-quit', ev);
+      assert.equal(ev.prevented, true);
+      assert.ok(await until(() => asked() >= n + 1), '끝내기 확인');
+      await sleep(150);
+      assert.equal(asked(), n + 1);
+      assert.equal(fake.dialogs[n].message, AI_WIN_MSG);
+      assert.equal(fake.app.quitCalls, quits);
+      assert.equal(existsSync(pidDir), true, '취소 → 대화 그대로');
+      hookCalls.splice(0);
+      // 창 닫기 → 한 번 묻고 멈추고 닫기: 대화가 멈추고 창이 닫힌다
+      n = asked();
+      fake.dialogAnswers.push(0);
+      w.win.close();
+      assert.ok(await until(() => w.win.isDestroyed()), '창이 닫힌다');
+      assert.equal(asked(), n + 1);
+      assert.equal(fake.dialogs[n].message, AI_WIN_MSG);
+      assert.ok(await until(() => !existsSync(pidDir)), '대화가 멈추고 PID 폴더 정리');
+    } finally {
+      globalThis.__okRelease?.();
+    }
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('재료만 보내기(edit:null)인데 지금 탭이 고칠 수 있는 문서면 TARGET_CHANGED (F5)', async () => {
+    const w = await newTabWindow(homeWc);
+    const a = await openEditorIn(w, '대상 확인.hwpx');
+    const n = (globalThis.__okChats ?? []).length;
+    const r = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '요약해줘', editorOk: true, target: { edit: null, read: [] } });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'TARGET_CHANGED', r.error);
+    assert.equal((globalThis.__okChats ?? []).length, n, '대화를 시작하지 않는다');
+    const ok = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '고쳐줘', editorOk: true, target: { edit: a.path, read: [] } });
+    assert.equal(ok.ok, true, ok.error);
+    assert.ok(await endOf(ok.value.chatId));
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('고칠 문서가 인터넷에서 받은 문서면 zone3: 폴더 읽기 없이 파일 단위 (D15, F6)', { skip: process.platform !== 'win32' && 'Zone.Identifier' }, async () => {
+    const w = await newTabWindow(homeWc);
+    const a = await openEditorIn(w, '인터넷 한글.hwpx');
+    writeFileSync(`${a.path}:Zone.Identifier`, '[ZoneTransfer]\r\nZoneId=3\r\n');
+    try {
+      let r = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '고쳐줘', editorOk: true, target: { edit: a.path, read: [] } });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(globalThis.__okTargets.at(-1).zone3, true, '고칠 문서가 인터넷 문서');
+      assert.ok(await endOf(r.value.chatId));
+      // 같은 문서를 다시 보내면 이어 한다 (고칠 문서는 빠지지 않았다)
+      r = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '더 고쳐줘', editorOk: true, target: { edit: a.path, read: [] } });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(r.value.newChat, false);
+      assert.equal(globalThis.__okTargets.at(-1).zone3, true);
+      assert.ok(await endOf(r.value.chatId));
+    } finally {
+      rmSync(`${a.path}:Zone.Identifier`, { force: true });
+    }
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('세션 확정(finalize)이 던져도 끝내기 차례는 이어진다 (F2)', async () => {
+    const w = await newTabWindow(homeWc);
+    const a = await openEditorIn(w, '확정 실패.hwpx');
+    fake.replies.set(a.wc.id, true);
+    const keep = mainMod.sessionHooks.finalize;
+    mainMod.sessionHooks.finalize = () => { throw new Error('설정 파일을 쓸 수 없음 (시험)'); };
+    try {
+      w.win.emit('focus');
+      const quits = fake.app.quitCalls;
+      const n = asked();
+      fake.dialogAnswers.push(2); // 저장 확인에서 취소
+      const ev = quitEvent();
+      fake.app.emit('before-quit', ev);
+      assert.equal(ev.prevented, true);
+      assert.ok(await until(() => asked() >= n + 1), '확정이 던져도 저장 확인까지 간다');
+      assert.match(fake.dialogs[n].message, /확정 실패\.hwpx/);
+      await sleep(150);
+      assert.equal(fake.app.quitCalls, quits);
+      assert.equal(w.win.isDestroyed(), false);
+    } finally {
+      mainMod.sessionHooks.finalize = keep;
+    }
+    hookCalls.splice(0);
+    fake.replies.set(a.wc.id, false);
     w.win.close();
     assert.ok(await until(() => w.win.isDestroyed()));
     hookCalls.splice(0);

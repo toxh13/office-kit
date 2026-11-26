@@ -101,8 +101,9 @@ export function tabCommandOf(input) {
   if (code === 'Tab') return { cmd: input.shift ? 'prev' : 'next' };
   if (input.shift) return null;
   if (code === 'KeyT') return { cmd: 'home' };
-  if (code === 'KeyW') return { cmd: 'close' };
-  if (code === 'KeyN') return { cmd: 'new-window' };
+  // 누르고 있어 되풀이되는 키는 닫기·새 창에 쓰지 않는다 (탭이 줄줄이 닫히거나 창이 여럿 뜨지 않게). 탭 옮기기는 되풀이 그대로
+  if (code === 'KeyW') return input.isAutoRepeat ? null : { cmd: 'close' };
+  if (code === 'KeyN') return input.isAutoRepeat ? null : { cmd: 'new-window' };
   const m = /^Digit([1-9])$/.exec(code ?? '');
   return m ? { cmd: 'index', n: Number(m[1]) } : null;
 }

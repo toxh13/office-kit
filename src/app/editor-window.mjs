@@ -857,7 +857,7 @@ export function createEditorManager({
     try { onDirtyChange?.(entry.path, dirty); } catch {}
   });
   on('editor:log', (entry, message) => log(`(${basename(entry.path)})`, String(message ?? '').slice(0, 2000)));
-  on('editor:close', (entry) => { void requestClose(entry); });
+  on('editor:close', (entry) => { closeViaTab(entry); });
   on('editor:reply', (entry, msg) => {
     const p = pending.get(msg?.id);
     if (!p || p.entry !== entry) return;
@@ -1195,6 +1195,17 @@ export function createEditorManager({
     } catch { return false; }
   }
 
+  /**
+   * 편집 탭 안에서 닫기(Ctrl+W·편집 화면의 닫기): main의 탭 닫기(AI 작업 중 확인 D17 → 저장 확인)로 넘긴다.
+   * main이 받지 않으면(탭 창 없이 쓸 때) 바로 저장 확인
+   */
+  function closeViaTab(entry) {
+    if (onTabCommand) {
+      try { onTabCommand(entry.path, { cmd: 'close' }); return; } catch (err) { log('onTabCommand 오류:', err); }
+    }
+    void requestClose(entry);
+  }
+
   /** 탭 닫기 흐름: 저장 안 한 변경이 있으면 저장 / 저장 안 함 / 취소 → 닫혔으면 true */
   async function requestClose(entry) {
     if (!alive(entry)) return true;
@@ -1373,7 +1384,7 @@ export function createEditorManager({
         // Ctrl+1~9는 편집기가 쓴다 (셀 서식 Ctrl+1 등) → 가로채지 않고 통과
         if (!tc || tc.cmd === 'index') return;
         e.preventDefault();
-        if (tc.cmd === 'close') void requestClose(entry);
+        if (tc.cmd === 'close') closeViaTab(entry);
         else { try { onTabCommand?.(entry.path, tc); } catch (err) { log('onTabCommand 오류:', err); } }
       }
     });
@@ -1526,6 +1537,21 @@ export function createEditorManager({
     },
     /** 여러 탭을 차례로 닫기 → 다 닫혔으면 true (취소하면 거기서 false) */
     closeMany,
+    /**
+     * 그 탭 창 껍데기에 붙은 편집 탭을 묻지 않고 닫는다 (창을 닫는 사이 늦게 붙은 것 — 그 창의 저장 확인은 이미 마쳤다).
+     * 저장 안 한 변경은 사라진다 (Office 복구 사본은 남긴다) → 닫은 수
+     */
+    closeHostedBy(host) {
+      let n = 0;
+      for (const e of [...entries.values()]) {
+        if (!host || e.host !== host || !alive(e)) continue;
+        e.allowClose = true;
+        try { e.host?.detach(e.view); } catch {}
+        e.wc.close();
+        n++;
+      }
+      return n;
+    },
     /** 그 문서의 편집 뷰 (없으면 null) */
     viewOf(path) {
       const e = entryOf(path);

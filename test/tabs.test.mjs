@@ -117,3 +117,12 @@ test('tabCommandOf: Ctrl+T/W/Tab/Shift+Tab/1~9/N, Alt·Shift+W·Shift+N·keyUp�
   assert.equal(tabCommandOf({ type: 'keyUp', code: 'KeyT', control: true }), null);
   assert.equal(tabCommandOf({ type: 'keyDown', code: 'KeyT' }), null);
 });
+
+test('tabCommandOf: 누르고 있어 되풀이되는 Ctrl+W·Ctrl+N은 무시, 탭 옮기기는 되풀이 그대로 (F8)', () => {
+  const k = (code, o = {}) => tabCommandOf({ type: 'keyDown', code, control: true, isAutoRepeat: true, ...o });
+  assert.equal(k('KeyW'), null, '탭이 줄줄이 닫히지 않게');
+  assert.equal(k('KeyN'), null, '창이 여럿 뜨지 않게');
+  assert.deepEqual(k('Tab'), { cmd: 'next' });
+  assert.deepEqual(k('Tab', { shift: true }), { cmd: 'prev' });
+  assert.deepEqual(k('KeyW', { isAutoRepeat: false }), { cmd: 'close' });
+});

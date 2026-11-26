@@ -1086,9 +1086,14 @@ test('편집 탭 뷰: 탭 창에 붙는 WebContentsView (가짜 electron)', asyn
     fake.replies.delete(wc.id);
   });
 
-  await t.test('Ctrl+W: 그 탭만 닫는다 (저장 확인 그대로, 창은 남음) — 의도한 변경', async () => {
+  await t.test('Ctrl+W: main의 탭 닫기로 넘기고(AI 작업 중 확인 D17), main이 닫으면 그 탭만 닫힌다 (저장 확인 그대로, 창은 남음) — 의도한 변경', async () => {
     const { wc, view, host } = tab(0);
+    const n = commands.length;
     assert.equal(key(wc, 'KeyW').prevented, true);
+    assert.deepEqual(commands.slice(n), [[doc, { cmd: 'close' }]], '닫기는 onTabCommand로');
+    assert.equal(wc.isDestroyed(), false, '편집 창이 혼자 닫지 않는다');
+    // main의 탭 닫기(closeTab → editors.close)
+    assert.equal(await mgr.close(doc), true);
     assert.ok(await until(() => wc.isDestroyed()), '깨끗하면 묻지 않고 닫힌다');
     assert.equal(host.win.isDestroyed(), false, '탭 창은 main이 닫는다');
     assert.equal(host.win.contentView.children.includes(view), false, '탭 창에서 뗀다');

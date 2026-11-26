@@ -399,7 +399,11 @@ async function start() {
 
   /** 이 문서를 고치는 AI 대화를 멈추고 끝날 때까지 기다린다 → 멈춘 개수 (시간 안에 안 끝나면 -1) */
   async function stopChatsFor(p, ms = 10_000) {
-    const running = [...chats.values()].filter((c) => samePath(c.path, p) || (!!c.edit && samePath(c.edit, p)));
+    return stopChatList([...chats.values()].filter((c) => samePath(c.path, p) || (!!c.edit && samePath(c.edit, p))), ms);
+  }
+
+  /** 대화 목록을 멈추고 끝날 때까지 기다린다 → 멈춘 개수 (시간 안에 안 끝나면 -1) */
+  async function stopChatList(running, ms = 10_000) {
     if (!running.length) return 0;
     for (const c of running) { try { c.handle.cancel(); } catch {} }
     let timer;
@@ -979,7 +983,7 @@ async function start() {
       // 편집 탭의 Ctrl+O (부모 = 탭 창)
       onOpenRequest: (parent) => { pickAndOpen(parent).catch((err) => console.error('[open]', err)); },
       // 탭 단축키(Ctrl+Tab·Ctrl+1…9·Ctrl+T·Ctrl+N)는 아직 쓰지 않는다 (탭 단축키 작업에서 연결)
-      onTabCommand: (p, cmd) => { const hit = findTab(p); if (hit) runTabCommand(hit.tw, cmd); },
+      onTabCommand: (p, cmd) => editorTabCommand(p, cmd),
       // 끝내기 중 저장 확인에서 취소 → 끝내기 상태를 되돌리고 세션을 다시 이어 적는다
       onQuitCanceled: () => cancelQuit(),
     });
@@ -1358,7 +1362,6 @@ async function start() {
    */
   async function openFromExplorer(p, tw = null) {
     p = docPath(p);
-    tw = tw && tabWindows.has(tw.shell.id) ? tw : recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
     const hit = findTab(p);
     if (hit) {
       activateTab(hit.tw, hit.tab.id); focusShell(hit.tw);
@@ -1366,6 +1369,9 @@ async function start() {
       if (!SMOKE) { try { settings.addRecent(hit.tab.path); } catch {} }
       return { tabId: hit.tab.id, mode: 'reused' };
     }
+    // 닫는 중인 탭 창(저장 확인 중 등)에는 붙이지 않는다
+    tw = liveTw(tw) ? tw : hostWindow();
+    if (!tw) throw openAborted();
     focusShell(tw);
     // 설정 '미리보기'·확인용 캡처·시험(OFFICEKIT_DOC_WINDOW=0)·인터넷 Office(D5)는 홈에서 연 것과 같게
     if (!wantsDocWindow(p) || SMOKE || process.env.OFFICEKIT_DOC_WINDOW === '0' || zone3Office(p)) {
@@ -1403,6 +1409,8 @@ async function start() {
       }
       return { tabId: r.tabId, mode: 'converted' };
     } catch (err) {
+      // 열기를 그만뒀으면(창을 닫는 중) 문서 탭으로 바꿔 열지도 않는다
+      if (err?.code === 'OPEN_ABORTED') throw err;
       // 편집 탭으로 못 열면 문서 탭(미리보기)으로 (이유를 알린다)
       console.error('[doc-window]', err?.message ?? err);
       const r = openDocTab(tw, p);
@@ -1416,11 +1424,18 @@ async function start() {
   // 탭 창 = 껍데기(tab-window.mjs) + 탭 목록(tabs.mjs) + 홈 뷰(?view=home, 탭 'home') + AI 패널 뷰(?view=panel).
   // 편집 탭 뷰는 editor-window가 만들고 정리한다 (hostFor로 이 탭 창 껍데기를 받는다). 문서 탭 뷰(?view=doc)는 여기서
 
-  /** 마지막으로 초점 받은 살아 있는 탭 창 (없으면 아무 탭 창, 하나도 없으면 null) */
+  /** 닫는 중(확인 대화상자 포함)이 아닌 살아 있는 탭 창인가. 닫는 창에는 탭을 더하지 않고 지연 탭도 불러오지 않는다 */
+  const liveTw = (tw) => !!tw && tabWindows.has(tw.shell.id) && !tw.gone && !tw.shutting;
+  /** 마지막으로 초점 받은 살아 있는 탭 창 (없으면 아무 살아 있는 탭 창, 하나도 없으면 null). 닫는 중인 창은 건너뛴다 */
   const recentWindow = () => {
-    for (const id of windowOrder) { const tw = tabWindows.get(id); if (tw) return tw; }
-    return tabWindows.values().next().value ?? null;
+    for (const id of windowOrder) { const tw = tabWindows.get(id); if (liveTw(tw)) return tw; }
+    for (const tw of tabWindows.values()) if (liveTw(tw)) return tw;
+    return null;
   };
+  /** 새 탭을 둘 탭 창: 최근 탭 창, 없으면 새 탭 창. 끝내는 중이면 만들지 않고 null (새 창이 끝내기를 막지 않게) */
+  const hostWindow = () => recentWindow() ?? (appQuitting ? null : createTabWindowFor({ bounds: initialBounds() }));
+  /** 열기를 그만둔다: 정한 탭 창이 닫혔거나, 바꿀 탭이 없어졌거나, 끝내는 중 (알리지 않는다) */
+  const openAborted = () => fail('탭 창을 닫는 중이라 열지 않았어요', 'OPEN_ABORTED');
   /** 그 허브(없으면 최근 탭 창)의 대화상자 부모 창 (판정 12) */
   const winOf = (hub) => ((hub?.tw && tabWindows.has(hub.tw.shell.id) ? hub.tw : recentWindow())?.shell.dialogParent() ?? undefined);
   const twOfWin = (w) => [...tabWindows.values()].find((tw) => tw.shell.win === w) ?? null;
@@ -1505,8 +1520,8 @@ async function start() {
     // 마지막 창을 닫아 세션을 확정한 뒤에도 앱이 살아 있어 새 탭 창이 열리면 세션을 다시 이어 적는다
     if (first && !appQuitting) {
       // 창을 다 닫은 뒤(확정한 뒤) 탐색기에서 다시 연 창은 탐색기 시작 세션으로 이어 적는다 (다음 끝내기가 지난 세션을 덮지 않게)
-      sessionHooks.resume(quitClosed.length ? { explorer: true } : undefined);
-      for (const id of quitClosed.splice(0)) sessionHooks.removeWindow(id);
+      sessionCall('resume', quitClosed.length ? { explorer: true } : undefined);
+      for (const id of quitClosed.splice(0)) sessionCall('removeWindow', id);
     }
     windowOrder.unshift(shell.id);
     viewRecs.set(shell.tabstrip.webContents, { kinds: ['tabstrip'], tw, role: 'tabstrip' });
@@ -1576,9 +1591,15 @@ async function start() {
     tw.shell.setTitle(titleOfTab(tw, t));
     sendTabs(tw);
     pushTarget(tw);
-    // 아직 불러오지 않은 탭(지난 세션 복원, D2)은 처음 보일 때 불러온다
-    if (t.loaded === false) void loadLazy(tw, t.id);
+    // 아직 불러오지 않은 탭(지난 세션 복원, D2)은 처음 보일 때 불러온다. 닫는 중인 창·끝내는 중에는 불러오지 않는다
+    if (t.loaded === false && liveTw(tw) && !appQuitting) void loadLazy(tw, t.id);
     return t;
+  }
+
+  /** 닫기·끝내기를 취소한 뒤: 활성 탭이 아직 불러오지 않은 탭이면 이제 불러온다 */
+  function wakeActive(tw) {
+    const a = tw?.tabs.active;
+    if (a?.loaded === false && liveTw(tw) && !appQuitting) void loadLazy(tw, a.id);
   }
 
   /** 탭 하나를 목록에서 뺀다 (활성 탭이었으면 이웃 탭으로) */
@@ -1615,8 +1636,10 @@ async function start() {
     t = tw.tabs.get(id);
     if (!t) return true;
     if (t.type === 'doc') { closeDocTab(tw, id); return true; }
-    const r = editors ? await editors.close(t.path) : null;
-    // 편집 뷰가 이미 없으면 탭만 뺀다
+    let r = editors ? await editors.close(t.path) : null;
+    // 지연 탭을 불러오는 중이면 기다리는 사이 편집 뷰가 막 붙었을 수 있다 → 그 뷰도 닫는다 (탭 없는 뷰를 남기지 않게)
+    if (r === null && editors?.isOpen(t.path) && tw.tabs.get(id)) r = await editors.close(t.path);
+    // 편집 뷰가 이미 없으면 탭만 뺀다 (불러오는 중인 열기는 탭이 없어 그만둔다)
     if (r === null) removeTab(tw, id);
     return r !== false;
   }
@@ -1641,6 +1664,21 @@ async function start() {
       const nw = createTabWindowFor({ bounds: { ...b, x: b.x + 30, y: b.y + 30 } });
       nw.shell.win.focus?.();
     }
+  }
+
+  /**
+   * 편집 탭 안의 탭 단축키(editor-window onTabCommand). 닫기(Ctrl+W·편집 화면의 닫기)는 그 편집 탭을 탭 닫기로
+   * (AI 작업 중 확인 D17 → 저장 확인). 탭을 못 찾으면 편집 창 닫기만
+   */
+  function editorTabCommand(p, cmd) {
+    if (cmd?.cmd === 'close') {
+      const hit = findEditorTab(p);
+      const job = hit ? closeTab(hit.tw, hit.tab.id) : editors?.close(p);
+      void Promise.resolve(job).catch((err) => console.error('[tabs] 탭 닫기:', err?.message ?? err));
+      return;
+    }
+    const hit = findTab(p);
+    if (hit) runTabCommand(hit.tw, cmd);
   }
 
   /** 홈·문서 탭·패널·탭 줄 뷰의 키 입력: 탭 단축키면 가로채 그 탭 창에서 실행 */
@@ -1719,7 +1757,7 @@ async function start() {
     if (lazyLoads.has(id)) return lazyLoads.get(id);
     const job = (async () => {
       const t = tw.tabs.get(id);
-      if (!t || t.loaded !== false || !tabWindows.has(tw.shell.id)) return;
+      if (!t || t.loaded !== false || !liveTw(tw) || appQuitting) return;
       const src = t.convertedFrom ?? t.path;
       if (!src || !existsSync(src)) {
         removeTab(tw, id);
@@ -1755,6 +1793,8 @@ async function start() {
           await openEditorTab(tw, src, { replaceId: id, onlyIfActive: true });
         }
       } catch (err) {
+        // 불러오는 사이 탭·창을 닫았으면 조용히 그만둔다 (다른 창에 붙이지 않는다)
+        if (err?.code === 'OPEN_ABORTED') return;
         if (!err?.expected) console.error('[restore]', err);
         const left = tw.tabs.get(id);
         if (!tabWindows.has(tw.shell.id)) return;
@@ -1786,7 +1826,11 @@ async function start() {
   /** editor-window의 hostFor: 편집 뷰를 붙일 탭 창 껍데기. 탭을 더하거나 문서 탭을 같은 자리에서 바꾼다 (판정 7) */
   function editorHostFor(info) {
     const pl = placings.get(docKey(info.path)) ?? null;
-    const tw = (pl && tabWindows.has(pl.tw.shell.id) ? pl.tw : null) ?? recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
+    // 이 열기가 정한 탭 창이 닫혔거나 닫는 중이면, 또는 바꿀 탭이 없어졌으면(불러오는 사이 닫음) 다른 창으로 옮기지 않고 그만둔다
+    // (편집 창은 뷰를 만들기 전에 던진 것을 받아 entry를 지운다)
+    if (pl?.tw && (!liveTw(pl.tw) || (pl.replaceId && !pl.tw.tabs.get(pl.replaceId)))) throw openAborted();
+    const tw = pl?.tw ?? hostWindow();
+    if (!tw) throw openAborted();
     const convertedFrom = info.convertedFrom ?? null;
     const tab = { type: 'editor', path: info.path, convertedFrom, title: basename(convertedFrom ?? info.path) };
     let t;
@@ -1795,7 +1839,8 @@ async function start() {
     if (was && (was.type === 'doc' || was.loaded === false)) {
       const old = pl.replaceId;
       const view = tw.docViews.get(old);
-      t = tw.tabs.replace(old, tab);
+      // 지연 탭은 id를 그대로 둔다 (불러오는 사이 그 탭을 닫거나 고르면 같은 탭으로 찾게)
+      t = tw.tabs.replace(old, was.loaded === false ? { ...tab, id: old } : tab);
       tw.titles.delete(old);
       tw.docViews.delete(old);
       if (view) { try { tw.shell.detach(view); } catch {} closeWc(view.webContents); }
@@ -1913,7 +1958,8 @@ async function start() {
       if (!SMOKE) { try { settings.addRecent(hit.tab.path); } catch {} }
       return { tabId: hit.tab.id, mode: 'reused', path: hit.tab.path, reused: true, editor: editorState(hit.tab.path), notice: null };
     }
-    tw = tw && tabWindows.has(tw.shell.id) ? tw : recentWindow() ?? createTabWindowFor({ bounds: initialBounds() });
+    tw = liveTw(tw) ? tw : hostWindow();
+    if (!tw) throw openAborted();
     // 인터넷에서 받은 Office 문서는 설정과 상관없이 보기 전용 문서 탭 (D5)
     if (zone3Office(p)) return openDocTab(tw, p, { activate });
     if (wantsEditor(p)) {
@@ -1921,6 +1967,7 @@ async function start() {
         editorCheck(p);
         return await openEditorTab(tw, p);
       } catch (err) {
+        if (err?.code === 'OPEN_ABORTED') throw err;
         // 편집 탭으로 못 열면 문서 탭으로. 편집기 묶음이 없는 것은 조용히 (예전 화면의 autoEdit와 같게), 나머지는 이유를 알린다
         if (!err?.expected) console.error('[open]', err);
         const r = openDocTab(tw, p, { activate });
@@ -1942,9 +1989,15 @@ async function start() {
     return [...out.values()];
   }
 
-  /** AI 작업 중 확인 (D17): '멈추고 닫기'면 그 문서들의 대화를 멈추고(숨은 Office 정리 포함) true, '취소'면 false. 고치는 문서가 없으면 묻지 않고 true */
-  async function confirmStopAi(parent, edits, { tab = false } = {}) {
-    if (!edits.length) return true;
+  /** 그 탭 창 AI 패널이 시작한 진행 중 대화 (재료만 읽는 대화 포함) */
+  const chatsOwnedBy = (tw) => [...chats.values()].filter((c) => !!c.ownerWc && c.ownerWc === tw?.panel?.webContents);
+
+  /**
+   * AI 작업 중 확인 (D17): '멈추고 닫기'면 그 문서들의 대화와 extra 대화(창·끝내기: 재료만 읽는 대화도)를 멈추고(숨은 Office 정리 포함) true,
+   * '취소'면 false. 고치는 문서도 멈출 대화도 없으면 묻지 않고 true
+   */
+  async function confirmStopAi(parent, edits, { tab = false, chats: extra = [] } = {}) {
+    if (!edits.length && !extra.length) return true;
     const { response } = await dialog.showMessageBox(parent ?? undefined, {
       type: 'warning',
       message: tab ? 'AI가 이 문서를 고치는 중입니다.' : 'AI 작업 중인 문서가 있습니다.',
@@ -1952,10 +2005,15 @@ async function start() {
       buttons: ['멈추고 닫기', '취소'], defaultId: 1, cancelId: 1, noLink: true,
     });
     if (response !== 0) return false;
-    const stopped = await Promise.all(edits.map((p) => stopChatsFor(p)));
+    const stopped = await Promise.all([...edits.map((p) => stopChatsFor(p)), stopChatList(extra)]);
     // 시간 안에 안 끝난 대화는 대화의 마무리(finally)가 정리한다. 닫기는 그대로 한다
     if (stopped.some((n) => n < 0)) console.warn('[ai] 닫기 전에 AI 대화가 다 멈추지 않았습니다');
     return true;
+  }
+
+  /** 세션 쓰기(확정·이어 적기·창 빼기): 설정 파일을 못 써서 던져도 창 닫기·끝내기를 막지 않는다 (알리지 않고 기록만) */
+  function sessionCall(name, ...args) {
+    try { sessionHooks[name](...args); } catch (err) { console.error(`[session] ${name} 실패:`, err?.message ?? err); }
   }
 
   // 세션을 확정한 뒤에 닫힌 탭 창 (끝내기 중에 닫힌 창·마지막 창). 다시 이어 적을 때(끝내기 취소·새 탭 창) 세션에서 뺀다
@@ -1964,16 +2022,18 @@ async function start() {
   function cancelQuit() {
     if (!appQuitting) return;
     appQuitting = false;
-    sessionHooks.resume();
-    for (const id of quitClosed.splice(0)) sessionHooks.removeWindow(id);
+    sessionCall('resume');
+    for (const id of quitClosed.splice(0)) sessionCall('removeWindow', id);
+    for (const tw of tabWindows.values()) wakeActive(tw);
   }
 
   /** 끝내기 차례: 세션 확정 → AI 작업 중이면 한 번 묻고 → 최근 탭 창부터 차례로 닫는다. 하나라도 취소하면 false (남은 창·탭은 그대로) */
   async function quitInOrder() {
-    sessionHooks.finalize();
+    sessionCall('finalize');
     const order = [...new Set([...windowOrder.map((id) => tabWindows.get(id)).filter(Boolean), ...tabWindows.values()])];
     const edits = aiEditsIn(order.flatMap((tw) => tw.tabs.tabs.map((t) => t.path)));
-    if (!(await confirmStopAi(recentWindow()?.shell.win, edits))) return false;
+    // 끝내면 패널이 모두 사라지므로 재료만 읽는 대화도 함께 묻고 멈춘다
+    if (!(await confirmStopAi(recentWindow()?.shell.win, edits, { chats: [...chats.values()] }))) return false;
     for (const tw of order) {
       if (!tabWindows.has(tw.shell.id)) continue;
       if (!(await closeWindow(tw, { aiAsked: true }))) return false;
@@ -1987,10 +2047,13 @@ async function start() {
    */
   function closeWindow(tw, { aiAsked = false } = {}) {
     if (tw.closing) return tw.closing;
+    // 닫는 동안(확인 대화상자 포함) 이 창에는 새 탭을 붙이지 않고, 이웃 탭이 활성이 되어도 지연 탭을 불러오지 않는다
+    tw.shutting = true;
     tw.closing = (async () => {
       if (!aiAsked) {
         const all = tw.tabs.tabs.map((t) => t.path);
-        if (!(await confirmStopAi(tw.shell.win, aiEditsIn(all)))) return false;
+        // 이 창 패널이 시작한 대화(재료만 읽는 것도)는 창과 함께 사라지므로 같이 묻는다
+        if (!(await confirmStopAi(tw.shell.win, aiEditsIn(all), { chats: chatsOwnedBy(tw) }))) return false;
       }
       const paths = tw.tabs.tabs.filter((t) => t.type === 'editor' && t.path).map((t) => t.path);
       // 닫는 동안 탭이 하나씩 빠져도 세션에는 닫기 전 탭 목록을 둔다 (마지막 창이면 그대로 확정한다). 취소하면 남은 탭으로 다시 적는다
@@ -1998,13 +2061,17 @@ async function start() {
       let closed;
       try { closed = !editors || (await editors.closeMany(paths)); } finally { tw.holdSession = false; }
       if (!closed) { tw.record(); return false; }
+      // 닫는 사이 늦게 붙은 편집 탭(탐색기에서 연 것 등)은 이 창과 함께 닫는다 (안 그러면 편집 창 entry만 남는다)
+      try { editors?.closeHostedBy?.(tw.shell); } catch (err) { console.error('[tabs] 남은 편집 탭 닫기:', err?.message ?? err); }
+      // 이 창 패널의 대화는 패널과 함께 멈춘다 (확인 뒤 새로 시작한 것까지)
+      for (const c of chatsOwnedBy(tw)) { try { c.handle.cancel(); } catch {} }
       // 세션: 끝내기 중이면 이미 확정했다 (끝내기를 취소하면 그때 빼도록 적어 둔다 — 차례 중 사용자가 X로 닫은 창도).
       // 아니면 다른 탭 창이 남을 때 이 창만 빼고, 마지막 창이면 빼기 전에(창이 살아 있을 때) 확정한다 — 아니면 지난 세션이 빈 목록이 된다
       tw.gone = true;
       if (appQuitting) quitClosed.push(tw.shell.id);
       else {
         const last = [...tabWindows.keys()].every((id) => id === tw.shell.id);
-        if (last) { sessionHooks.finalize(); quitClosed.push(tw.shell.id); } else sessionHooks.removeWindow(tw.shell.id);
+        if (last) { sessionCall('finalize'); quitClosed.push(tw.shell.id); } else sessionCall('removeWindow', tw.shell.id);
       }
       const w = tw.shell.win;
       if (!SMOKE && w && !w.isDestroyed()) {
@@ -2018,7 +2085,11 @@ async function start() {
       tw.docViews.clear();
       tw.shell.destroy();
       return true;
-    })().finally(() => { tw.closing = null; });
+    })().finally(() => {
+      tw.closing = null;
+      // 취소했으면 다시 열린 창으로 (활성 탭이 지연 탭이면 이제 불러온다)
+      if (!tw.gone) { tw.shutting = false; wakeActive(tw); }
+    });
     return tw.closing;
   }
 
@@ -2128,7 +2199,11 @@ async function start() {
     const edit = canEdit(uiPath) ? uiPath : null;
     const want = target && typeof target === 'object' ? target : {};
     // 화면이 보던 고칠 문서와 지금 문서가 다르면 (보내는 사이 문서가 바뀜) 엉뚱한 문서를 고치지 않게 거절
-    if (typeof want.edit === 'string' && key(want.edit) !== key(edit ?? '')) throw fail('대화 대상이 바뀌었어요. 다시 보내 주세요.', 'TARGET_CHANGED');
+    // 화면이 재료만 보내기(edit:null)였는데 지금 문서를 고칠 수 있게 됐어도 거절한다 (고칠 권한을 주지 않게) — target이 있으면 늘 비교
+    if (target && typeof target === 'object') {
+      const wantEdit = typeof want.edit === 'string' ? want.edit : '';
+      if ((wantEdit ? key(wantEdit) : '') !== (edit ? key(edit) : '')) throw fail('대화 대상이 바뀌었어요. 다시 보내 주세요.', 'TARGET_CHANGED');
+    }
     const seen = new Set(edit ? [key(edit)] : []);
     let read = [];
     for (const p of Array.isArray(want.read) ? want.read : []) {
@@ -2180,7 +2255,8 @@ async function start() {
         out = dirname(read[0]);
       }
     }
-    const zone3Keys = read.filter((p) => core.isFromInternet(p)).map(key);
+    // 인터넷에서 받은 파일: 재료와 고칠 문서 자체(인터넷에서 받은 한글 문서 등) 모두 (D15 — 폴더 읽기 없이 파일 단위)
+    const zone3Keys = [...(edit && core.isFromInternet(edit) ? [edit] : []), ...read.filter((p) => core.isFromInternet(p))].map(key);
     const zone3 = zone3Keys.length > 0;
     const gen = restoreGen.get(k) ?? 0;
     const ai = await loadAi();
@@ -2193,7 +2269,7 @@ async function start() {
     checkBusy();
     // 지난 대화에 넘긴 인터넷 재료가 이번에 빠졌으면 이어 하지 않는다 (그 내용이 대화 기록에 남아 있으므로 새 대화)
     let newChat = false;
-    const keep = new Set(read.map(key));
+    const keep = new Set([...(edit ? [edit] : []), ...read].map(key));
     if ((sessionZone3.get(k) ?? []).some((z) => !keep.has(z)) && sessions.has(k)) {
       sessions.delete(k);
       newChat = true;
@@ -3172,6 +3248,8 @@ async function start() {
     keeper?.stop();
     for (const hub of allHubs()) stopWatch(hub);
     for (const c of chats.values()) { try { c.handle.cancel(); } catch {} }
+    // 멈춘 대화의 마무리(finally)를 기다리지 않고 끝나므로, 대화가 띄운 숨은 Office를 지금 끝낸다
+    for (const c of chats.values()) killChatOffice(c.pidDir);
     // 창이 다 닫힌 뒤 미리보기 PDF(문서 사본)를 지운다. 못 지운 것은 다음 시작 때 지운다
     cleanPreviews(null);
     cleanPrintCopies({ all: true });
