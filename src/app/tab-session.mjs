@@ -53,6 +53,14 @@ export function createSessionKeeper({ settings, explorer = false, delayMs = SESS
       closing = false;
       schedule();
     },
+    /**
+     * 탐색기 시작 세션을 평소 세션으로 (지난 탭 다시 열기·언어 바꿔 다시 시작): 다음 확정이 지난 세션(lastTabSession)도 쓴다.
+     * 안 그러면 지금 탭들이 지난 세션에 남지 않아 다시 시작할 때 사라진다
+     */
+    asNormal() {
+      explorer = false;
+      if (!closing) schedule();
+    },
     /** 앱이 정말 끝날 때: 미뤄 둔 쓰기를 버리고 더 적지 않는다 (확정은 하지 않는다) */
     stop() {
       cancel();
@@ -69,9 +77,13 @@ export function promoteCrashed(settings) {
   return true;
 }
 
+/** 네트워크 경로(\\서버\공유, //서버/공유): 있는지 보는 데 오래 걸릴 수 있다 (시작을 막는다) */
+const isUncPath = (p) => typeof p === 'string' && /^(\\\\|\/\/)/.test(p);
+
 /**
  * 저장된 세션 → 복원 계획. 없는 파일 탭은 빼고 missing에 모은다.
- * 바꿔 연 탭(convertedFrom)의 path는 시작 때 지우는 임시 사본이므로 원본으로 판정하고, path도 원본으로 바꾼다 (열 때 다시 바꾼다)
+ * 바꿔 연 탭(convertedFrom)의 path는 시작 때 지우는 임시 사본이므로 원본으로 판정하고, path도 원본으로 바꾼다 (열 때 다시 바꾼다).
+ * 네트워크 경로(UNC)는 있는지 보지 않고 남긴다 — 시작을 막지 않게, 불러올 때 확인한다 (없으면 그때 탭을 닫고 알린다)
  */
 export function restorePlan(session, { exists = existsSync } = {}) {
   const empty = () => ({ windows: [], missing: [] });
@@ -83,7 +95,7 @@ export function restorePlan(session, { exists = existsSync } = {}) {
     const tabs = Array.isArray(w.tabs) ? w.tabs : [];
     const keep = tabs.map((t) => {
       const src = t?.convertedFrom || t?.path;
-      const ok = !src || exists(src);
+      const ok = !src || isUncPath(src) || exists(src);
       if (!ok) missing.push(src);
       return ok;
     });

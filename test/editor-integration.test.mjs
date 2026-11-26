@@ -1721,6 +1721,13 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.deepEqual(list().tabs.map((x) => [x.type, x.path && basename(x.path)]), [['home', null], ['doc', '지난 세션.pdf']]);
     assert.equal((await callAs('home', 'session:info')).value.hasLast, false, '한 번 열면 단추를 감춘다');
     assert.deepEqual(readS().lastTabSession, lastSession);
+    // 지난 세션을 다시 열었으면 평소 세션이 된다: 다음 확정이 지금 탭들을 지난 세션으로 쓴다 (RT3 — 안 그러면 다시 시작할 때 탭을 잃는다)
+    assert.ok(await until(() => readS().tabSession?.explorer === false, 3000), '평소 세션으로 다시 적는다');
+    mainMod.sessionHooks.finalize();
+    assert.equal(readS().lastTabSession.finalized, true);
+    assert.equal(readS().lastTabSession.explorer, false);
+    assert.ok(readS().lastTabSession.windows.some((x) => x.tabs.some((y) => sameFile(y.path, lastPdf))), '지금 탭들이 지난 세션');
+    mainMod.sessionHooks.resume();
     win.close();
     assert.ok(await until(() => win.isDestroyed()));
     tw0.emit('focus');

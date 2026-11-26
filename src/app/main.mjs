@@ -45,7 +45,7 @@ if (SMOKE) app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinO
 // 앱은 인터넷에 Chromium 네트워크를 쓰지 않는다 (AI·MCP는 자식 프로세스, 주 창 CSP connect-src 'none', 링크는 기본 브라우저로).
 // 편집기 서버 주소(127.0.0.1~3)는 빼야 한다 — 빼지 않으면 편집 창이 뜨지 않는다
 // 세션 연결(Task 11)이 채울 자리: 마지막 탭 창 닫기·끝내기 전 확정, 끝내기 취소 뒤 다시 이어 적기, 탭 창 하나 빼기
-export const sessionHooks = { finalize() {}, resume() {}, removeWindow(_id) {} };
+export const sessionHooks = { finalize() {}, resume() {}, removeWindow(_id) {}, asNormal() {} };
 export const HOST_RESOLVER_RULES = 'MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE 127.0.0.2, EXCLUDE 127.0.0.3';
 app.commandLine.appendSwitch('host-resolver-rules', HOST_RESOLVER_RULES);
 
@@ -1415,7 +1415,7 @@ async function start() {
       console.error('[doc-window]', err?.message ?? err);
       const r = openDocTab(tw, p);
       const hub = hubOf(tw.docViews.get(r.tabId)?.webContents);
-      setTimeout(() => sendTo(hub?.wc, 'toast', { type: 'warn', message: err?.message ?? String(err) }), 400);
+      toastView(hub, err?.message ?? String(err));
       return { tabId: r.tabId, mode: 'doc' };
     }
   }
@@ -1802,7 +1802,7 @@ async function start() {
         if (!asDoc()) return;
         if (err?.code !== 'EDITOR_MISSING') {
           const hub = hubOf(tw.docViews.get(id)?.webContents);
-          setTimeout(() => sendTo(hub?.wc, 'toast', { type: 'warn', message: err?.message ?? String(err) }), 400);
+          toastView(hub, err?.message ?? String(err));
         }
       }
     })().catch((err) => console.error('[restore] 탭을 불러오지 못했습니다:', err)).finally(() => {
@@ -1973,7 +1973,7 @@ async function start() {
         const r = openDocTab(tw, p, { activate });
         if (err?.code !== 'EDITOR_MISSING') {
           const hub = hubOf(tw.docViews.get(r.tabId)?.webContents);
-          setTimeout(() => sendTo(hub?.wc, 'toast', { type: 'warn', message: err?.message ?? String(err) }), 400);
+          toastView(hub, err?.message ?? String(err));
         }
         return r;
       }
@@ -2650,6 +2650,8 @@ async function start() {
   handle('app:relaunch', () => {
     if (SMOKE) return null;
     const args = process.argv.slice(1).filter((a) => { try { return !(isAbsolute(a) && statSync(a).isFile()); } catch { return true; } });
+    // 다시 시작은 평소 시작(지난 세션 복원)이므로, 탐색기 시작 세션이어도 끝낼 때 지금 탭들을 지난 세션으로 남긴다 (RT3)
+    sessionCall('asNormal');
     app.relaunch({ args });
     app.quit();
     return null;
@@ -2689,6 +2691,8 @@ async function start() {
     const plan = lastPlan();
     lastRestored = true;
     const made = openSessionWindows(plan);
+    // 지난 탭을 다시 열었으면 탐색기 시작 세션이 아니라 평소 세션: 끝낼 때 지금 탭들을 지난 세션으로 남긴다 (RT3)
+    sessionCall('asNormal');
     if (plan.missing.length) toastHome(tw, missingText(plan.missing));
     return { windows: made.length };
   });
@@ -3067,19 +3071,23 @@ async function start() {
   const lastPlan = () => restorePlan(settings.get('lastTabSession'));
   const missingText = (paths) => `찾을 수 없어 열지 못한 문서: ${paths.map((p) => basename(p)).join(', ')}`;
 
-  /** 그 탭 창 홈 뷰에 알림. 홈 화면이 아직 준비 전(app:init 전)이면 준비되면 보낸다 */
-  function toastHome(tw, message, type = 'warn') {
-    const hub = hubOf(tw?.home?.webContents);
-    if (!hub) return;
+  /** 그 허브의 화면(홈·문서 탭)에 알림. 화면이 아직 준비 전(app:init 전 — 막 만든 문서 탭 등)이면 준비되면 보낸다 */
+  function toastView(hub, message, type = 'warn') {
+    if (!hub || hub.wc?.isDestroyed?.()) return;
     if (hub.rendererReady) sendTo(hub.wc, 'toast', { type, message });
     else (hub.pendingToasts ??= []).push({ type, message });
+  }
+
+  /** 그 탭 창 홈 뷰에 알림 (준비 전이면 준비되면) */
+  function toastHome(tw, message, type = 'warn') {
+    toastView(hubOf(tw?.home?.webContents), message, type);
   }
 
   /**
    * 세션 창들을 연다: 창마다 탭 창(세션의 자리·최대화)을 만들고 탭은 불러오지 않은 채(loaded:false) 넣은 뒤 활성 탭만 불러온다 (D2).
    * 이미 열린 문서는 건너뛴다. 넣을 탭이 없는 창은 keepEmpty일 때만 만든다 → 만든 탭 창들
    */
-  function openSessionWindows(plan, { keepEmpty = false } = {}) {
+  function openSessionWindows(plan, { keepEmpty = false, homeFirst = false } = {}) {
     const made = [];
     for (const w of plan.windows) {
       const want = w.active > 0 ? w.tabs[w.active - 1] : null;
@@ -3096,7 +3104,8 @@ async function start() {
         if (t === want) activeId = added.id;
       }
       made.push(tw);
-      activateTab(tw, activeId);
+      // homeFirst(강제 종료 뒤 올린 세션): 활성 탭도 불러오지 않고 홈을 보인다 — 앱을 죽이는 문서가 시작마다 다시 열리지 않게 (F7)
+      activateTab(tw, homeFirst ? 'home' : activeId);
     }
     return made;
   }
@@ -3212,7 +3221,7 @@ async function start() {
   const startFile = fileFromArgv(process.argv);
   const explorerStart = !!startFile;
   const keeper = SMOKE ? null : createSessionKeeper({ settings, explorer: explorerStart });
-  if (keeper) Object.assign(sessionHooks, { finalize: () => keeper.finalize(), resume: (opts) => keeper.resume(opts), removeWindow: (id) => keeper.remove(id) });
+  if (keeper) Object.assign(sessionHooks, { finalize: () => keeper.finalize(), resume: (opts) => keeper.resume(opts), removeWindow: (id) => keeper.remove(id), asNormal: () => keeper.asNormal() });
   // 탐색기 시작 세션의 홈 '지난 탭 다시 열기'를 이미 눌렀는가 (한 번만)
   let lastRestored = false;
   queueOpen(startFile);
@@ -3279,10 +3288,11 @@ async function start() {
   buildMenu();
   const savedWin = SMOKE ? null : settings.get('window');
   // 강제 종료로 확정 못 한 평소 세션은 지난 세션으로 올린다 (탐색기 시작이어도: '지난 탭 다시 열기'가 연다)
-  if (!SMOKE) { try { promoteCrashed(settings); } catch (err) { console.error('[session] 지난 세션 올리기 실패:', err?.message ?? err); } }
+  let crashed = false;
+  if (!SMOKE) { try { crashed = promoteCrashed(settings); } catch (err) { console.error('[session] 지난 세션 올리기 실패:', err?.message ?? err); } }
   // 평소 시작: 지난 세션 자동 복원 (활성 탭만 불러온다, D2·D4). 탐색기 시작: 홈 + 그 문서 (줄에 선 파일을 연다)
   const plan = SMOKE || explorerStart ? { windows: [], missing: [] } : lastPlan();
-  const made = openSessionWindows(plan, { keepEmpty: true });
+  const made = openSessionWindows(plan, { keepEmpty: true, homeFirst: crashed });
   if (!made.length) createTabWindowFor({ bounds: initialBounds(), maximized: !!savedWin?.maximized });
   if (plan.missing.length) toastHome(made[0] ?? recentWindow(), missingText(plan.missing));
   made[0]?.shell.win.focus?.();

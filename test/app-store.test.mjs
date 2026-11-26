@@ -389,8 +389,9 @@ test('previewFiles: keep 목록 문서마다 가장 새 PDF를 남긴다 (여러
   assert.equal(existsSync(b1.file), true, 'b의 PDF는 남긴다');
   assert.equal(existsSync(a1.file), false, 'a의 옛 PDF는 지운다');
   assert.equal(existsSync(c1.file), false, '열려 있지 않은 c의 PDF는 지운다');
-  assert.equal(existsSync(stray), false, '주인 모를 파일은 지운다');
-  assert.equal(readdirSync(dir).length, 2);
+  assert.equal(existsSync(stray), true, '주인 모를 파일은 실행 중에는 지우지 않는다 (다른 탭이 만드는 중일 수 있다) — 의도한 변경 (F3)');
+  assert.equal(readdirSync(dir).length, 3);
+  rmSync(stray);
   // 새 미리보기를 놓을 때도 keep 문서들의 PDF는 남긴다 (자기 문서는 늘 남긴다)
   const b2 = files.settle(raw(b), b, { keep: [a] });
   assert.ok(b2 && existsSync(b2.file));
@@ -403,5 +404,24 @@ test('previewFiles: keep 목록 문서마다 가장 새 PDF를 남긴다 (여러
   }
   files.clean(null);
   assert.deepEqual(readdirSync(dir), [], 'null이면 모두 지운다');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('previewFiles: 다른 탭이 만드는 중인 PDF(주인 없음)는 실행 중 정리에서 지우지 않고, 시작·끝낼 때(null)만 지운다 (F3)', () => {
+  const dir = tmp();
+  const files = createPreviewFiles(dir);
+  const a = 'C:\\Users\\user\\문서\\가.docx';
+  // 다른 탭이 미리보기 PDF를 만드는 중 (아직 settle 전 — 주인을 모른다)
+  const producing = join(dir, '나.docx.7.pdf');
+  writeFileSync(producing, '%PDF-half');
+  const raw = join(dir, '가.docx.8.pdf');
+  writeFileSync(raw, '%PDF-A');
+  const pdf = files.settle(raw, a);
+  assert.ok(pdf && existsSync(pdf.file));
+  assert.equal(existsSync(producing), true, '만드는 중인 PDF는 남긴다');
+  files.clean([a]);
+  assert.equal(existsSync(producing), true, '실행 중 정리도 주인 있는 것만 지운다');
+  files.clean(null);
+  assert.deepEqual(readdirSync(dir), [], '시작·끝낼 때는 남은 것까지 모두 지운다');
   rmSync(dir, { recursive: true, force: true });
 });

@@ -165,3 +165,30 @@ test('restorePlan: 버전이 다르거나 모양이 틀리면 빈 계획', () =>
   assert.deepEqual(restorePlan({ v: 2, windows: [] }), empty);
   assert.deepEqual(restorePlan({ v: 1, windows: 'x' }), empty);
 });
+
+test('restorePlan: 네트워크 경로(UNC)는 있는지 보지 않고 지연 탭으로 남긴다 (F4)', () => {
+  const seen = [];
+  const exists = (p) => { seen.push(p); return p !== 'C:\\없음.pdf'; };
+  const s = { v: 1, windows: [{ active: 2, tabs: [
+    { type: 'doc', path: '\\\\server\\share\\보고서.pdf' },
+    { type: 'editor', path: '//server/share/표.xlsx' },
+    { type: 'doc', path: 'C:\\없음.pdf' },
+  ] }] };
+  const plan = restorePlan(s, { exists });
+  assert.deepEqual(seen, ['C:\\없음.pdf'], 'UNC 경로는 exists를 부르지 않는다');
+  assert.deepEqual(plan.windows[0].tabs.map((t) => t.path), ['\\\\server\\share\\보고서.pdf', '//server/share/표.xlsx']);
+  assert.deepEqual(plan.missing, ['C:\\없음.pdf']);
+  assert.equal(plan.windows[0].active, 2);
+});
+
+test('asNormal: 탐색기 시작 세션을 평소 세션으로 — 다음 확정이 지난 세션도 쓴다 (RT3)', () => {
+  const { settings, timers, keeper } = mk({ explorer: true, data: { lastTabSession: { v: 1, at: 1, windows: [] } } });
+  keeper.update(1, win());
+  keeper.asNormal();
+  timers.run();
+  assert.equal(settings.data.tabSession.explorer, false, '다시 적는 세션도 평소 세션');
+  keeper.finalize();
+  assert.equal(settings.data.lastTabSession.finalized, true);
+  assert.equal(settings.data.lastTabSession.windows.length, 1, '지금 탭들이 지난 세션이 된다');
+  assert.deepEqual(settings.data.lastTabSession, settings.data.tabSession);
+});

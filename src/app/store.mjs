@@ -290,15 +290,17 @@ export const PREVIEW_CACHE_VERSION = 2;
 
 /**
  * 미리보기 폴더(userData/preview) 정리. 열려 있는 문서(여러 탭·창)마다 가장 새 미리보기 PDF 하나만 남기고 나머지는 지운다.
- * 어느 PDF가 어느 문서 몫인지는 이번 실행에서 놓은 것만 안다 (주인 모를 파일 = 지난 실행의 남은 것 → 지운다)
+ * 어느 PDF가 어느 문서 몫인지는 이번 실행에서 놓은 것만 안다. 주인 모를 파일은 지난 실행의 남은 것이거나
+ * 다른 탭이 지금 만드는 중인 PDF일 수 있으므로, 실행 중에는 두고 시작·끝낼 때(clean(null))만 지운다
  */
 export function createPreviewFiles(dir) {
   const docKeyOf = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
   // 놓은 PDF(폴더, 옮기지 못했으면 파일) 경로 → { doc: 문서 키, seq: 놓은 차례 }
   const owners = new Map();
 
-  /** keep: 남길 문서 경로들 (그 문서마다 가장 새 PDF만 남김). null이면 모두 지운다 */
+  /** keep: 남길 문서 경로들 (그 문서마다 가장 새 PDF만 남김, 주인 모를 파일은 그대로). null이면 남은 것까지 모두 지운다 */
   function clean(keep) {
+    const all = keep == null;
     const want = new Set((keep ?? []).filter(Boolean).map(docKeyOf));
     // 문서마다 가장 새 것
     const newest = new Map();
@@ -312,6 +314,7 @@ export function createPreviewFiles(dir) {
       for (const f of readdirSync(dir)) {
         const full = join(dir, f);
         if ([...keepFull].some((k) => samePath(full, k))) continue;
+        if (!all && ![...owners.keys()].some((k) => samePath(full, k))) continue;
         try {
           rmSync(full, { recursive: true, force: true });
           owners.delete(full);
