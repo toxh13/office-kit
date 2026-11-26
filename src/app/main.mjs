@@ -2682,7 +2682,8 @@ async function start() {
   // 탭 창 스모크가 마지막 창을 닫을 때: 결과를 적기 전에 앱이 끝나지 않게 (window-all-closed)
   let smokeHoldQuit = false;
   if (SMOKE) {
-    const bail = setTimeout(() => { console.error('[smoke] 시간 초과'); app.exit(1); }, 240_000);
+    // 탭 창 스모크는 편집 탭 둘(최대 90초 + 90·90초)·PDF·창 닫기를 차례로 기다리므로 더 길게
+    const bail = setTimeout(() => { console.error('[smoke] 시간 초과'); app.exit(1); }, SMOKE_TABS ? 360_000 : 240_000);
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     /** 뷰 webContents를 찍는다 (탭 창은 BaseWindow라 창 전체가 아니라 뷰 하나씩) */
     async function capture(wc) {
@@ -2869,10 +2870,11 @@ async function start() {
         const view = viewOfTab(tw, t);
         const focused = !!(await until(() => !!view?.webContents?.isFocused?.(), 2000, 100));
         await sleep(300);
+        // 자리는 다시 배치(setPanel → layout)하기 전에 읽는다 — activateTab이 잘못 놓았으면 그대로 드러나게
+        const b = view?.getBounds?.() ?? null;
         const { width: W, height: H } = tw.shell.win.getContentBounds();
         const panel = tw.shell.setPanel();
         const P = panel.collapsed ? 0 : Math.min(panel.width, W);
-        const b = view?.getBounds?.() ?? null;
         const others = tw.tabs.tabs.filter((x) => x.id !== t.id).map((x) => viewOfTab(tw, x)).filter(Boolean);
         out.switches.push({
           id: t.id, type: t.type, visible: !!view?.getVisible?.(), focused,

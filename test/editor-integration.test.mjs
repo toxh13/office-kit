@@ -2339,6 +2339,8 @@ test('스모크 코드: 편집 창을 BrowserWindow 목록으로 찾지 않고, 
   assert.doesNotMatch(smoke, /\bew\.(moveTop|getTitle|webContents)/, '편집 창 대신 탭 창·편집 뷰');
   assert.match(main, /OFFICEKIT_SMOKE_TABS === '1'/);
   assert.match(main, /OFFICEKIT_SMOKE_TABS_FILES/);
+  assert.match(smoke, /SMOKE_TABS \? 360_000 : 240_000/, '탭 스모크 시간 초과 360초');
+  assert.ok(smoke.indexOf('view?.getBounds?.()') < smoke.indexOf('tw.shell.setPanel()'), '자리는 다시 배치하기 전에 읽는다');
   const yml = readFileSync(join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
   const steps = yml.split(/\r?\n(?=      - )/).filter((s) => /name: 탭 창 실제 스모크/.test(s));
   assert.equal(steps.length, 2, 'test 잡(main push)과 release 잡에 하나씩');
@@ -2363,7 +2365,8 @@ function runTabsSmoke(base, files) {
   const env = { ...process.env, OFFICEKIT_SMOKE: png, OFFICEKIT_SMOKE_TABS: '1', OFFICEKIT_SMOKE_TABS_FILES: files.join(';'), OFFICEKIT_USER_DATA: ud };
   delete env.ELECTRON_RUN_AS_NODE;
   for (const k of ['OFFICEKIT_SMOKE_EDITOR', 'OFFICEKIT_EDITOR_VENDOR', 'OFFICEKIT_OFFICE_FONTS_MODULE', 'OFFICEKIT_AI_MODULE']) delete env[k];
-  const r = spawnSync(electronExe, ['.'], { cwd: ROOT, env, encoding: 'utf8', timeout: 230_000 });
+  // 앱의 탭 스모크 시간 초과(360초)보다 길게 — 넘으면 '[smoke] 시간 초과'가 보이게
+  const r = spawnSync(electronExe, ['.'], { cwd: ROOT, env, encoding: 'utf8', timeout: 380_000 });
   const line = (r.stdout ?? '').split(/\r?\n/).find((l) => l.startsWith('[smoke] '));
   assert.ok(line, `${r.stdout}\n${r.stderr}`);
   const info = JSON.parse(line.slice('[smoke] '.length));
