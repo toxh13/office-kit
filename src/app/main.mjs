@@ -1502,7 +1502,8 @@ async function start() {
     tabWindows.set(shell.id, tw);
     // 마지막 창을 닫아 세션을 확정한 뒤에도 앱이 살아 있어 새 탭 창이 열리면 세션을 다시 이어 적는다
     if (first && !appQuitting) {
-      sessionHooks.resume();
+      // 창을 다 닫은 뒤(확정한 뒤) 탐색기에서 다시 연 창은 탐색기 시작 세션으로 이어 적는다 (다음 끝내기가 지난 세션을 덮지 않게)
+      sessionHooks.resume(quitClosed.length ? { explorer: true } : undefined);
       for (const id of quitClosed.splice(0)) sessionHooks.removeWindow(id);
     }
     windowOrder.unshift(shell.id);
@@ -1544,7 +1545,7 @@ async function start() {
   function sendTabs(tw) {
     const panel = tw.shell.setPanel();
     tw.shell.sendTabs({
-      tabs: tw.tabs.tabs.map((t) => ({ id: t.id, type: t.type, title: t.title, path: t.path, dirty: !!t.dirty, loaded: t.loaded !== false, zone3: !!t.zone3, busy: !!t.path && aiBusyFor(t.path) })),
+      tabs: tw.tabs.tabs.map((t) => ({ id: t.id, type: t.type, title: t.title, path: t.path, dirty: !!t.dirty, loaded: t.loaded !== false, loading: lazyLoads.has(t.id), zone3: !!t.zone3, busy: !!t.path && aiBusyFor(t.path) })),
       active: tw.tabs.active?.id ?? null, panelCollapsed: panel.collapsed,
     });
   }
@@ -1742,14 +1743,14 @@ async function start() {
           let tmp;
           try { tmp = await convertForEditing(src, to); } finally { busy.close(); }
           try {
-            await openEditorTab(tw, tmp, { convertedFrom: src, noted: true, replaceId: id });
+            await openEditorTab(tw, tmp, { convertedFrom: src, noted: true, replaceId: id, onlyIfActive: true });
           } catch (err) {
             if (!editors.isOpen(tmp)) { try { rmSync(dirname(tmp), { recursive: true, force: true }); } catch {} }
             throw err;
           }
         } else {
           editorCheck(src);
-          await openEditorTab(tw, src, { replaceId: id });
+          await openEditorTab(tw, src, { replaceId: id, onlyIfActive: true });
         }
       } catch (err) {
         if (!err?.expected) console.error('[restore]', err);
@@ -1762,8 +1763,15 @@ async function start() {
           setTimeout(() => sendTo(hub?.wc, 'toast', { type: 'warn', message: err?.message ?? String(err) }), 400);
         }
       }
-    })().catch((err) => console.error('[restore] 탭을 불러오지 못했습니다:', err)).finally(() => lazyLoads.delete(id));
-    lazyLoads.set(id, job);
+    })().catch((err) => console.error('[restore] 탭을 불러오지 못했습니다:', err)).finally(() => {
+      lazyLoads.delete(id);
+      if (tabWindows.has(tw.shell.id)) sendTabs(tw);
+    });
+    // 불러오는 동안 탭 줄에 '불러오는 중'(aria-busy)을 보인다 (바로 끝났으면 이미 빠졌다)
+    if (tw.tabs.get(id)?.loaded === false) {
+      lazyLoads.set(id, job);
+      sendTabs(tw);
+    }
     return job;
   }
 
@@ -1843,7 +1851,7 @@ async function start() {
    * 편집 탭으로 열기 (이미 열려 있으면 그 탭으로) → { tabId, mode: 'editor'|'reused', path, kind, reused, notice, editor }
    * replaceId: 바꿀 문서 탭 (판정 7), noted: 처음 연 상태 버전·최근 목록을 이미 남겼다
    */
-  async function openEditorTab(tw, p, { replaceId = null, noted = false, convertedFrom = null } = {}) {
+  async function openEditorTab(tw, p, { replaceId = null, noted = false, convertedFrom = null, onlyIfActive = false } = {}) {
     if (!editors) throw fail(`편집 창 기능을 불러오지 못했습니다: ${editorLoadError}`, 'EDITOR_MISSING');
     if (!noted) noteOpened(p);
     const k = docKey(p);
@@ -1863,7 +1871,12 @@ async function start() {
       pendingTabs.delete(k);
     }
     const hit = findEditorTab(r.path);
-    if (hit) { activateTab(hit.tw, hit.tab.id); if (hit.tw !== tw) focusShell(hit.tw); }
+    // onlyIfActive(지연 탭 불러오기): 불러오는 사이 사용자가 다른 탭으로 옮겼으면 그 탭을 그대로 두고 편집 뷰는 숨긴다
+    // (편집 창이 뷰를 붙이며 보이게 하므로 지금 활성 탭의 뷰를 다시 보인다)
+    if (hit && onlyIfActive && hit.tw.tabs.active?.id !== hit.tab.id) {
+      const cur = hit.tw.tabs.active;
+      if (cur) activateTab(hit.tw, cur.id);
+    } else if (hit) { activateTab(hit.tw, hit.tab.id); if (hit.tw !== tw) focusShell(hit.tw); }
     // 다른 길로 이미 열려 있던 편집 탭으로 갔으면 바꾸려던 문서 탭은 닫는다 (같은 문서 탭 둘을 두지 않는다)
     if (r.reused && replaceId) {
       const old = tw.tabs.get(replaceId);
@@ -2982,7 +2995,7 @@ async function start() {
   const startFile = fileFromArgv(process.argv);
   const explorerStart = !!startFile;
   const keeper = SMOKE ? null : createSessionKeeper({ settings, explorer: explorerStart });
-  if (keeper) Object.assign(sessionHooks, { finalize: () => keeper.finalize(), resume: () => keeper.resume(), removeWindow: (id) => keeper.remove(id) });
+  if (keeper) Object.assign(sessionHooks, { finalize: () => keeper.finalize(), resume: (opts) => keeper.resume(opts), removeWindow: (id) => keeper.remove(id) });
   // 탐색기 시작 세션의 홈 '지난 탭 다시 열기'를 이미 눌렀는가 (한 번만)
   let lastRestored = false;
   queueOpen(startFile);
@@ -3014,6 +3027,8 @@ async function start() {
   app.on('window-all-closed', () => app.quit());
   // 편집 탭이 열려 있으면 '끝내기'가 취소될 수 있으므로(저장 확인 → 취소) 정리는 정말 끝날 때(will-quit) 한다
   app.on('will-quit', () => {
+    // 세션은 이미 확정했다 (끝내기 차례·마지막 창 닫기). 미뤄 둔 쓰기가 끝난 뒤에 돌지 않게 멈춘다
+    keeper?.stop();
     for (const hub of allHubs()) stopWatch(hub);
     for (const c of chats.values()) { try { c.handle.cancel(); } catch {} }
     // 창이 다 닫힌 뒤 미리보기 PDF(문서 사본)를 지운다. 못 지운 것은 다음 시작 때 지운다

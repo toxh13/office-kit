@@ -97,6 +97,33 @@ test('resume: 끝내기 취소 뒤 다시 저장한다', () => {
   assert.equal(settings.data.tabSession.windows.length, 2);
 });
 
+test('resume({ explorer: true }): 그때부터 탐색기 세션 — 다음 확정은 지난 세션을 덮지 않는다', () => {
+  const { settings, timers, keeper } = mk();
+  keeper.update(1, win(1));
+  keeper.finalize();
+  const last = settings.data.lastTabSession;
+  keeper.remove(1);
+  keeper.resume({ explorer: true });
+  keeper.remove(1);
+  keeper.update(2, win(2));
+  timers.run();
+  assert.equal(settings.data.tabSession.explorer, true);
+  keeper.finalize();
+  assert.equal(settings.data.lastTabSession, last, '지난 세션 그대로');
+  assert.equal(settings.data.tabSession.finalized, true);
+  assert.deepEqual(settings.data.tabSession.windows.map((w) => w.bounds.x), [2]);
+});
+
+test('stop: 미뤄 둔 쓰기를 버리고 확정하지 않는다', () => {
+  const { settings, timers, keeper } = mk();
+  keeper.update(1, win(1));
+  keeper.stop();
+  assert.equal(timers.pending, 0);
+  keeper.update(1, win(2));
+  assert.equal(timers.pending, 0);
+  assert.equal(settings.writes, 0);
+});
+
 test('promoteCrashed: 확정 안 된 평소 세션만 지난 세션으로 올린다', () => {
   const a = fakeSettings({ tabSession: { v: 1, explorer: false, finalized: false, windows: [] } });
   assert.equal(promoteCrashed(a), true);

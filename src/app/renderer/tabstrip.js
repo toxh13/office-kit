@@ -94,6 +94,8 @@ if (typeof document !== 'undefined') {
         type: 'button', role: 'tab', id: 'tab-' + tab.id, class: cls,
         'aria-selected': selected ? 'true' : 'false', tabindex: index === tabStop ? '0' : '-1',
         'data-id': tab.id,
+        // 아직 불러오지 않은 탭을 불러오는 중 (지난 세션 복원)
+        'aria-busy': tab.loading ? 'true' : null,
         onclick: () => activate(tab),
         onkeydown: (e) => onKey(e, tab, index),
         // 가운데 단추로 닫기 (홈 제외)

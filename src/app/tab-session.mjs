@@ -46,10 +46,17 @@ export function createSessionKeeper({ settings, explorer = false, delayMs = SESS
       // 한 번의 set으로 쓴다. 탐색기로 연 세션은 지난 세션을 덮지 않는다.
       settings.set(explorer ? { tabSession: s } : { tabSession: s, lastTabSession: s });
     },
-    resume() {
+    /** 확정 뒤 다시 이어 적기. explorer: true면 그때부터 탐색기 시작 세션으로 (지난 세션을 덮지 않는다) */
+    resume({ explorer: asExplorer } = {}) {
       if (!closing) return;
+      if (asExplorer === true) explorer = true;
       closing = false;
       schedule();
+    },
+    /** 앱이 정말 끝날 때: 미뤄 둔 쓰기를 버리고 더 적지 않는다 (확정은 하지 않는다) */
+    stop() {
+      cancel();
+      closing = true;
     },
   };
 }

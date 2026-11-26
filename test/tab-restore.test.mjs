@@ -199,6 +199,23 @@ test('평소 시작: 지난 세션 자동 복원, 활성 탭만 편집 뷰, 없�
     rmSync(draftPathFor(ud, e), { force: true });
   });
 
+  await t.test('지연 탭을 불러오는 사이 다른 탭으로 옮기면 그 탭이 그대로 활성, 불러오는 중은 탭 줄에 표시', async () => {
+    const before = editorViews().length;
+    // 기다리지 않고 바로 홈으로 옮긴다 (편집기가 뜨기 전)
+    const p1 = fake.invokeFrom(strip2, 'tabs:activate', tabOf(strip2, e).id);
+    assert.equal(tabOf(strip2, e).loading, true, '불러오는 중 (탭 줄 aria-busy)');
+    const p2 = fake.invokeFrom(strip2, 'tabs:activate', 'home');
+    for (const r of await Promise.all([p1, p2])) assert.equal(r.ok, true, r.error);
+    assert.ok(await until(() => editorViews().length === before + 1 && tabOf(strip2, e)?.loaded), '마.docx 편집 뷰');
+    await sleep(100);
+    assert.equal(tabsOf(strip2).active, 'home', '옮겨 간 탭이 그대로 활성');
+    assert.equal(tabOf(strip2, e).loading, false);
+    const homeView2 = w2.contentView.children.find((v) => v.webContents?.mainFrame.url.endsWith('?view=home'));
+    assert.equal(homeView2.visible, true, '홈 뷰가 보인다');
+    const edView = editorViews().at(-1);
+    assert.equal(edView.visible, false, '불러온 편집 뷰는 숨긴 채 붙인다');
+  });
+
   /** settings.json의 tabSession.at을 지켜보며 다른 값이 몇 번 나왔는지 센다 */
   const watchWrites = async (ms) => {
     const seen = new Set();
@@ -249,10 +266,11 @@ test('평소 시작: 지난 세션 자동 복원, 활성 탭만 편집 뷰, 없�
     assert.ok(await until(() => readSettings().tabSession.finalized === false, 3000), '다시 적기 (resume)');
     const now = readSettings();
     assert.deepEqual(now.tabSession.windows.map((w) => w.tabs.map((x) => basename(x.path))), [['다.pdf']]);
+    assert.equal(now.tabSession.explorer, true, '창을 다 닫은 뒤 탐색기로 연 창 = 탐색기 시작 세션');
     assert.equal(now.lastTabSession.finalized, true, '지난 세션(확정한 것)은 그대로');
   });
 
-  await t.test('끝내기: lastTabSession 확정, 끝내기 중 닫힘은 저장 안 함 (D11)', async () => {
+  await t.test('끝내기: 모든 창 확인 통과 → app.quit, 탐색기 세션으로 확정하고 지난 세션은 덮지 않는다 (D11)', async () => {
     const quits = fake.app.quitCalls;
     const ev = { prevented: false, preventDefault() { this.prevented = true; } };
     fake.app.emit('before-quit', ev);
@@ -261,10 +279,11 @@ test('평소 시작: 지난 세션 자동 복원, 활성 탭만 편집 뷰, 없�
     assert.equal(w3.isDestroyed(), true);
     await sleep(SETTLE);
     const s = readSettings();
-    assert.equal(s.lastTabSession.finalized, true);
+    assert.equal(s.tabSession.finalized, true);
+    assert.equal(s.tabSession.explorer, true);
+    assert.deepEqual(s.tabSession.windows.map((w) => w.tabs.map((x) => basename(x.path))), [['다.pdf']], '끝내기 중 닫은 창이 빠지지 않는다');
     assert.equal(s.lastTabSession.explorer, false);
-    assert.deepEqual(s.lastTabSession.windows.map((w) => w.tabs.map((x) => basename(x.path))), [['다.pdf']], '끝내기 중 닫은 창이 빠지지 않는다');
-    assert.deepEqual(s.tabSession, s.lastTabSession);
+    assert.deepEqual(s.lastTabSession.windows.map((w) => w.tabs.map((x) => basename(x.path))), [['가.hwpx', '나.docx']], '지난 세션은 앞서 확정한 것 그대로');
   });
 });
 const SETTLE = 1300;
