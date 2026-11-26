@@ -65,6 +65,20 @@
   async function loadRecent() {
     try { renderRecent(await call(K.recent.list())); } catch { renderRecent([]); }
   }
+  // 지난 탭 다시 열기: 탐색기로 문서를 열며 시작한 세션의 홈에서만 보인다 (평소 시작은 지난 세션을 이미 복원했다, D4)
+  async function loadLastSession() {
+    const box = $('#restore-last');
+    if (!box || view !== 'home') return;
+    let info = null;
+    try { info = await call(K.session.info()); } catch {}
+    box.hidden = !info?.hasLast;
+    if (info?.hasLast) $('#restore-last-count').textContent = `지난번에 연 탭 ${info.count}개`;
+  }
+  async function restoreLast() {
+    $('#restore-last').hidden = true;
+    try { await call(K.session.restoreLast()); } catch (err) { showError(err); loadLastSession(); }
+  }
+
   async function removeRecent(p) {
     try { renderRecent(await call(K.recent.remove(p))); } catch (err) { showError(err); }
   }
@@ -1630,6 +1644,7 @@
     $('#btn-folder').addEventListener('click', actShowFolder);
     $('#btn-close-doc').addEventListener('click', actCloseDoc);
     $('#btn-settings').addEventListener('click', () => openSettings('ai'));
+    $('#btn-restore-last').addEventListener('click', restoreLast);
     $('#btn-recent-clear').addEventListener('click', async () => {
       const yes = await confirmDialog({ title: '최근 문서 목록을 비울까요?', body: '목록만 지우고 파일은 그대로 둡니다.', ok: '비우기' });
       if (yes) { try { renderRecent(await call(K.recent.clear())); } catch (err) { showError(err); } }
@@ -1777,6 +1792,7 @@
   onInit((init) => {
     state.providersReady = loadProviders(false);
     renderRecent(init.recent);
+    loadLastSession();
     if (init.doc) onDocOpened(init.doc);
     else { renderTopbar(); renderStatus(); }
     // 열 파일 없이 시작한 확인용 캡처는 빈 화면을 찍는다

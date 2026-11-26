@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // 허용 채널 표 (src/app/ipc-channels.mjs). 표에 없는 채널은 불러올 때 바로 던진다
 // <ipc-channels> 자동 생성: node scripts/gen-ipc-preload.mjs (손으로 고치지 않는다)
-const CHANNELS = { invoke: new Set(['ai:cancel', 'ai:materials', 'ai:providers', 'ai:reset', 'ai:send', 'ai:showEditor', 'app:init', 'app:relaunch', 'assoc:openSettings', 'assoc:status', 'batch:cancel', 'batch:pick', 'batch:pickOut', 'batch:saveReport', 'batch:scan', 'batch:start', 'doc:close', 'doc:diff', 'doc:edit', 'doc:new', 'doc:newCheck', 'doc:newInfo', 'doc:open', 'doc:openInApp', 'doc:openInWord', 'doc:pick', 'doc:pickFolder', 'doc:preview', 'doc:print', 'doc:restore', 'doc:savePdf', 'doc:showInFolder', 'doc:versions', 'hancom:remove', 'hancom:setup', 'hancom:status', 'integrations:set', 'integrations:status', 'pdftools:pick', 'pdftools:run', 'pii:mask', 'pii:scan', 'recent:clear', 'recent:list', 'recent:pin', 'recent:remove', 'settings:get', 'settings:set', 'shell:openBackups', 'shell:openExternal', 'shell:showItem', 'tabs:panelWidth']), on: new Set(['i18n:get', 'smoke:ready', 'view:call']), send: new Set(['ai:event', 'ai:target', 'batch:progress', 'doc:changed', 'doc:editor', 'doc:opened', 'menu', 'toast', 'view:called']) };
+const CHANNELS = { invoke: new Set(['ai:cancel', 'ai:materials', 'ai:providers', 'ai:reset', 'ai:send', 'ai:showEditor', 'app:init', 'app:relaunch', 'assoc:openSettings', 'assoc:status', 'batch:cancel', 'batch:pick', 'batch:pickOut', 'batch:saveReport', 'batch:scan', 'batch:start', 'doc:close', 'doc:diff', 'doc:edit', 'doc:new', 'doc:newCheck', 'doc:newInfo', 'doc:open', 'doc:openInApp', 'doc:openInWord', 'doc:pick', 'doc:pickFolder', 'doc:preview', 'doc:print', 'doc:restore', 'doc:savePdf', 'doc:showInFolder', 'doc:versions', 'hancom:remove', 'hancom:setup', 'hancom:status', 'integrations:set', 'integrations:status', 'pdftools:pick', 'pdftools:run', 'pii:mask', 'pii:scan', 'recent:clear', 'recent:list', 'recent:pin', 'recent:remove', 'session:info', 'session:restoreLast', 'settings:get', 'settings:set', 'shell:openBackups', 'shell:openExternal', 'shell:showItem', 'tabs:panelWidth']), on: new Set(['i18n:get', 'smoke:ready', 'view:call']), send: new Set(['ai:event', 'ai:target', 'batch:progress', 'doc:changed', 'doc:editor', 'doc:opened', 'menu', 'toast', 'view:called']) };
 // </ipc-channels>
 const need = (call, channel) => {
   if (!CHANNELS[call].has(channel)) throw new Error('IPC 표에 없는 채널: ' + channel);
@@ -75,6 +75,12 @@ contextBridge.exposeInMainWorld('officeKit', {
     clear: invoke('recent:clear'),
     /** 고정 · 풀기 (path, on) → 목록 */
     pin: invoke('recent:pin'),
+  },
+
+  // 지난 세션 (탐색기로 문서를 열며 시작한 세션의 홈 '지난 탭 다시 열기'): info → { hasLast, count }, restoreLast → { windows }
+  session: {
+    info: invoke('session:info'),
+    restoreLast: invoke('session:restoreLast'),
   },
 
   settings: {

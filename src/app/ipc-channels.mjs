@@ -48,6 +48,9 @@ const TABLE = {
   'recent:remove': { call: 'invoke', kinds: HOME },
   'recent:clear': { call: 'invoke', kinds: HOME },
   'recent:pin': { call: 'invoke', kinds: HOME },
+  // 지난 세션: 탭 수 { hasLast, count } · 지난 세션 창들을 불러오지 않은 탭으로 연다 (탐색기 시작 세션의 홈 '지난 탭 다시 열기', D4)
+  'session:info': { call: 'invoke', kinds: HOME },
+  'session:restoreLast': { call: 'invoke', kinds: HOME },
   'settings:get': { call: 'invoke', kinds: HOME },
   'settings:set': { call: 'invoke', kinds: HOME },
 

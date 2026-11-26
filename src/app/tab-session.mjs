@@ -22,7 +22,11 @@ export function createSessionKeeper({ settings, explorer = false, delayMs = SESS
   const cancel = () => { if (timer != null) { clearTimer(timer); timer = null; } };
   const schedule = () => {
     cancel();
-    timer = setTimer(() => { timer = null; settings.set({ tabSession: build(false) }); }, delayMs);
+    timer = setTimer(() => {
+      timer = null;
+      // 나중에 쓰는 것이라 던지면 잡을 곳이 없다 (디스크 문제 등) — 다음 변경 때 다시 쓴다
+      try { settings.set({ tabSession: build(false) }); } catch (err) { console.error('[session] 세션을 적지 못했습니다:', err?.message ?? err); }
+    }, delayMs);
   };
 
   return {
@@ -58,7 +62,10 @@ export function promoteCrashed(settings) {
   return true;
 }
 
-/** 저장된 세션 → 복원 계획. 없는 파일 탭은 빼고 missing에 모은다. */
+/**
+ * 저장된 세션 → 복원 계획. 없는 파일 탭은 빼고 missing에 모은다.
+ * 바꿔 연 탭(convertedFrom)의 path는 시작 때 지우는 임시 사본이므로 원본으로 판정하고, path도 원본으로 바꾼다 (열 때 다시 바꾼다)
+ */
 export function restorePlan(session, { exists = existsSync } = {}) {
   const empty = () => ({ windows: [], missing: [] });
   if (!session || session.v !== 1 || !Array.isArray(session.windows)) return empty();
@@ -68,11 +75,12 @@ export function restorePlan(session, { exists = existsSync } = {}) {
     if (!w || typeof w !== 'object') continue;
     const tabs = Array.isArray(w.tabs) ? w.tabs : [];
     const keep = tabs.map((t) => {
-      const ok = !t?.path || exists(t.path);
-      if (!ok) missing.push(t.path);
+      const src = t?.convertedFrom || t?.path;
+      const ok = !src || exists(src);
+      if (!ok) missing.push(src);
       return ok;
     });
-    const kept = tabs.filter((_, i) => keep[i]);
+    const kept = tabs.filter((_, i) => keep[i]).map((t) => (t?.convertedFrom ? { ...t, path: t.convertedFrom } : t));
     const a = Number.isInteger(w.active) && w.active >= 0 && w.active <= tabs.length ? w.active : 0;
     let active = 0;
     if (a > 0) {

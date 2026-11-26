@@ -38,6 +38,15 @@ test('표: 모든 줄의 call·kinds가 올바르고, tabstrip은 탭 줄 채널
   assert.deepEqual(hub.invoke, [...hub.invoke].sort(), '정렬');
 });
 
+test('지난 세션 채널: 홈만 (session:info·session:restoreLast, D4)', () => {
+  for (const ch of ['session:info', 'session:restoreLast']) {
+    assert.equal(IPC[ch]?.call, 'invoke', ch);
+    assert.deepEqual(IPC[ch].kinds, ['home'], ch);
+    assert.equal(allows(ch, ['home']), true);
+    for (const k of ['panel', 'tabstrip', 'hwp', 'office']) assert.equal(allows(ch, [k]), false, `${ch} ← ${k}`);
+  }
+});
+
 test('allows: 편집 창은 주 창 채널을, 주 창은 편집 창 채널을 못 부른다', () => {
   assert.equal(allows('ai:send', ['office']), false);
   assert.equal(allows('app:init', ['hwp']), false);

@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { allows, channelSpec, VIEW_ROUTES } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
+import { createSessionKeeper, promoteCrashed, restorePlan } from './tab-session.mjs';
 import { createTabWindow } from './tab-window.mjs';
 import { createTabList, docKey, tabCommandOf } from './tabs.mjs';
 
@@ -925,6 +926,8 @@ async function start() {
   let OFFICE_DRAFTS = 'office-drafts';
   /** 시작할 때 바꿔 연 임시 사본 정리 (editor-window.mjs) */
   let cleanConvertedCopies = null;
+  /** 자동 저장 사본 경로 (editor-window.mjs의 draftPathFor: 아직 불러오지 않은 탭의 저장 안 한 내용 판정, OV6) */
+  let draftPathFor = null;
   /** 파일 경로 → 'hwp' | 'office' | null */
   const editorKind = (p) => Object.keys(EDITOR_KINDS).find((k) => EDITOR_KINDS[k].includes(extOf(p))) ?? null;
   /** 파일 경로 → '한글 편집' | '문서 편집' | '표 편집' | '슬라이드 편집' */
@@ -937,6 +940,7 @@ async function start() {
     } else if (Array.isArray(m.EDITABLE_EXTS)) EDITOR_KINDS = { ...EDITOR_KINDS, hwp: [...m.EDITABLE_EXTS] };
     if (typeof m.OFFICE_DRAFTS_DIR === 'string') OFFICE_DRAFTS = m.OFFICE_DRAFTS_DIR;
     if (typeof m.cleanConvertedCopies === 'function') cleanConvertedCopies = m.cleanConvertedCopies;
+    if (typeof m.draftPathFor === 'function') draftPathFor = m.draftPathFor;
     // 개발 중 시험용: 편집기 묶음 폴더 바꾸기(없는 폴더 = 묶음 없음), 편집 창 시험 고리(window.__editorTest·__officeTest),
     // 글꼴 모듈 바꾸기 (설치본에서는 모두 무시)
     const dev = !app.isPackaged;
@@ -1493,13 +1497,26 @@ async function start() {
       BaseWindow, WebContentsView, bounds, maximized, icon: APP_ICON, dark: !!nativeTheme.shouldUseDarkColors, devTools: !app.isPackaged,
       panelWidth: settings.get('chatWidth'), panelCollapsed: !!settings.get('chatCollapsed'),
     });
-    const tw = { shell, tabs: createTabList(), home: null, panel: null, docViews: new Map(), edViews: new Map(), titles: new Map(), closing: null, widthTimer: 0 };
+    const tw = { shell, tabs: createTabList(), home: null, panel: null, docViews: new Map(), edViews: new Map(), titles: new Map(), closing: null, widthTimer: 0, gone: false };
+    const first = tabWindows.size === 0;
     tabWindows.set(shell.id, tw);
+    // 마지막 창을 닫아 세션을 확정한 뒤에도 앱이 살아 있어 새 탭 창이 열리면 세션을 다시 이어 적는다
+    if (first && !appQuitting) {
+      sessionHooks.resume();
+      for (const id of quitClosed.splice(0)) sessionHooks.removeWindow(id);
+    }
     windowOrder.unshift(shell.id);
     viewRecs.set(shell.tabstrip.webContents, { kinds: ['tabstrip'], tw, role: 'tabstrip' });
     shell.tabstrip.webContents.once?.('destroyed', () => viewRecs.delete(shell.tabstrip.webContents));
     bindTabKeys(shell.tabstrip.webContents, tw);
-    tw.tabs.on('change', () => sendTabs(tw));
+    // 세션(D9): 탭 목록이 바뀌거나 창을 옮기면 이 창 값을 적는다 (keeper가 1초 모아 한 번 쓴다)
+    const record = () => {
+      if (!keeper || tw.gone || tw.holdSession || !tabWindows.has(shell.id) || shell.win.isDestroyed()) return;
+      keeper.update(shell.id, { bounds: shell.win.getNormalBounds(), maximized: shell.win.isMaximized(), snapshot: tw.tabs.snapshot() });
+    };
+    tw.record = record;
+    tw.tabs.on('change', () => { sendTabs(tw); record(); });
+    for (const ev of ['move', 'resize', 'maximize', 'unmaximize']) shell.win.on(ev, record);
     tw.home = makeHubView(tw, 'home');
     makeHub(tw.home.webContents, tw, 'home');
     shell.attach(tw.home, 'content');
@@ -1519,6 +1536,7 @@ async function start() {
       if (i >= 0) windowOrder.splice(i, 1);
     });
     sendTabs(tw);
+    record();
     return tw;
   }
 
@@ -1555,6 +1573,8 @@ async function start() {
     tw.shell.setTitle(titleOfTab(tw, t));
     sendTabs(tw);
     pushTarget(tw);
+    // 아직 불러오지 않은 탭(지난 세션 복원, D2)은 처음 보일 때 불러온다
+    if (t.loaded === false) void loadLazy(tw, t.id);
     return t;
   }
 
@@ -1657,18 +1677,94 @@ async function start() {
     if (hub?.current) sendTo(hub.wc, 'doc:opened', docInfo(hub));
   }
 
+  /** 문서 탭 id에 문서 탭 뷰(?view=doc)를 만들어 붙이고 그 허브에 문서를 연다 (못 열면 탭을 닫고 던진다) */
+  function attachDocView(tw, id, p) {
+    const view = makeHubView(tw, 'doc');
+    const hub = makeHub(view.webContents, tw, id);
+    tw.docViews.set(id, view);
+    tw.shell.attach(view, 'content');
+    try { openDocument(hub, p); } catch (err) { closeDocTab(tw, id); throw err; }
+  }
+
   /** 문서 탭(?view=doc) 하나 열기: 그 뷰의 허브에 문서를 연다 (화면 준비를 기다리지 않는다 — app:init이 doc을 준다) */
   function openDocTab(tw, p, { activate = true } = {}) {
     p = docPath(p);
-    const view = makeHubView(tw, 'doc');
     const t = tw.tabs.add({ type: 'doc', path: p, title: basename(p), zone3: zone3Office(p) }, { activate: false });
-    const hub = makeHub(view.webContents, tw, t.id);
-    tw.docViews.set(t.id, view);
-    tw.shell.attach(view, 'content');
-    try { openDocument(hub, p); } catch (err) { closeDocTab(tw, t.id); throw err; }
+    attachDocView(tw, t.id, p);
     if (activate) activateTab(tw, t.id);
     pushEditorState();
     return { tabId: t.id, mode: 'doc', path: p, reused: false, editor: editorState(p), notice: null };
+  }
+
+  /** 불러오지 않은 탭 자리에 문서 탭 뷰를 만든다 (편집 탭이었으면 같은 자리 문서 탭으로 바꾼다, id는 그대로) */
+  function loadDocInPlace(tw, id, src) {
+    const p = docPath(src);
+    tw.tabs.replace(id, { id, type: 'doc', path: p, title: basename(p), zone3: zone3Office(p) });
+    attachDocView(tw, id, p);
+    if (tw.tabs.active?.id === id) activateTab(tw, id);
+    pushEditorState();
+  }
+
+  // 불러오는 중인 지연 탭: 탭 id → Promise (여러 번 눌러도 한 번만 불러온다)
+  const lazyLoads = new Map();
+  /**
+   * 아직 불러오지 않은 탭(지난 세션 복원, D2)을 불러온다: 파일이 없어졌으면 탭을 빼고 알린다 (Review Focus).
+   * 있으면 type대로 편집 탭(그 자리에서 바꾼다)이나 문서 탭 뷰. 바꿔 연 탭(convertedFrom)은 원본을 다시 바꿔 연다.
+   * 자동 저장 사본 '복구 / 버리기'는 편집기의 지금 흐름 그대로. 편집 탭으로 못 열면 그 자리 문서 탭으로 (이유를 알린다)
+   */
+  function loadLazy(tw, id) {
+    if (lazyLoads.has(id)) return lazyLoads.get(id);
+    const job = (async () => {
+      const t = tw.tabs.get(id);
+      if (!t || t.loaded !== false || !tabWindows.has(tw.shell.id)) return;
+      const src = t.convertedFrom ?? t.path;
+      if (!src || !existsSync(src)) {
+        removeTab(tw, id);
+        toastIn(tw, `‘${basename(src ?? '')}’ 파일을 찾을 수 없어 탭을 닫았어요`, 'warn');
+        return;
+      }
+      const asDoc = () => {
+        try { loadDocInPlace(tw, id, src); return true; } catch (err) {
+          if (tw.tabs.get(id)) removeTab(tw, id);
+          toastIn(tw, err?.message ?? String(err));
+          return false;
+        }
+      };
+      // 문서 탭, 인터넷에서 받은 Office 문서(D5)는 문서 탭 뷰로
+      if (t.type !== 'editor' || zone3Office(src)) { asDoc(); return; }
+      try {
+        if (!editors) throw fail(`편집 창 기능을 불러오지 못했습니다: ${editorLoadError}`, 'EDITOR_MISSING');
+        const to = t.convertedFrom ? CONVERT_FOR_EDIT[extOf(src)] : null;
+        if (to) {
+          if (!editors.available('office').available) throw fail('편집기가 없어 미리보기로 엽니다', 'EDITOR_MISSING');
+          noteOpened(src);
+          const busy = busyWindow(`‘${basename(src)}’를 고칠 수 있게 바꾸는 중…`);
+          let tmp;
+          try { tmp = await convertForEditing(src, to); } finally { busy.close(); }
+          try {
+            await openEditorTab(tw, tmp, { convertedFrom: src, noted: true, replaceId: id });
+          } catch (err) {
+            if (!editors.isOpen(tmp)) { try { rmSync(dirname(tmp), { recursive: true, force: true }); } catch {} }
+            throw err;
+          }
+        } else {
+          editorCheck(src);
+          await openEditorTab(tw, src, { replaceId: id });
+        }
+      } catch (err) {
+        if (!err?.expected) console.error('[restore]', err);
+        const left = tw.tabs.get(id);
+        if (!tabWindows.has(tw.shell.id)) return;
+        if (!left || left.loaded !== false) { toastIn(tw, err?.message ?? String(err)); return; }
+        if (!asDoc()) return;
+        if (err?.code !== 'EDITOR_MISSING') {
+          const hub = hubOf(tw.docViews.get(id)?.webContents);
+          setTimeout(() => sendTo(hub?.wc, 'toast', { type: 'warn', message: err?.message ?? String(err) }), 400);
+        }
+      }
+    })().catch((err) => console.error('[restore] 탭을 불러오지 못했습니다:', err)).finally(() => lazyLoads.delete(id));
+    lazyLoads.set(id, job);
+    return job;
   }
 
   // 편집 탭을 어디에 붙일지 (openEditorTab이 정하고 hostFor가 쓴다): docKey(path) → { tw, path, replaceId }
@@ -1684,7 +1780,9 @@ async function start() {
     const convertedFrom = info.convertedFrom ?? null;
     const tab = { type: 'editor', path: info.path, convertedFrom, title: basename(convertedFrom ?? info.path) };
     let t;
-    if (pl?.replaceId && tw.tabs.get(pl.replaceId)?.type === 'doc') {
+    const was = pl?.replaceId ? tw.tabs.get(pl.replaceId) : null;
+    // 문서 탭이나 아직 불러오지 않은 탭(지난 세션 복원)은 같은 자리에서 편집 탭으로 바꾼다
+    if (was && (was.type === 'doc' || was.loaded === false)) {
       const old = pl.replaceId;
       const view = tw.docViews.get(old);
       t = tw.tabs.replace(old, tab);
@@ -1704,7 +1802,7 @@ async function start() {
       if (view) for (const [id, v] of tw.edViews) if (v === view && tw.tabs.get(id)) return { tw, tab: tw.tabs.get(id) };
     }
     for (const tw of tabWindows.values()) {
-      const tab = tw.tabs.tabs.find((x) => x.type === 'editor' && samePath(x.path, p));
+      const tab = tw.tabs.tabs.find((x) => x.type === 'editor' && x.loaded !== false && samePath(x.path, p));
       if (tab) return { tw, tab };
     }
     const pend = pendingTabs.get(docKey(p));
@@ -1767,7 +1865,11 @@ async function start() {
     const hit = findEditorTab(r.path);
     if (hit) { activateTab(hit.tw, hit.tab.id); if (hit.tw !== tw) focusShell(hit.tw); }
     // 다른 길로 이미 열려 있던 편집 탭으로 갔으면 바꾸려던 문서 탭은 닫는다 (같은 문서 탭 둘을 두지 않는다)
-    if (r.reused && replaceId && tw.tabs.get(replaceId)?.type === 'doc') closeDocTab(tw, replaceId);
+    if (r.reused && replaceId) {
+      const old = tw.tabs.get(replaceId);
+      if (old?.type === 'doc') closeDocTab(tw, replaceId);
+      else if (old?.loaded === false) removeTab(tw, replaceId);
+    }
     pushEditorState();
     // 메모리 안내(D12): 그 탭 창을 부모로 한 정보 대화상자 (기다리지 않는다 — 열기를 막지 않게)
     const notice = typeof r.notice === 'string' && r.notice ? r.notice : null;
@@ -1841,7 +1943,7 @@ async function start() {
     return true;
   }
 
-  // 끝내기 중에 닫힌 탭 창 (끝내기를 취소하면 그때 세션에서 뺀다)
+  // 세션을 확정한 뒤에 닫힌 탭 창 (끝내기 중에 닫힌 창·마지막 창). 다시 이어 적을 때(끝내기 취소·새 탭 창) 세션에서 뺀다
   const quitClosed = [];
   /** 끝내기 취소 → 끝내기 상태를 되돌리고 세션을 다시 이어 적는다 (저장 확인 취소·AI 확인 취소 모두. 여러 번 불려도 한 번만) */
   function cancelQuit() {
@@ -1860,7 +1962,6 @@ async function start() {
     for (const tw of order) {
       if (!tabWindows.has(tw.shell.id)) continue;
       if (!(await closeWindow(tw, { aiAsked: true }))) return false;
-      quitClosed.push(tw.shell.id);
     }
     return true;
   }
@@ -1877,12 +1978,18 @@ async function start() {
         if (!(await confirmStopAi(tw.shell.win, aiEditsIn(all)))) return false;
       }
       const paths = tw.tabs.tabs.filter((t) => t.type === 'editor' && t.path).map((t) => t.path);
-      if (editors && !(await editors.closeMany(paths))) return false;
-      // 세션: 끝내기 중이면 이미 확정했다. 아니면 다른 탭 창이 남을 때 이 창만 빼고,
-      // 마지막 창이면 빼기 전에(창이 살아 있을 때) 확정한다 — 아니면 지난 세션이 빈 목록이 된다
-      if (!appQuitting) {
+      // 닫는 동안 탭이 하나씩 빠져도 세션에는 닫기 전 탭 목록을 둔다 (마지막 창이면 그대로 확정한다). 취소하면 남은 탭으로 다시 적는다
+      tw.holdSession = true;
+      let closed;
+      try { closed = !editors || (await editors.closeMany(paths)); } finally { tw.holdSession = false; }
+      if (!closed) { tw.record(); return false; }
+      // 세션: 끝내기 중이면 이미 확정했다 (끝내기를 취소하면 그때 빼도록 적어 둔다 — 차례 중 사용자가 X로 닫은 창도).
+      // 아니면 다른 탭 창이 남을 때 이 창만 빼고, 마지막 창이면 빼기 전에(창이 살아 있을 때) 확정한다 — 아니면 지난 세션이 빈 목록이 된다
+      tw.gone = true;
+      if (appQuitting) quitClosed.push(tw.shell.id);
+      else {
         const last = [...tabWindows.keys()].every((id) => id === tw.shell.id);
-        if (last) sessionHooks.finalize(); else sessionHooks.removeWindow(tw.shell.id);
+        if (last) { sessionHooks.finalize(); quitClosed.push(tw.shell.id); } else sessionHooks.removeWindow(tw.shell.id);
       }
       const w = tw.shell.win;
       if (!SMOKE && w && !w.isDestroyed()) {
@@ -1944,19 +2051,26 @@ async function start() {
   }
 
   /** 편집 창에 저장 안 한 내용이 있는가: 편집 창이 알린 상태이거나, 열린 창의 자동 저장 사본이 원본 파일보다 새것 (OV6) */
+  // 아직 불러오지 않은 탭(뷰 없음, 지난 세션 복원)은 자동 저장 사본(draftPathFor)으로 판정한다. 바꿔 연 탭은 원본 경로·새 형식 확장자로 찾는다
   const unsaved = (p) => {
     if (editors?.isDirty(p)) return true;
-    if (!editors?.isOpen(p)) return false;
+    const newer = (d) => !!d && existsSync(d) && statSync(d).mtimeMs > statSync(p).mtimeMs;
     try {
-      const d = editors.draftPath?.(p);
-      return !!d && existsSync(d) && statSync(d).mtimeMs > statSync(p).mtimeMs;
+      if (editors?.isOpen(p)) return newer(editors.draftPath?.(p));
+      const lazy = lazyTabs().find((t) => t.type === 'editor' && samePath(t.convertedFrom ?? t.path, p));
+      if (!lazy || !draftPathFor) return false;
+      return newer(draftPathFor(userData, p, lazy.convertedFrom ? CONVERT_FOR_EDIT[extOf(p)] : extOf(p)));
     } catch { return false; }
   };
 
-  /** 모든 탭 창의 편집 탭 + 문서 탭(PDF 포함) 문서 경로 (AI 재료 후보) */
+  /** 모든 탭 창의 아직 불러오지 않은 탭 (지난 세션 복원, D2) */
+  const lazyTabs = () => [...tabWindows.values()].flatMap((tw) => tw.tabs.tabs.filter((t) => t.loaded === false && t.path));
+
+  /** 모든 탭 창의 편집 탭 + 문서 탭(PDF 포함) + 아직 불러오지 않은 탭의 문서 경로 (AI 재료 후보) */
   const openDocPaths = () => [
     ...(editors?.list() ?? []),
     ...allHubs().filter((h) => h.tabId !== 'home' && h.current).map((h) => h.current.path),
+    ...lazyTabs().map((t) => t.convertedFrom ?? t.path),
   ];
 
   /** AI 재료 후보: 고칠 문서(그 탭 창의 AI 대상)와 재료로 넘길 수 있는 열린 문서들 */
@@ -2344,6 +2458,11 @@ async function start() {
 
   handle('app:init', ({ hub, tw, wc }) => {
     if (hub) hub.rendererReady = true;
+    // 화면이 준비되기 전에 생긴 알림(복원하지 못한 문서 등)은 지금 보낸다 (응답이 먼저 가도록 다음 틱에)
+    if (hub?.pendingToasts?.length) {
+      const list = hub.pendingToasts.splice(0);
+      setTimeout(() => { for (const m of list) sendTo(hub.wc, 'toast', m); }, 0);
+    }
     // 첫 탭 창 홈 뷰가 준비되면 줄에 선 탐색기 파일(명령줄 파일 먼저)을 차례로 연다 (응답이 먼저 가도록 다음 틱에)
     let opening = false;
     if (!opensReady && hub?.tabId === 'home') {
@@ -2470,6 +2589,18 @@ async function start() {
     return id;
   };
   handle('tabs:activate', ({ tw }, id) => { activateTab(tw, tabIdOf(tw, id)); return null; });
+  // 홈의 '지난 탭 다시 열기' (탐색기 시작 세션에서만 보인다 — 평소 시작은 이미 복원했다, D4)
+  handle('session:info', () => {
+    const count = lastPlan().windows.reduce((n, w) => n + w.tabs.length, 0);
+    return { hasLast: explorerStart && !lastRestored && count > 0, count };
+  });
+  handle('session:restoreLast', ({ tw }) => {
+    const plan = lastPlan();
+    lastRestored = true;
+    const made = openSessionWindows(plan);
+    if (plan.missing.length) toastHome(tw, missingText(plan.missing));
+    return { windows: made.length };
+  });
   handle('tabs:close', ({ tw }, id) => closeTab(tw, tabIdOf(tw, id)));
   handle('tabs:home', ({ tw }) => { activateTab(tw, 'home'); return null; });
   handle('tabs:togglePanel', ({ tw }) => {
@@ -2700,11 +2831,56 @@ async function start() {
     return 'opened';
   }
 
+  // ── 세션 복원 (D2·D4·D11) ──────────────────────────
+
+  /** 지난 세션의 복원 계획 (없는 파일 탭은 빼고 missing에) */
+  const lastPlan = () => restorePlan(settings.get('lastTabSession'));
+  const missingText = (paths) => `찾을 수 없어 열지 못한 문서: ${paths.map((p) => basename(p)).join(', ')}`;
+
+  /** 그 탭 창 홈 뷰에 알림. 홈 화면이 아직 준비 전(app:init 전)이면 준비되면 보낸다 */
+  function toastHome(tw, message, type = 'warn') {
+    const hub = hubOf(tw?.home?.webContents);
+    if (!hub) return;
+    if (hub.rendererReady) sendTo(hub.wc, 'toast', { type, message });
+    else (hub.pendingToasts ??= []).push({ type, message });
+  }
+
+  /**
+   * 세션 창들을 연다: 창마다 탭 창(세션의 자리·최대화)을 만들고 탭은 불러오지 않은 채(loaded:false) 넣은 뒤 활성 탭만 불러온다 (D2).
+   * 이미 열린 문서는 건너뛴다. 넣을 탭이 없는 창은 keepEmpty일 때만 만든다 → 만든 탭 창들
+   */
+  function openSessionWindows(plan, { keepEmpty = false } = {}) {
+    const made = [];
+    for (const w of plan.windows) {
+      const want = w.active > 0 ? w.tabs[w.active - 1] : null;
+      const tabs = w.tabs.filter((t) => (t?.type === 'doc' || t?.type === 'editor') && typeof t.path === 'string' && isAbsolute(t.path) && !findTab(t.path));
+      if (!tabs.length && !keepEmpty) continue;
+      const tw = createTabWindowFor({ bounds: w.bounds ? fitBounds(w.bounds) : initialBounds(), maximized: !!w.maximized });
+      let activeId = 'home';
+      for (const t of tabs) {
+        // 같은 세션 안에서 겹친 문서(다른 창 포함)는 한 번만
+        if (findTab(t.path)) continue;
+        const added = tw.tabs.add({
+          type: t.type, path: t.path, convertedFrom: t.convertedFrom ?? null, title: basename(t.convertedFrom ?? t.path), loaded: false,
+        }, { at: tw.tabs.tabs.length, activate: false });
+        if (t === want) activeId = added.id;
+      }
+      made.push(tw);
+      activateTab(tw, activeId);
+    }
+    return made;
+  }
+
   // ── 창 ───────────────────────────────────────────────
 
+  /** 첫 탭 창 기본 크기 (settings.window: 마지막으로 닫은 탭 창 크기). 창별 크기는 세션에 있다 */
   function initialBounds() {
+    return fitBounds(SMOKE ? null : settings.get('window'));
+  }
+
+  /** 저장된 창 자리 → 지금 화면 안이면 자리까지, 아니면 크기만 (없으면 기본 크기) */
+  function fitBounds(w) {
     const base = { width: 1440, height: 920 };
-    const w = SMOKE ? null : settings.get('window');
     if (!w || !Number.isFinite(w.width) || !Number.isFinite(w.height)) return base;
     const size = { width: Math.max(1000, Math.round(w.width)), height: Math.max(680, Math.round(w.height)) };
     // 저장된 위치가 지금 화면 안에 있을 때만 쓴다 (모니터를 뺀 경우)
@@ -2801,7 +2977,15 @@ async function start() {
       if (openQueue.length) flushOpens();
     });
   }
-  queueOpen(fileFromArgv(process.argv));
+  // 세션(D4·D9·D11): 명령줄에 파일이 있으면 탐색기 시작 — 그 문서만 열고, 그 세션은 끝낼 때 지난 세션을 덮지 않는다.
+  // 확인용 캡처는 세션을 적지도 복원하지도 않는다
+  const startFile = fileFromArgv(process.argv);
+  const explorerStart = !!startFile;
+  const keeper = SMOKE ? null : createSessionKeeper({ settings, explorer: explorerStart });
+  if (keeper) Object.assign(sessionHooks, { finalize: () => keeper.finalize(), resume: () => keeper.resume(), removeWindow: (id) => keeper.remove(id) });
+  // 탐색기 시작 세션의 홈 '지난 탭 다시 열기'를 이미 눌렀는가 (한 번만)
+  let lastRestored = false;
+  queueOpen(startFile);
 
   // 끝내기(메뉴·window-all-closed 등): 끝내기를 막고 창마다 차례로 묻는다. 다 닫히면 다시 app.quit() (그때는 막지 않는다)
   let quitBusy = false;
@@ -2860,5 +3044,12 @@ async function start() {
   try { rmSync(join(userData, COM_PIDS), { recursive: true, force: true }); } catch (err) { console.error('[ai] 남은 PID 기록 정리 실패:', err?.message ?? err); }
   buildMenu();
   const savedWin = SMOKE ? null : settings.get('window');
-  createTabWindowFor({ bounds: initialBounds(), maximized: !!savedWin?.maximized });
+  // 강제 종료로 확정 못 한 평소 세션은 지난 세션으로 올린다 (탐색기 시작이어도: '지난 탭 다시 열기'가 연다)
+  if (!SMOKE) { try { promoteCrashed(settings); } catch (err) { console.error('[session] 지난 세션 올리기 실패:', err?.message ?? err); } }
+  // 평소 시작: 지난 세션 자동 복원 (활성 탭만 불러온다, D2·D4). 탐색기 시작: 홈 + 그 문서 (줄에 선 파일을 연다)
+  const plan = SMOKE || explorerStart ? { windows: [], missing: [] } : lastPlan();
+  const made = openSessionWindows(plan, { keepEmpty: true });
+  if (!made.length) createTabWindowFor({ bounds: initialBounds(), maximized: !!savedWin?.maximized });
+  if (plan.missing.length) toastHome(made[0] ?? recentWindow(), missingText(plan.missing));
+  made[0]?.shell.win.focus?.();
 }

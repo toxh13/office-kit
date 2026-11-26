@@ -124,7 +124,14 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
   for (const k of ['OFFICEKIT_SMOKE', 'OFFICEKIT_SMOKE_EDITOR', 'OFFICEKIT_EDITOR_TEST']) delete process.env[k];
   process.argv = [process.argv[0], docPath];
   // 문서를 열면 문서 탭(미리보기)으로: 예전 시험의 '열기 → 직접 편집' 흐름을 그대로 따른다 (가짜 화면은 autoEdit로 편집 창을 열지 않았다)
-  put(join(ud, 'settings.json'), JSON.stringify({ openAction: 'preview' }));
+  // 지난 세션(평소 시작으로 끝낸 것): 탐색기 시작 세션은 이것을 덮지 않고, 홈의 '지난 탭 다시 열기'가 연다 (D4·D11)
+  const lastPdf = join(docs, '지난 세션.pdf');
+  writeFileSync(lastPdf, makePdf(1));
+  const lastSession = {
+    v: 1, at: 1000, explorer: false, finalized: true,
+    windows: [{ bounds: { x: 300, y: 200, width: 1200, height: 800 }, maximized: false, active: 2, tabs: [{ type: 'doc', path: docPath }, { type: 'doc', path: lastPdf }] }],
+  };
+  put(join(ud, 'settings.json'), JSON.stringify({ openAction: 'preview', lastTabSession: lastSession }));
 
   const fake = makeFakeElectron({ userData: ud, documents: docs, commandAnswer: async () => false });
   installFakeElectron(fake);
@@ -1685,6 +1692,36 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     tw0.emit('focus');
   });
 
+  await t.test('탐색기 시작 세션은 lastTabSession을 덮지 않고, 홈의 session:restoreLast가 지난 세션을 연다 (D4·D11)', async () => {
+    const readS = () => JSON.parse(readFileSync(join(ud, 'settings.json'), 'utf8'));
+    assert.ok(await until(() => readS().tabSession?.explorer === true, 3000), '탐색기 시작 세션도 지금 세션으로 적는다');
+    assert.deepEqual(readS().lastTabSession, lastSession);
+    // 확정해도(끝내기·마지막 창 닫기) 지난 세션은 그대로
+    mainMod.sessionHooks.finalize();
+    assert.equal(readS().tabSession.finalized, true);
+    assert.deepEqual(readS().lastTabSession, lastSession);
+    mainMod.sessionHooks.resume();
+    const info = await callAs('home', 'session:info');
+    assert.equal(info.ok, true, info.error);
+    assert.deepEqual(info.value, { hasLast: true, count: 2 });
+    const n = fake.windows.length;
+    const r = await callAs('home', 'session:restoreLast');
+    assert.equal(r.ok, true, r.error);
+    assert.ok(await until(() => fake.windows.length === n + 1), '지난 세션 창');
+    const win = fake.windows.at(-1);
+    assert.deepEqual([win.opts.x, win.opts.y], [300, 200], '창 자리는 세션 값');
+    const strip = win.contentView.children.map((v) => v.webContents).find((wc) => /tabstrip\.html$/.test(wc?.mainFrame.url ?? ''));
+    const list = () => strip.sent.filter((s) => s.channel === 'tabs:list').at(-1)?.data ?? { tabs: [] };
+    // 이미 열린 문서(보고서.hwpx)는 건너뛰고, 활성 탭만 불러온다
+    assert.ok(await until(() => list().tabs.find((x) => x.path === lastPdf)?.loaded), '활성 탭(지난 세션.pdf)은 불러온다');
+    assert.deepEqual(list().tabs.map((x) => [x.type, x.path && basename(x.path)]), [['home', null], ['doc', '지난 세션.pdf']]);
+    assert.equal((await callAs('home', 'session:info')).value.hasLast, false, '한 번 열면 단추를 감춘다');
+    assert.deepEqual(readS().lastTabSession, lastSession);
+    win.close();
+    assert.ok(await until(() => win.isDestroyed()));
+    tw0.emit('focus');
+  });
+
   // ── 닫기 흐름: 탭·창·끝내기 차례 확인, AI 작업 중 확인 (D17) ──
   const AI_TAB_MSG = 'AI가 이 문서를 고치는 중입니다.';
   const AI_WIN_MSG = 'AI 작업 중인 문서가 있습니다.';
@@ -1914,6 +1951,34 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     assert.ok(await until(() => w2.win.isDestroyed()));
     assert.equal(fake.app.quitCalls, quits);
     assert.deepEqual(hookCalls.splice(0), [{ name: 'removeWindow', id: w2.win.id }], '끝내기가 아니라 창 하나 닫기');
+    tw0.emit('focus');
+  });
+
+  await t.test('끝내기 중 사용자가 X로 닫은 창도 끝내기를 취소하면 세션에서 뺀다', async () => {
+    const w2 = await newTabWindow(homeWc);
+    const w1 = await newTabWindow(w2.home);
+    const a = await openEditorIn(w1, '끝내기 중 가.hwpx');
+    fake.replies.set(a.wc.id, true);
+    tw0.emit('focus');
+    w2.win.emit('focus');
+    w1.win.emit('focus');
+    const quits = fake.app.quitCalls;
+    const n = asked();
+    fake.dialogAnswers.push(2); // 가: 취소
+    const ev = quitEvent();
+    fake.app.emit('before-quit', ev);
+    assert.equal(ev.prevented, true);
+    w2.win.close(); // 차례 확인 중에 X
+    assert.ok(await until(() => w2.win.isDestroyed()), 'X로 닫은 창은 닫힌다');
+    assert.ok(await until(() => asked() >= n + 1));
+    await sleep(150);
+    assert.equal(fake.app.quitCalls, quits, '끝내지 않는다');
+    assert.equal(w1.win.isDestroyed(), false);
+    assert.deepEqual(hookCalls.splice(0).map((h) => h.name === 'removeWindow' ? [h.name, h.id] : h.name), ['finalize', 'resume', ['removeWindow', w2.win.id]]);
+    fake.replies.set(a.wc.id, false);
+    w1.win.close();
+    assert.ok(await until(() => w1.win.isDestroyed()));
+    assert.deepEqual(hookCalls.splice(0), [{ name: 'removeWindow', id: w1.win.id }]);
     tw0.emit('focus');
   });
 
