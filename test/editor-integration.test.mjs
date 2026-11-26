@@ -139,7 +139,7 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  await import(pathToFileURL(join(ROOT, 'src', 'app', 'main.mjs')).href);
+  const mainMod = await import(pathToFileURL(join(ROOT, 'src', 'app', 'main.mjs')).href);
   assert.ok(await until(() => fake.windows.length >= 1, 20_000), '탭 창이 만들어져야 한다');
   const tw0 = fake.windows[0];
   /** 주소가 ?view=<kind>인 뷰들 (홈·AI 패널·문서 탭) */
@@ -1685,6 +1685,238 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     tw0.emit('focus');
   });
 
+  // ── 닫기 흐름: 탭·창·끝내기 차례 확인, AI 작업 중 확인 (D17) ──
+  const AI_TAB_MSG = 'AI가 이 문서를 고치는 중입니다.';
+  const AI_WIN_MSG = 'AI 작업 중인 문서가 있습니다.';
+  const AI_DETAIL = '멈추면 지금까지 고친 내용은 남고, 버전 목록에서 대화 전으로 되돌릴 수 있어요.';
+  const STOP_BUTTONS = ['멈추고 닫기', '취소'];
+  // 세션 연결(Task 11)이 채울 자리: 부른 차례를 적는다 (finalize는 그때 살아 있던 탭 창 수도)
+  const hookCalls = [];
+  const liveWindows = () => fake.windows.filter((w) => !w.isDestroyed()).length;
+  Object.assign(mainMod.sessionHooks, {
+    finalize: () => { hookCalls.push({ name: 'finalize', open: liveWindows() }); },
+    resume: () => { hookCalls.push({ name: 'resume' }); },
+    removeWindow: (id) => { hookCalls.push({ name: 'removeWindow', id }); },
+  });
+  /** 새 한글 문서를 만들어 그 탭 창 홈에서 연다 → { path, wc: 편집 뷰 } */
+  const openEditorIn = async (w, name) => {
+    const p = join(docs, name);
+    await createBlankDocument(p, { title: name });
+    const before = new Set(editorViews());
+    const r = await fake.invokeFrom(w.home, 'doc:open', p);
+    assert.equal(r.ok, true, r.error);
+    assert.ok(await until(() => editorViews().some((v) => !before.has(v))), `${name} 편집 뷰`);
+    return { path: p, wc: editorViews().find((v) => !before.has(v)).webContents };
+  };
+  const tabIn = (w, p) => tabsOf(w).tabs.find((x) => x.path && sameFile(x.path, p)) ?? null;
+  const asked = () => fake.dialogs.length;
+  const quitEvent = () => ({ prevented: false, preventDefault() { this.prevented = true; } });
+
+  await t.test('탭 창 닫기: 저장 안 한 탭을 탭 차례로 묻고, 둘째에서 취소하면 첫째는 닫히고 창·나머지는 그대로 — 의도한 변경', async () => {
+    const w = await newTabWindow(homeWc);
+    const a = await openEditorIn(w, '닫기 가.hwpx');
+    const b = await openEditorIn(w, '닫기 나.hwpx');
+    fake.replies.set(a.wc.id, true);
+    fake.replies.set(b.wc.id, true);
+    const n = asked();
+    fake.dialogAnswers.push(1, 2); // 가: 저장 안 함, 나: 취소
+    w.win.close();
+    assert.ok(await until(() => asked() >= n + 2));
+    await sleep(150);
+    assert.equal(asked(), n + 2, '탭마다 한 번씩만');
+    assert.match(fake.dialogs[n].message, /닫기 가\.hwpx/, '탭 차례: 가 먼저');
+    assert.match(fake.dialogs[n + 1].message, /닫기 나\.hwpx/);
+    assert.equal(a.wc.isDestroyed(), true, '확인한 탭은 바로 닫힌다');
+    assert.equal(tabIn(w, a.path), null);
+    assert.equal(b.wc.isDestroyed(), false, '취소한 탭은 그대로');
+    assert.ok(tabIn(w, b.path));
+    assert.equal(w.win.isDestroyed(), false, '창도 그대로');
+    assert.equal(hookCalls.length, 0, '닫히지 않은 창은 세션에서 빼지 않는다');
+    // 정리: 깨끗하면 묻지 않고 닫힌다. 다른 탭 창이 남아 있으니 세션에서 이 창만 뺀다
+    fake.replies.set(b.wc.id, false);
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    assert.deepEqual(hookCalls.splice(0), [{ name: 'removeWindow', id: w.win.id }]);
+    tw0.emit('focus');
+  });
+
+  await t.test('AI가 고치는 중인 문서 탭 닫기 → 멈추고 닫기/취소 (D17)', async () => {
+    const w = await newTabWindow(homeWc);
+    const a = await openEditorIn(w, 'AI 가.hwpx');
+    const held = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '[hold] 고쳐줘', editorOk: true });
+    assert.equal(held.ok, true, held.error);
+    const chatId = held.value.chatId;
+    const pidDir = join(ud, 'com-pids', chatId);
+    try {
+      assert.ok(sameFile(globalThis.__okChats.at(-1).filePath, a.path), '고칠 문서 = 가');
+      let n = asked();
+      fake.dialogAnswers.push(1); // 취소
+      const r0 = await fake.invokeFrom(w.tabstrip, 'tabs:close', tabIn(w, a.path).id);
+      assert.equal(r0.ok, true, r0.error);
+      assert.equal(r0.value, false);
+      assert.equal(asked(), n + 1);
+      const d = fake.dialogs[n];
+      assert.equal(d.message, AI_TAB_MSG);
+      assert.equal(d.detail, AI_DETAIL);
+      assert.deepEqual(d.buttons, STOP_BUTTONS);
+      assert.equal(d.cancelId, 1);
+      assert.equal(d.parent, w.win, '부모 = 그 탭 창');
+      assert.equal(a.wc.isDestroyed(), false, '취소 → 탭 그대로');
+      assert.ok(tabIn(w, a.path));
+      assert.equal(existsSync(pidDir), true, '취소 → 대화 그대로');
+      assert.equal(lastSent('ai:event', (x) => x.type === 'end' && x.chatId === chatId), undefined);
+      // 멈추고 닫기 → 대화 정지(숨은 Office 정리 포함) → 저장 확인(깨끗하면 묻지 않음) → 닫기
+      n = asked();
+      fake.dialogAnswers.push(0);
+      const r1 = await fake.invokeFrom(w.tabstrip, 'tabs:close', tabIn(w, a.path).id);
+      assert.equal(r1.value, true);
+      assert.equal(asked(), n + 1, '깨끗한 편집 탭은 저장을 묻지 않는다');
+      assert.ok(await endOf(chatId), '대화가 멈췄다');
+      assert.ok(await until(() => !existsSync(pidDir)), 'PID 폴더 정리');
+      assert.ok(await until(() => a.wc.isDestroyed()), '탭이 닫힌다');
+      assert.equal(tabIn(w, a.path), null);
+    } finally {
+      globalThis.__okRelease?.();
+    }
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('AI 작업 중 탭 창 닫기·끝내기 → 한 번 묻고, 취소면 창 유지·끝내기 취소 (D17)', async () => {
+    const w = await newTabWindow(homeWc);
+    const a = await openEditorIn(w, 'AI 나.hwpx');
+    const b = await openEditorIn(w, 'AI 다.hwpx');
+    fake.replies.set(a.wc.id, true);
+    const held = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '[hold] 고쳐줘', editorOk: true });
+    assert.equal(held.ok, true, held.error);
+    const chatId = held.value.chatId;
+    const pidDir = join(ud, 'com-pids', chatId);
+    const quits = fake.app.quitCalls;
+    try {
+      assert.ok(sameFile(globalThis.__okChats.at(-1).filePath, b.path), '고칠 문서 = 다');
+      // 창 닫기 → 한 번 묻고 취소: 저장 확인도 하지 않고 모두 그대로
+      let n = asked();
+      fake.dialogAnswers.push(1);
+      w.win.close();
+      assert.ok(await until(() => asked() >= n + 1));
+      await sleep(150);
+      assert.equal(asked(), n + 1, '한 번만 묻는다');
+      assert.equal(fake.dialogs[n].message, AI_WIN_MSG);
+      assert.deepEqual(fake.dialogs[n].buttons, STOP_BUTTONS);
+      assert.equal(fake.dialogs[n].cancelId, 1);
+      assert.equal(fake.dialogs[n].parent, w.win);
+      assert.equal(w.win.isDestroyed(), false);
+      assert.equal(a.wc.isDestroyed(), false);
+      assert.equal(b.wc.isDestroyed(), false);
+      assert.equal(existsSync(pidDir), true, '대화 그대로');
+      // 끝내기 → 한 번 묻고(부모 = 최근 탭 창) 취소: 아무 창도 닫지 않고 끝내기 취소
+      w.win.emit('focus');
+      n = asked();
+      fake.dialogAnswers.push(1);
+      const ev = quitEvent();
+      fake.app.emit('before-quit', ev);
+      assert.equal(ev.prevented, true, '차례 확인이 끝날 때까지 끝내기를 막는다');
+      assert.ok(await until(() => asked() >= n + 1));
+      await sleep(150);
+      assert.equal(asked(), n + 1);
+      assert.equal(fake.dialogs[n].message, AI_WIN_MSG);
+      assert.equal(fake.dialogs[n].parent, w.win);
+      assert.equal(fake.app.quitCalls, quits);
+      for (const x of [w.win, tw0]) assert.equal(x.isDestroyed(), false);
+      for (const x of [a.wc, b.wc, homeWc]) assert.equal(x.isDestroyed(), false);
+      assert.equal(existsSync(pidDir), true);
+      assert.deepEqual(hookCalls.splice(0).map((h) => h.name), ['finalize', 'resume'], '끝내기 전에 확정, 취소하면 다시 이어 적기');
+      // 창 닫기 → 멈추고 닫기: 대화를 멈춘 뒤 저장 안 한 탭을 묻고, 창이 닫힌다 (다른 창이 있으니 끝내지 않음)
+      n = asked();
+      fake.dialogAnswers.push(0, 1); // 멈추고 닫기, 나: 저장 안 함
+      w.win.close();
+      assert.ok(await until(() => w.win.isDestroyed()), '창이 닫혀야 한다');
+      assert.equal(asked(), n + 2);
+      assert.equal(fake.dialogs[n].message, AI_WIN_MSG);
+      assert.match(fake.dialogs[n + 1].message, /AI 나\.hwpx/);
+      assert.ok(await endOf(chatId), '대화가 멈췄다');
+      assert.ok(await until(() => !existsSync(pidDir)), 'PID 폴더 정리');
+      assert.equal(fake.app.quitCalls, quits);
+      assert.deepEqual(hookCalls.splice(0), [{ name: 'removeWindow', id: w.win.id }]);
+    } finally {
+      globalThis.__okRelease?.();
+    }
+    tw0.emit('focus');
+  });
+
+  await t.test('읽기 재료 탭은 AI 작업 중이어도 묻지 않고 닫힌다', async () => {
+    const w = await newTabWindow(homeWc);
+    const m = join(docs, '읽기 재료.pdf');
+    writeFileSync(m, makePdf(1));
+    assert.equal((await fake.invokeFrom(w.home, 'doc:open', m)).ok, true);
+    const a = await openEditorIn(w, 'AI 라.hwpx');
+    const held = await fake.invokeFrom(w.panel, 'ai:send', { prompt: '[hold] 참고해서 고쳐줘', editorOk: true, target: { edit: a.path, read: [m] } });
+    assert.equal(held.ok, true, held.error);
+    try {
+      assert.deepEqual(globalThis.__okChats.at(-1).materials.map((x) => sameFile(x, m)), [true]);
+      const n = asked();
+      const r = await fake.invokeFrom(w.tabstrip, 'tabs:close', tabIn(w, m).id);
+      assert.equal(r.value, true);
+      assert.equal(asked(), n, '재료 탭은 묻지 않는다');
+      assert.equal(tabIn(w, m), null);
+      assert.equal(lastSent('ai:event', (x) => x.type === 'end' && x.chatId === held.value.chatId), undefined, '대화는 계속');
+    } finally {
+      globalThis.__okRelease?.();
+    }
+    assert.ok(await endOf(held.value.chatId));
+    w.win.close();
+    assert.ok(await until(() => w.win.isDestroyed()));
+    hookCalls.splice(0);
+    tw0.emit('focus');
+  });
+
+  await t.test('끝내기: 창마다 차례로 묻고, 취소하면 남은 것은 그대로, 그 뒤 탭 하나 닫기는 끝내지 않음 (Review Focus)', async () => {
+    const w2 = await newTabWindow(homeWc);
+    const w1 = await newTabWindow(w2.home);
+    const a = await openEditorIn(w1, '끝내기 가.hwpx');
+    const b = await openEditorIn(w2, '끝내기 나.hwpx');
+    fake.replies.set(a.wc.id, true);
+    fake.replies.set(b.wc.id, true);
+    // 최근 차례: 창1 → 창2 → 처음 창
+    tw0.emit('focus');
+    w2.win.emit('focus');
+    w1.win.emit('focus');
+    const quits = fake.app.quitCalls;
+    const n = asked();
+    fake.dialogAnswers.push(1, 2); // 가: 저장 안 함, 나: 취소
+    const ev = quitEvent();
+    fake.app.emit('before-quit', ev);
+    assert.equal(ev.prevented, true);
+    assert.ok(await until(() => asked() >= n + 2));
+    await sleep(150);
+    assert.equal(asked(), n + 2);
+    assert.match(fake.dialogs[n].message, /끝내기 가\.hwpx/, '최근 창부터');
+    assert.match(fake.dialogs[n + 1].message, /끝내기 나\.hwpx/);
+    assert.equal(a.wc.isDestroyed(), true);
+    assert.equal(w1.win.isDestroyed(), true, '다 닫힌 창1은 닫힌다');
+    assert.equal(b.wc.isDestroyed(), false, '취소한 탭과');
+    assert.equal(w2.win.isDestroyed(), false, '그 창과');
+    assert.equal(tw0.isDestroyed(), false, '남은 창은 그대로');
+    assert.equal(homeWc.isDestroyed(), false);
+    assert.equal(fake.app.quitCalls, quits, '끝내지 않는다');
+    // 확정 → (끝내기 중 닫힌 창은 세션에서 바로 빼지 않음) → 취소: 다시 이어 적고, 닫힌 창1을 뺀다
+    assert.deepEqual(hookCalls.splice(0).map((h) => h.name === 'removeWindow' ? [h.name, h.id] : h.name), ['finalize', 'resume', ['removeWindow', w1.win.id]]);
+    // 끝내기가 되돌아갔다: 깨끗한 탭 하나 닫기·창 하나 닫기는 끝내지 않는다
+    const c = await openEditorIn(w2, '끝내기 다.hwpx');
+    const r = await fake.invokeFrom(w2.tabstrip, 'tabs:close', tabIn(w2, c.path).id);
+    assert.equal(r.value, true);
+    assert.ok(await until(() => c.wc.isDestroyed()));
+    assert.equal(fake.app.quitCalls, quits);
+    fake.replies.set(b.wc.id, false);
+    w2.win.close();
+    assert.ok(await until(() => w2.win.isDestroyed()));
+    assert.equal(fake.app.quitCalls, quits);
+    assert.deepEqual(hookCalls.splice(0), [{ name: 'removeWindow', id: w2.win.id }], '끝내기가 아니라 창 하나 닫기');
+    tw0.emit('focus');
+  });
+
   let closeAsked = 0;
   await t.test('탭 창 닫기: 고친 편집 탭이 있으면 묻고, 취소하면 모두 그대로', async () => {
     fake.replies.set(editorWin.wc.id, true);
@@ -1708,11 +1940,21 @@ test('main.mjs ↔ 편집 창 (가짜 electron): 한글 · 문서·표·슬라�
     fake.dialogAnswers.push(1); // 저장 안 함
     tw0.close();
     assert.ok(await until(() => tw0.isDestroyed(), 8000), '탭 창이 닫혀야 한다');
+    assert.deepEqual(hookCalls.splice(0), [{ name: 'finalize', open: 1 }], '마지막 탭 창: 세션에서 빼기 전에(창이 살아 있을 때) 확정');
     for (const wc of [homeWc, panelWc, tabstripWc]) assert.equal(wc.isDestroyed(), true, '홈·패널·탭 줄 뷰도 닫는다');
     for (const v of editorsOpen) assert.equal(v.webContents.isDestroyed(), true, v.opts.webPreferences.partition);
     assert.equal(fake.dialogs.length, closeAsked + 2, '깨끗한 편집 창은 묻지 않는다');
     assert.equal(sha(docPath), hash);
     assert.deepEqual(readdirSync(join(ud, 'office-drafts')).filter((n) => /^[0-9a-f]{40}\./.test(n) && n !== basename(freshDraft)), [], '정상 닫기 → 복구 사본 없음');
+  });
+
+  await t.test('마지막 탭 창을 닫은 뒤 끝내기(window-all-closed)는 막지 않고, 세션도 다시 확정하지 않는다', () => {
+    const quits = fake.app.quitCalls;
+    const ev = quitEvent();
+    fake.app.emit('before-quit', ev);
+    assert.equal(ev.prevented, false);
+    assert.equal(fake.app.quitCalls, quits);
+    assert.deepEqual(hookCalls, []);
   });
 });
 

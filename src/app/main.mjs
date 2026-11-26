@@ -41,6 +41,8 @@ if (SMOKE) app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinO
 // 내보내지 못하게. 세션 요청 막기·죽은 프록시·CSP는 DNS를 막지 못한다 (보안 검증: 시스템 DNS로 실제 조회가 나감).
 // 앱은 인터넷에 Chromium 네트워크를 쓰지 않는다 (AI·MCP는 자식 프로세스, 주 창 CSP connect-src 'none', 링크는 기본 브라우저로).
 // 편집기 서버 주소(127.0.0.1~3)는 빼야 한다 — 빼지 않으면 편집 창이 뜨지 않는다
+// 세션 연결(Task 11)이 채울 자리: 마지막 탭 창 닫기·끝내기 전 확정, 끝내기 취소 뒤 다시 이어 적기, 탭 창 하나 빼기
+export const sessionHooks = { finalize() {}, resume() {}, removeWindow(_id) {} };
 export const HOST_RESOLVER_RULES = 'MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE 127.0.0.2, EXCLUDE 127.0.0.3';
 app.commandLine.appendSwitch('host-resolver-rules', HOST_RESOLVER_RULES);
 
@@ -394,7 +396,7 @@ async function start() {
 
   /** 이 문서를 고치는 AI 대화를 멈추고 끝날 때까지 기다린다 → 멈춘 개수 (시간 안에 안 끝나면 -1) */
   async function stopChatsFor(p, ms = 10_000) {
-    const running = [...chats.values()].filter((c) => samePath(c.path, p));
+    const running = [...chats.values()].filter((c) => samePath(c.path, p) || (!!c.edit && samePath(c.edit, p)));
     if (!running.length) return 0;
     for (const c of running) { try { c.handle.cancel(); } catch {} }
     let timer;
@@ -972,8 +974,8 @@ async function start() {
       onOpenRequest: (parent) => { pickAndOpen(parent).catch((err) => console.error('[open]', err)); },
       // 탭 단축키(Ctrl+Tab·Ctrl+1…9·Ctrl+T·Ctrl+N)는 아직 쓰지 않는다 (탭 단축키 작업에서 연결)
       onTabCommand: (p, cmd) => { const hit = findTab(p); if (hit) runTabCommand(hit.tw, cmd); },
-      // 끝내기 중 저장 확인에서 취소 → 끝내기 상태를 되돌린다
-      onQuitCanceled: () => { appQuitting = false; },
+      // 끝내기 중 저장 확인에서 취소 → 끝내기 상태를 되돌리고 세션을 다시 이어 적는다
+      onQuitCanceled: () => cancelQuit(),
     });
   } catch (err) {
     editorLoadError = err?.message ?? String(err);
@@ -1509,7 +1511,7 @@ async function start() {
       const i = windowOrder.indexOf(shell.id);
       if (i > 0) { windowOrder.splice(i, 1); windowOrder.unshift(shell.id); }
     });
-    // 창 닫기(X·Alt+F4) → 편집 탭을 탭 차례로 닫아 본다 (판정 13). AI 확인·끝내기 차례는 Task 10
+    // 창 닫기(X·Alt+F4) → AI 작업 중이면 한 번 묻고(D17), 편집 탭을 탭 차례로 닫아 본다 (판정 13)
     shell.on('close-requested', () => { void closeWindow(tw).catch((err) => console.error('[tabs] 탭 창을 닫지 못했습니다:', err)); });
     shell.on('closed', () => {
       tabWindows.delete(shell.id);
@@ -1580,10 +1582,15 @@ async function start() {
     if (view) closeWc(view.webContents);
   }
 
-  /** 탭 닫기 (탭 줄 ×·Delete): 편집 탭은 저장 확인, 문서 탭은 바로. → 닫혔으면 true */
+  /** 탭 닫기 (탭 줄 ×·Delete): AI가 고치는 중이면 먼저 묻고(D17), 편집 탭은 저장 확인, 문서 탭은 바로. → 닫혔으면 true */
   async function closeTab(tw, id) {
-    const t = tw.tabs.get(id);
+    let t = tw.tabs.get(id);
     if (!t || t.type === 'home') return false;
+    // 읽기 재료로만 쓰이는 탭은 묻지 않는다 (재료 목록은 보낼 때 고정했다)
+    if (t.path && !(await confirmStopAi(tw.shell.win, aiEditsIn([t.path]), { tab: true }))) return false;
+    // 묻는 사이 탭이 이미 닫혔을 수 있다
+    t = tw.tabs.get(id);
+    if (!t) return true;
     if (t.type === 'doc') { closeDocTab(tw, id); return true; }
     const r = editors ? await editors.close(t.path) : null;
     // 편집 뷰가 이미 없으면 탭만 뺀다
@@ -1810,12 +1817,73 @@ async function start() {
     return openDocTab(tw, p, { activate });
   }
 
-  /** 탭 창 닫기: 편집 탭을 탭 차례로 닫아 보고(취소하면 그 탭부터 모두 그대로, 판정 13), 다 닫히면 문서 탭·홈·패널 뷰를 닫고 창을 없앤다 */
-  function closeWindow(tw) {
+  /** 진행 중인 대화가 고치는 문서 중 paths에 든 것 (경로 키 비교, 한 번씩) */
+  function aiEditsIn(paths) {
+    const want = new Set((paths ?? []).filter((p) => typeof p === 'string' && p).map(key));
+    const out = new Map();
+    for (const c of chats.values()) if (c.edit && want.has(key(c.edit))) out.set(key(c.edit), c.edit);
+    return [...out.values()];
+  }
+
+  /** AI 작업 중 확인 (D17): '멈추고 닫기'면 그 문서들의 대화를 멈추고(숨은 Office 정리 포함) true, '취소'면 false. 고치는 문서가 없으면 묻지 않고 true */
+  async function confirmStopAi(parent, edits, { tab = false } = {}) {
+    if (!edits.length) return true;
+    const { response } = await dialog.showMessageBox(parent ?? undefined, {
+      type: 'warning',
+      message: tab ? 'AI가 이 문서를 고치는 중입니다.' : 'AI 작업 중인 문서가 있습니다.',
+      detail: '멈추면 지금까지 고친 내용은 남고, 버전 목록에서 대화 전으로 되돌릴 수 있어요.',
+      buttons: ['멈추고 닫기', '취소'], defaultId: 1, cancelId: 1, noLink: true,
+    });
+    if (response !== 0) return false;
+    const stopped = await Promise.all(edits.map((p) => stopChatsFor(p)));
+    // 시간 안에 안 끝난 대화는 대화의 마무리(finally)가 정리한다. 닫기는 그대로 한다
+    if (stopped.some((n) => n < 0)) console.warn('[ai] 닫기 전에 AI 대화가 다 멈추지 않았습니다');
+    return true;
+  }
+
+  // 끝내기 중에 닫힌 탭 창 (끝내기를 취소하면 그때 세션에서 뺀다)
+  const quitClosed = [];
+  /** 끝내기 취소 → 끝내기 상태를 되돌리고 세션을 다시 이어 적는다 (저장 확인 취소·AI 확인 취소 모두. 여러 번 불려도 한 번만) */
+  function cancelQuit() {
+    if (!appQuitting) return;
+    appQuitting = false;
+    sessionHooks.resume();
+    for (const id of quitClosed.splice(0)) sessionHooks.removeWindow(id);
+  }
+
+  /** 끝내기 차례: 세션 확정 → AI 작업 중이면 한 번 묻고 → 최근 탭 창부터 차례로 닫는다. 하나라도 취소하면 false (남은 창·탭은 그대로) */
+  async function quitInOrder() {
+    sessionHooks.finalize();
+    const order = [...new Set([...windowOrder.map((id) => tabWindows.get(id)).filter(Boolean), ...tabWindows.values()])];
+    const edits = aiEditsIn(order.flatMap((tw) => tw.tabs.tabs.map((t) => t.path)));
+    if (!(await confirmStopAi(recentWindow()?.shell.win, edits))) return false;
+    for (const tw of order) {
+      if (!tabWindows.has(tw.shell.id)) continue;
+      if (!(await closeWindow(tw, { aiAsked: true }))) return false;
+      quitClosed.push(tw.shell.id);
+    }
+    return true;
+  }
+
+  /**
+   * 탭 창 닫기: AI가 고치는 중인 문서가 있으면 한 번 묻고(D17, 끝내기에서 이미 물었으면 aiAsked), 편집 탭을 탭 차례로 닫아 본다
+   * (확인한 탭은 바로 닫히고, 취소하면 그 탭부터 모두 그대로, 판정 13). 다 닫히면 세션 정리 → 문서 탭·홈·패널 뷰를 닫고 창을 없앤다
+   */
+  function closeWindow(tw, { aiAsked = false } = {}) {
     if (tw.closing) return tw.closing;
     tw.closing = (async () => {
+      if (!aiAsked) {
+        const all = tw.tabs.tabs.map((t) => t.path);
+        if (!(await confirmStopAi(tw.shell.win, aiEditsIn(all)))) return false;
+      }
       const paths = tw.tabs.tabs.filter((t) => t.type === 'editor' && t.path).map((t) => t.path);
       if (editors && !(await editors.closeMany(paths))) return false;
+      // 세션: 끝내기 중이면 이미 확정했다. 아니면 다른 탭 창이 남을 때 이 창만 빼고,
+      // 마지막 창이면 빼기 전에(창이 살아 있을 때) 확정한다 — 아니면 지난 세션이 빈 목록이 된다
+      if (!appQuitting) {
+        const last = [...tabWindows.keys()].every((id) => id === tw.shell.id);
+        if (last) sessionHooks.finalize(); else sessionHooks.removeWindow(tw.shell.id);
+      }
       const w = tw.shell.win;
       if (!SMOKE && w && !w.isDestroyed()) {
         try { settings.set({ window: { ...w.getNormalBounds(), maximized: w.isMaximized() } }); } catch {}
@@ -1827,7 +1895,6 @@ async function start() {
       }
       tw.docViews.clear();
       tw.shell.destroy();
-      if (appQuitting) app.quit();
       return true;
     })().finally(() => { tw.closing = null; });
     return tw.closing;
@@ -2736,7 +2803,22 @@ async function start() {
   }
   queueOpen(fileFromArgv(process.argv));
 
-  app.on('before-quit', () => { appQuitting = true; });
+  // 끝내기(메뉴·window-all-closed 등): 끝내기를 막고 창마다 차례로 묻는다. 다 닫히면 다시 app.quit() (그때는 막지 않는다)
+  let quitBusy = false;
+  app.on('before-quit', (e) => {
+    // 차례 확인 중에 다시 끝내기(마지막 창이 닫혀 window-all-closed 등) → 확인이 끝날 때까지 막는다
+    if (quitBusy) { e?.preventDefault?.(); return; }
+    if (appQuitting) return;
+    appQuitting = true;
+    // 탭 창이 없으면(마지막 창을 닫은 뒤) 그대로 끝낸다. 세션은 그 창을 닫을 때 확정했다
+    if (!tabWindows.size) return;
+    e?.preventDefault?.();
+    quitBusy = true;
+    quitInOrder().then(
+      (ok) => { quitBusy = false; if (ok) app.quit(); else cancelQuit(); },
+      (err) => { quitBusy = false; console.error('[quit] 끝내기 차례 확인 실패:', err); cancelQuit(); },
+    );
+  });
 
   app.on('second-instance', (_e, argv, cwd) => {
     // 탐색기에서 연 문서 → 최근 탭 창의 새 탭 (이미 열린 문서면 그 탭). 준비 전이면 줄에 선다
