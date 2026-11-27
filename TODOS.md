@@ -36,3 +36,17 @@
 - **Pros:** 여러 문서 일괄 수정. **Cons:** 쓰기 범위·문서별 버전·되돌리기·세션 키 설계 필요.
 - **Context:** aiMcpEnv({edit:[...]}) 확장, keepVersion을 문서별로.
 - **Depends on:** v0.2.0 M1.
+
+### 탭 세션 가장자리 경우 3가지 (v0.2.0 /review Minor, QA에서 재현 못 함)
+- **What:** ① 끝내는 중에 탐색기로 연 파일이 버려지고, 끝내기를 취소해도 다시 열리지 않음 ② 크래시로 올린 세션에서 '지난 탭 다시 열기'가 활성 탭을 바로 불러옴 ③ 올린 세션(promoteCrashed)이 활성 탭을 홈으로 기록.
+- **Why:** 문서를 다시 열어야 하거나, 앱을 죽게 만든 문서를 다시 불러올 수 있음.
+- **Pros:** 복원이 더 믿을 만해짐. **Cons:** 끝내기 취소 시 대기열·크래시 표시를 세션 형식에 더해야 함.
+- **Context:** src/app/main.mjs openFromExplorer·quitInOrder, src/app/tab-session.mjs restorePlan·promoteCrashed. 2026-11-27 /qa 보고서 참고.
+- **Depends on:** 없음.
+
+### 탭 닫기 단추를 tablist 밖으로 (접근성 권고, LOW)
+- **What:** 탭 줄 tablist 안에 tab 말고 button(닫기)이 있음. ARIA 소유 규칙상 tablist의 자식은 tab만.
+- **Why:** 화면 읽기 프로그램이 탭 목록을 읽을 때 닫기 단추가 섞여 들림. 키보드는 Delete로 닫을 수 있음.
+- **Pros:** 자동 검사(axe) 경고 없앰. **Cons:** 탭 모양·배치를 바꿔야 함.
+- **Context:** src/app/renderer/tabstrip.js renderTab.
+- **Depends on:** 없음.
