@@ -77,5 +77,6 @@
  "{0}: 탭 뷰 없음": "{0}: no tab view",
  "탭 창 없음": "No tab window",
  "탭 창을 닫는 중이라 열지 않았어요": "The tab window is closing, so it wasn't opened",
- "추가할 열린 문서": "Open documents to add"
+ "추가할 열린 문서": "Open documents to add",
+ "새 창": "New window"
 }

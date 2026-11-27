@@ -262,3 +262,12 @@ test('main.mjs: 전역 current·watcher·pendingFile·rendererReady 선언 없�
   const main = readFileSync(join(ROOT, 'src', 'app', 'main.mjs'), 'utf8');
   assert.doesNotMatch(main, /^\s{2}let (current|watcher|pendingFile|rendererReady)\b/m);
 });
+
+// Regression: QA — 홈 화면이 Ctrl+N을 '새 문서'로 안내했지만 탭 창에서는 새 탭 창(D1)
+// Found by /qa on 2026-11-27
+test('홈 화면 안내: Ctrl+N은 새 탭 창이므로 새 문서 단축키로 안내하지 않는다', () => {
+  const html = read('index.html');
+  assert.doesNotMatch(html, /새 문서 \(Ctrl\+N\)/);
+  assert.doesNotMatch(html, /<kbd>N<\/kbd>\s*새 문서/);
+  assert.match(html, /<kbd>N<\/kbd>\s*새 창/);
+});
