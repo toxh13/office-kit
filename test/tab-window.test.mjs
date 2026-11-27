@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { makeFakeElectron } from './helpers/fake-electron.mjs';
-import { createTabWindow, PANEL_MAX, PANEL_MIN, TABSTRIP_H } from '../src/app/tab-window.mjs';
+import { createTabWindow, PANEL_MAX, PANEL_MIN, reloadBudget, TABSTRIP_H } from '../src/app/tab-window.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
@@ -174,6 +174,18 @@ test('탭 줄 화면: tabStopIndex — 활성 탭이 0, 활성이 없거나 목�
   assert.equal(s([], null), -1);
 });
 
+// Regression: QA — 다시 그릴 때마다 활성 탭으로 스크롤해 사용자가 옮겨 둔 탭 줄 위치를 되돌림
+// Found by /qa on 2026-11-27
+test('탭 줄 화면: needsReveal — 활성 탭이 바뀌거나 탭이 늘 때만 활성 탭으로 스크롤', () => {
+  const ctx = {}; vm.runInNewContext(readFileSync(join(ROOT, 'src/app/renderer/tabstrip.js'), 'utf8'), ctx);
+  const r = ctx.OKTabstrip.needsReveal;
+  assert.equal(r(null, { active: 't1', count: 3 }), true, '처음 그릴 때');
+  assert.equal(r({ active: 't1', count: 3 }, { active: 't2', count: 3 }), true, '활성 탭 바뀜');
+  assert.equal(r({ active: 't1', count: 3 }, { active: 't1', count: 4 }), true, '탭이 늘어남');
+  assert.equal(r({ active: 't1', count: 3 }, { active: 't1', count: 3 }), false, '같은 목록 다시 그림(저장 표시·AI 패널 접기 등)');
+  assert.equal(r({ active: 't1', count: 4 }, { active: 't1', count: 3 }), false, '다른 탭을 닫음');
+});
+
 test('탭 줄 화면: role=tablist·role=tab·aria-selected·aria-label, 인라인 스크립트 없음(CSP)', () => {
   const html = read('src/app/renderer/tabstrip.html');
   assert.match(html, /<script src="tabstrip\.js" defer><\/script>/);
@@ -211,6 +223,32 @@ test('탭 줄 화면이 죽으면 다시 싣는다, 정상 종료·닫힌 창은
     assert.match(loads[0], /tabstrip\.html$/);
     f.crash(wc, 'clean-exit');
     assert.equal(loads.length, 1, '정상 종료는 다시 싣지 않는다');
+  } finally {
+    console.error = err0;
+  }
+});
+
+// Regression: QA — 화면이 실을 때마다 바로 죽으면 다시 싣기를 끝없이 되풀이 (남은 Minor)
+// Found by /qa on 2026-11-27
+test('reloadBudget: 1분 안에 3번까지만 다시 싣고, 1분이 지나면 다시 허용', () => {
+  let t = 0;
+  const allow = reloadBudget({ max: 3, windowMs: 60_000, now: () => t });
+  assert.deepEqual([allow(), allow(), allow(), allow()], [true, true, true, false]);
+  t = 61_000;
+  assert.equal(allow(), true);
+});
+
+test('탭 줄 화면이 실을 때마다 죽으면 3번까지만 다시 싣는다', () => {
+  const { f, s } = make();
+  const wc = s.tabstrip.webContents;
+  const loads = [];
+  const orig = wc.loadFile.bind(wc);
+  wc.loadFile = (file) => { loads.push(file); return orig(file); };
+  const err0 = console.error;
+  console.error = () => {};
+  try {
+    for (let i = 0; i < 5; i++) f.crash(wc, 'crashed');
+    assert.equal(loads.length, 3);
   } finally {
     console.error = err0;
   }

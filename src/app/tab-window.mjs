@@ -15,6 +15,21 @@ export const PANEL_MAX = 640;
 // 탭 줄에 보내는 채널은 표에 있어야 한다 (없으면 불러올 때 던진다)
 channelSpec('tabs:list', 'send');
 
+/**
+ * 죽은 화면 다시 싣기 횟수 제한: windowMs 안에 max번까지만 허용 (실을 때마다 죽는 화면이 끝없이 되풀이되지 않게).
+ * @returns {() => boolean} 부를 때마다 이번에 다시 실어도 되는지
+ */
+export function reloadBudget({ max = 3, windowMs = 60_000, now = () => Date.now() } = {}) {
+  const times = [];
+  return () => {
+    const t = now();
+    while (times.length && t - times[0] >= windowMs) times.shift();
+    if (times.length >= max) return false;
+    times.push(t);
+    return true;
+  };
+}
+
 /** 패널 너비를 PANEL_MIN..PANEL_MAX로 자른다. 숫자가 아니면 fallback */
 const clampPanel = (w, fallback) => {
   const n = Number(w);
@@ -53,10 +68,12 @@ export function createTabWindow({
   wc.on('will-attach-webview', (e) => e.preventDefault());
   const loadStrip = () => { void Promise.resolve(wc.loadFile(join(here, 'renderer', 'tabstrip.html'))).catch(() => {}); };
   loadStrip();
-  // 탭 줄 화면이 죽으면(메모리 부족 등) 다시 싣는다 — 다시 뜨면 tabs:ready로 탭 목록을 다시 받는다
+  // 탭 줄 화면이 죽으면(메모리 부족 등) 다시 싣는다 — 다시 뜨면 tabs:ready로 탭 목록을 다시 받는다 (1분에 3번까지)
+  const mayReload = reloadBudget();
   wc.on('render-process-gone', (_e, d) => {
     console.error('[tabstrip] 화면 종료:', d?.reason);
     if (closed || wc.isDestroyed() || d?.reason === 'clean-exit') return;
+    if (!mayReload()) { console.error('[tabstrip] 계속 죽어서 다시 싣지 않습니다'); return; }
     loadStrip();
   });
 

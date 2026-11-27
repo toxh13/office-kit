@@ -22,14 +22,18 @@
     const at = ids.indexOf(active);
     return at >= 0 ? at : 0;
   }
-  g.OKTabstrip = { focusAfterKey, tabStopIndex };
+  /** 활성 탭으로 스크롤할지: 처음이거나 활성 탭이 바뀌었거나 탭이 늘었을 때만 (같은 목록을 다시 그릴 때는 사용자가 옮긴 위치 그대로) */
+  function needsReveal(prev, next) {
+    return !prev || prev.active !== next.active || next.count > prev.count;
+  }
+  g.OKTabstrip = { focusAfterKey, tabStopIndex, needsReveal };
 })(globalThis);
 
 // ── 화면 ──
 if (typeof document !== 'undefined') {
   (() => {
     const K = window.okTabs;
-    const { focusAfterKey, tabStopIndex } = globalThis.OKTabstrip;
+    const { focusAfterKey, tabStopIndex, needsReveal } = globalThis.OKTabstrip;
     const list = document.getElementById('tabs');
     const aiToggle = document.getElementById('ai-toggle');
 
@@ -124,6 +128,7 @@ if (typeof document !== 'undefined') {
       return wrap;
     }
 
+    let revealed = null; // 마지막으로 활성 탭을 보이게 한 때의 { active, count }
     function render() {
       // 다시 그려도 초점은 같은 탭에 (닫혀 없어졌으면 활성 탭으로)
       const focusedId = document.activeElement?.closest?.('[role="tab"]')?.dataset.id ?? null;
@@ -135,8 +140,10 @@ if (typeof document !== 'undefined') {
         again?.focus();
       }
       aiToggle.setAttribute('aria-pressed', state.panelCollapsed ? 'false' : 'true');
-      // 탭이 많아 줄이 넘치면 활성 탭이 보이게 (가로로만, 가까운 쪽으로)
-      tabButtons().find((b) => b.getAttribute('aria-selected') === 'true')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+      // 탭이 많아 줄이 넘치면 활성 탭이 보이게 (가로로만, 가까운 쪽으로). 활성 탭이 바뀌거나 탭이 늘 때만
+      const shown = { active: state.active, count: state.tabs.length };
+      if (needsReveal(revealed, shown)) tabButtons().find((b) => b.getAttribute('aria-selected') === 'true')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+      revealed = shown;
     }
 
     aiToggle.addEventListener('click', () => { if (K) void K.togglePanel(); });

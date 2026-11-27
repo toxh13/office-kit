@@ -9,7 +9,7 @@ import { allows, channelSpec, VIEW_ROUTES } from './ipc-channels.mjs';
 import { createI18n, LANG_SETTINGS, localizeDialogOptions, localizedDialog, localizeMenu, resolveLang } from './i18n/index.mjs';
 import { createBackups, createPreviewCache, createPreviewFiles, createSettings, hashFile, samePath } from './store.mjs';
 import { createSessionKeeper, promoteCrashed, restorePlan } from './tab-session.mjs';
-import { createTabWindow, PANEL_MAX, PANEL_MIN, TABSTRIP_H } from './tab-window.mjs';
+import { createTabWindow, PANEL_MAX, PANEL_MIN, reloadBudget, TABSTRIP_H } from './tab-window.mjs';
 import { createTabList, docKey, tabCommandOf } from './tabs.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1504,9 +1504,11 @@ async function start() {
     }
     const viewUrl = `${pathToFileURL(INDEX_HTML).href}?view=${role}`;
     // 화면 프로세스가 죽으면(메모리 부족 등) 다시 싣는다: 홈·문서 탭·패널은 app:init으로 상태를 다시 받는다 (그 사이 알림은 준비되면 보낸다)
+    const mayReload = reloadBudget(); // 실을 때마다 죽으면 1분에 3번까지만
     wc.on('render-process-gone', (_e, d) => {
       console.error('[renderer] 종료:', d?.reason);
       if (d?.reason === 'clean-exit' || wc.isDestroyed()) return;
+      if (!mayReload()) { console.error('[renderer] 계속 죽어서 다시 싣지 않습니다'); return; }
       const hub = hubOf(wc);
       if (hub) hub.rendererReady = false;
       void Promise.resolve(wc.loadURL(viewUrl)).catch(() => {});
