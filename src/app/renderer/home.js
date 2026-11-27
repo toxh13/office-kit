@@ -75,7 +75,10 @@
     if (info?.hasLast) $('#restore-last-count').textContent = `지난번에 연 탭 ${info.count}개`;
   }
   async function restoreLast() {
+    // 누른 단추가 숨으면 초점이 문서 처음으로 사라지므로, 키보드 사용자를 위해 '파일 열기'로 옮긴다 (WCAG 2.4.3)
+    const hadFocus = $('#restore-last').contains(document.activeElement);
     $('#restore-last').hidden = true;
+    if (hadFocus) $('#btn-open')?.focus();
     try { await call(K.session.restoreLast()); } catch (err) { showError(err); loadLastSession(); }
   }
 
