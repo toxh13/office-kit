@@ -2427,7 +2427,8 @@ function runSmoke(base, doc, tag) {
   const png = join(base, `${tag}.png`);
   const ud = join(base, `ud-${tag}`);
   // 주 창 미리보기는 글자만 (Word·Excel·PowerPoint를 띄우지 않게)
-  put(join(ud, 'settings.json'), JSON.stringify({ previewMode: 'text' }));
+  // 창 제목·문구는 한국어로 단언하므로 Windows 언어와 무관하게 한국어 화면으로 (CI는 영어 Windows)
+  put(join(ud, 'settings.json'), JSON.stringify({ previewMode: 'text', lang: 'ko' }));
   const env = { ...process.env, OFFICEKIT_SMOKE: png, OFFICEKIT_SMOKE_EDITOR: '1', OFFICEKIT_USER_DATA: ud };
   delete env.ELECTRON_RUN_AS_NODE;
   for (const k of ['OFFICEKIT_EDITOR_VENDOR', 'OFFICEKIT_OFFICE_FONTS_MODULE', 'OFFICEKIT_AI_MODULE']) delete env[k];
@@ -2562,7 +2563,8 @@ test('스모크 코드: 편집 창을 BrowserWindow 목록으로 찾지 않고, 
 function runTabsSmoke(base, files) {
   const png = join(base, 'tabs.png');
   const ud = join(base, 'ud-tabs');
-  put(join(ud, 'settings.json'), JSON.stringify({ previewMode: 'text' }));
+  // 창 제목·문구는 한국어로 단언하므로 Windows 언어와 무관하게 한국어 화면으로 (CI는 영어 Windows)
+  put(join(ud, 'settings.json'), JSON.stringify({ previewMode: 'text', lang: 'ko' }));
   const env = { ...process.env, OFFICEKIT_SMOKE: png, OFFICEKIT_SMOKE_TABS: '1', OFFICEKIT_SMOKE_TABS_FILES: files.join(';'), OFFICEKIT_USER_DATA: ud };
   delete env.ELECTRON_RUN_AS_NODE;
   for (const k of ['OFFICEKIT_SMOKE_EDITOR', 'OFFICEKIT_EDITOR_VENDOR', 'OFFICEKIT_OFFICE_FONTS_MODULE', 'OFFICEKIT_AI_MODULE']) delete env[k];
