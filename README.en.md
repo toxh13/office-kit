@@ -33,6 +33,8 @@ The installer adds shortcuts, an **"Open with Office Kit"** context-menu entry a
 
 ## Features
 
+**Tabs for many documents, and AI that reads several at once** — open Hangul, Word, Excel, PowerPoint and PDF files as tabs in one window, like browser tabs (Ctrl+Tab, Ctrl+1–9, Ctrl+W, Ctrl+T for the home tab, Ctrl+N for another window). In the AI panel, **Add open tab** passes other tabs as read-only material, so you can say "fill this letter from the list in 명단.xlsx". Your tabs come back the next time you start the app. Office files downloaded from the internet open in a safe text preview tab with **Open in Windows program**.
+
 **Preview and AI chat** — drop a document on the window; ask the AI things like "Fill the 담당자 field with Hong Gildong". Changes show up in the preview right away, with **View changes** and **Undo this chat**.
 
 ![AI chat screen (example conversation)](site/images/ai-chat.png)

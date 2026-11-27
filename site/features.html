@@ -31,11 +31,12 @@
     <p>화면별 안내</p>
     <ol>
       <li><a href="#main-window">주 창</a></li>
+      <li><a href="#tabs">탭으로 여러 문서</a></li>
       <li><a href="#versions">버전과 되돌리기</a></li>
       <li><a href="#diff">바뀐 내용 보기</a></li>
       <li><a href="#ai">AI 대화</a></li>
-      <li><a href="#edit-hwp">한글 편집 창</a></li>
-      <li><a href="#edit-office">Word, Excel, PowerPoint 편집 창</a></li>
+      <li><a href="#edit-hwp">한글 편집 탭</a></li>
+      <li><a href="#edit-office">Word, Excel, PowerPoint 편집 탭</a></li>
       <li><a href="#pii">개인정보 찾아 가리기</a></li>
       <li><a href="#new-doc">새 문서</a></li>
       <li><a href="#pdf">PDF 합치기, 나누기, 돌리기</a></li>
@@ -81,9 +82,9 @@
       </figure>
       <ol class="tour__legend">
         <li data-n="1"><strong>파일 열기</strong> 문서를 고릅니다(Ctrl+O). 창에 파일을 끌어다 놓아도 됩니다.</li>
-        <li data-n="2"><strong>새 문서</strong> 한글·Word·PowerPoint·Excel 새 문서를 만듭니다(Ctrl+N).</li>
+        <li data-n="2"><strong>새 문서</strong> 한글·Word·PowerPoint·Excel 새 문서를 만듭니다.</li>
         <li data-n="3"><strong>열린 문서</strong> 형식과 파일 이름. 오른쪽 ✕로 문서를 닫습니다.</li>
-        <li data-n="4"><strong>직접 편집</strong> 앱 안 편집 창을 엽니다(Ctrl+E). 인터넷과 한컴오피스·MS Office 없이 동작합니다.</li>
+        <li data-n="4"><strong>직접 편집</strong> 앱 안 편집 탭을 엽니다(Ctrl+E). 인터넷과 한컴오피스·MS Office 없이 동작합니다.</li>
         <li data-n="5"><strong>새로고침</strong> 미리보기를 파일에서 다시 그립니다(F5).</li>
         <li data-n="6"><strong>원래대로</strong> 마지막 변경 전으로 되돌립니다. 한 번 더 누르면 되돌리기 전으로 돌아갑니다.</li>
         <li data-n="7"><strong>버전 목록</strong> 남겨 둔 버전을 보고, 바뀐 내용을 비교하거나 그때로 되돌립니다.</li>
@@ -98,13 +99,23 @@
         <li data-n="16"><strong>추천 요청</strong> 누르면 바로 보냅니다. 형식에 맞는 요청이 나옵니다.</li>
         <li data-n="17"><strong>입력창</strong> 할 일을 적고 Enter로 보냅니다. 줄바꿈은 Shift+Enter.</li>
         <li data-n="18"><strong>확대·축소</strong> 미리보기 배율. 가운데 숫자를 누르면 100%, 오른쪽은 너비에 맞추기.</li>
-        <li data-n="19"><strong>상태 줄</strong> 읽은 엔진, 쪽 수, 마지막 저장 시각, 편집 창이 열려 있는지 보여 줍니다.</li>
+        <li data-n="19"><strong>상태 줄</strong> 읽은 엔진, 쪽 수, 마지막 저장 시각, 편집 탭이 열려 있는지 보여 줍니다.</li>
       </ol>
     </section>
 
+    <section class="tour-sec" id="tabs" aria-labelledby="h-tabs">
+      <h2 id="h-tabs">탭으로 여러 문서</h2>
+      <p class="lead">문서마다 탭으로 열립니다. 창 맨 위 탭 줄에 맨 앞 홈 탭과 문서 탭이 놓이고, 가운데에 고른 탭, 오른쪽에 AI 도우미가 있습니다. 탭 줄 오른쪽 끝 AI 도우미 단추로 AI 도우미를 접습니다.</p>
+      <ul>
+        <li>한글·Word·Excel·PowerPoint는 편집 탭으로, PDF·옛 형식·암호 문서는 미리보기 탭으로 엽니다. 이미 열린 문서를 다시 열면 그 탭으로 갑니다.</li>
+        <li>Ctrl+Tab·Ctrl+Shift+Tab으로 다음·이전 탭, Ctrl+1~9로 그 자리의 탭, Ctrl+W로 탭 닫기, Ctrl+T로 홈 탭, Ctrl+N으로 새 창을 엽니다.</li>
+        <li>껐다 켜면 지난 탭이 다시 열립니다.</li>
+        <li>AI 도우미의 <strong>+ 열린 탭 추가</strong>로 다른 탭을 읽기 재료로 넘기면, 여러 문서를 보고 한 문서를 고칩니다. 자세한 내용은 <a href="guide.html#tabs">사용 안내</a>에 있습니다.</li>
+      </ul>
+    </section>
     <section class="tour-sec" id="versions" aria-labelledby="h-versions">
       <h2 id="h-versions">버전과 되돌리기</h2>
-      <p class="lead">문서를 열 때, 편집 창에서 저장하기 전, AI가 고치기 전마다 버전을 저절로 남깁니다. 문서마다 최근 30개까지 남습니다.</p>
+      <p class="lead">문서를 열 때, 편집 탭에서 저장하기 전, AI가 고치기 전마다 버전을 저절로 남깁니다. 문서마다 최근 30개까지 남습니다.</p>
       <figure class="tour">
         <div class="tour__tools">
           <button type="button" class="btn btn--ghost btn--s" data-pins-toggle aria-pressed="false">번호 숨기기</button>
@@ -184,7 +195,7 @@
     </section>
 
     <section class="tour-sec" id="edit-hwp" aria-labelledby="h-edit-hwp">
-      <h2 id="h-edit-hwp">한글 편집 창</h2>
+      <h2 id="h-edit-hwp">한글 편집 탭</h2>
       <p class="lead">한글 문서(hwp, hwpx)를 앱 안에서 고칩니다. 한컴오피스가 없어도 되고, 저장하면 원래 형식 그대로 씁니다.</p>
       <figure class="tour">
         <div class="tour__tools">
@@ -205,18 +216,18 @@
       </figure>
       <ol class="tour__legend">
         <li data-n="1"><strong>문서 상태</strong> 형식, 파일 이름, 저장됨 또는 저장 안 됨.</li>
-        <li data-n="2"><strong>AI · 도구</strong> 옆에 AI 대화, 버전, 개인정보 가리기를 붙여 엽니다.</li>
+        <li data-n="2"><strong>AI · 도구</strong> 예전 편집 창의 단추입니다. 지금은 AI 도우미가 창 오른쪽에 늘 있어 옆 창을 따로 붙이지 않습니다.</li>
         <li data-n="3"><strong>저장</strong> 원래 형식 그대로 저장합니다(Ctrl+S). 덮어쓰기 전 내용은 백업으로 남습니다.</li>
         <li data-n="4"><strong>다른 이름으로 저장</strong> hwpx, hwp, PDF로 저장합니다(Ctrl+Shift+S).</li>
         <li data-n="5"><strong>인쇄</strong> Windows 인쇄 창을 엽니다(Ctrl+P).</li>
-        <li data-n="6"><strong>닫기</strong> 저장 안 한 내용이 있으면 먼저 묻습니다(Ctrl+W).</li>
+        <li data-n="6"><strong>닫기</strong> 탭을 닫습니다. 저장 안 한 내용이 있으면 먼저 묻습니다(Ctrl+W).</li>
         <li data-n="7"><strong>편집 메뉴</strong> 파일·편집·보기·입력·서식·쪽·표·도구. 한글과 비슷한 배치입니다.</li>
         <li data-n="8"><strong>서식 도구줄</strong> 글꼴, 크기, 굵게, 정렬 같은 자주 쓰는 서식.</li>
       </ol>
     </section>
 
     <section class="tour-sec" id="edit-office" aria-labelledby="h-edit-office">
-      <h2 id="h-edit-office">Word, Excel, PowerPoint 편집 창</h2>
+      <h2 id="h-edit-office">Word, Excel, PowerPoint 편집 탭</h2>
       <p class="lead">docx, xlsx, pptx 문서를 앱 안에서 고칩니다. Microsoft Office 없이, 이 PC의 글꼴로 동작합니다.</p>
       <figure class="tour">
         <div class="tour__tools">
@@ -235,7 +246,7 @@
       </figure>
       <ol class="tour__legend">
         <li data-n="1"><strong>문서 상태</strong> 형식(문서·표·슬라이드), 파일 이름, 저장 상태.</li>
-        <li data-n="2"><strong>AI · 도구</strong> 옆에 AI 대화와 도구를 붙여 엽니다.</li>
+        <li data-n="2"><strong>AI · 도구</strong> 예전 편집 창의 단추입니다. 지금은 AI 도우미가 창 오른쪽에 늘 있어 옆 창을 따로 붙이지 않습니다.</li>
         <li data-n="3"><strong>저장</strong> 원래 형식 그대로 저장합니다(Ctrl+S).</li>
         <li data-n="4"><strong>정보 · 라이선스</strong> 편집기의 원 개발사, 라이선스, 이 판의 소스 주소.</li>
         <li data-n="5"><strong>편집기 메뉴</strong> 파일·홈·삽입·레이아웃 같은 편집 기능.</li>
@@ -297,7 +308,7 @@
         <li data-n="3"><strong>저장 위치</strong> 열린 문서의 폴더가 기본입니다. 바꾸기로 다른 곳을 고릅니다.</li>
         <li data-n="4"><strong>시작 방법</strong> 빈 문서, 서식 파일(회의록·기안문·이력서·예산표 등), AI에게 부탁하기.</li>
         <li data-n="5"><strong>AI 요청</strong> 만들 내용을 적습니다. 아래 예시를 눌러도 됩니다.</li>
-        <li data-n="6"><strong>바로 편집 창</strong> 만든 뒤 편집 창을 바로 엽니다.</li>
+        <li data-n="6"><strong>바로 편집 창</strong> 만든 뒤 편집 탭을 바로 엽니다.</li>
         <li data-n="7"><strong>만들기</strong> 문서를 만들고, AI 요청이 있으면 이어서 AI가 채웁니다.</li>
       </ol>
     </section>
